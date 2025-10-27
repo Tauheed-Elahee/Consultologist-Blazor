@@ -1,6 +1,7 @@
 {
     "navigationFallback": {
-        "rewrite": "/index.html"
+        "rewrite": "/index.html",
+        "exclude": ["/_framework/*", "/css/*", "*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}"]
     },
     "auth": {
         "identityProviders": {
@@ -13,6 +14,18 @@
         }
     },
     "routes": [
+        {
+            "route": "/_framework/*",
+            "allowedRoles": ["anonymous", "authenticated"]
+        },
+        {
+            "route": "/css/*",
+            "allowedRoles": ["anonymous", "authenticated"]
+        },
+        {
+            "route": "/*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}",
+            "allowedRoles": ["anonymous", "authenticated"]
+        },
         {
             "route": "/",
             "allowedRoles": ["anonymous", "authenticated"]
@@ -27,5 +40,11 @@
             "redirect": "/.auth/login/aad",
             "statusCode": 302
         }
+    },
+    "mimeTypes": {
+        ".json": "application/json",
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".wasm": "application/wasm"
     }
 }
