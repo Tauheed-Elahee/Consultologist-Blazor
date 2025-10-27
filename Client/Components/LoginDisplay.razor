@@ -1,0 +1,36 @@
+@using BlazorApp.Client.Services
+@using BlazorApp.Client.Models
+@inject AuthenticationService AuthService
+
+<div class="login-display">
+    @if (isLoading)
+    {
+        <span>Loading...</span>
+    }
+    else if (user != null)
+    {
+        <span class="user-info">Hello, @user.UserDetails!</span>
+        <a href="/.auth/logout" class="btn btn-link">Logout</a>
+    }
+    else
+    {
+        <a href="/.auth/login/aad" class="btn btn-primary">Login</a>
+    }
+</div>
+
+@code {
+    private ClientPrincipal? user;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = await AuthService.GetUserInfoAsync();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

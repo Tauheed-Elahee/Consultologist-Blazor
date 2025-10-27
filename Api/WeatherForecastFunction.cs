@@ -1,4 +1,5 @@
 using System.Net;
+using Api.Helpers;
 using BlazorApp.Shared;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -18,6 +19,15 @@ namespace Api
         [Function("WeatherForecast")]
         public HttpResponseData Run([HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequestData req)
         {
+            if (!AuthenticationHelper.IsAuthenticated(req))
+            {
+                var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
+                return unauthorizedResponse;
+            }
+
+            var principal = AuthenticationHelper.GetClientPrincipal(req);
+            _logger.LogInformation($"WeatherForecast requested by user: {principal?.UserDetails}");
+
             var randomNumber = new Random();
             var temp = 0;
 

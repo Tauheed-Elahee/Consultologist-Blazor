@@ -1,0 +1,89 @@
+@page "/profile"
+@using BlazorApp.Client.Services
+@using BlazorApp.Client.Models
+@inject AuthenticationService AuthService
+
+<PageTitle>Profile</PageTitle>
+
+<h1>User Profile</h1>
+
+@if (isLoading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (user != null)
+{
+    <div class="profile-container">
+        <div class="profile-section">
+            <h3>Account Information</h3>
+            <dl class="profile-info">
+                <dt>Display Name:</dt>
+                <dd>@user.UserDetails</dd>
+
+                <dt>User ID:</dt>
+                <dd>@user.UserId</dd>
+
+                <dt>Identity Provider:</dt>
+                <dd>@user.IdentityProvider</dd>
+            </dl>
+        </div>
+
+        @if (user.UserRoles != null && user.UserRoles.Any())
+        {
+            <div class="profile-section">
+                <h3>Roles</h3>
+                <ul class="role-list">
+                    @foreach (var role in user.UserRoles)
+                    {
+                        <li>@role</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        @if (user.Claims != null && user.Claims.Any())
+        {
+            <div class="profile-section">
+                <h3>Claims</h3>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var claim in user.Claims)
+                        {
+                            <tr>
+                                <td>@claim.Type</td>
+                                <td>@claim.Value</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <p>Not authenticated. Please <a href="/.auth/login/aad">login</a> to view your profile.</p>
+}
+
+@code {
+    private ClientPrincipal? user;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = await AuthService.GetUserInfoAsync();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}
