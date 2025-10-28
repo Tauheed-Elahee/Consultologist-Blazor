@@ -1,1 +1,78 @@
-{"navigationFallback":{"rewrite":"/index.html","exclude":["/_framework/*","/css/*","*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}"]},"routes":[{"route":"/_framework/*","allowedRoles":["anonymous","authenticated"]},{"route":"/css/*","allowedRoles":["anonymous","authenticated"]},{"route":"/*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}","allowedRoles":["anonymous","authenticated"]},{"route":"/","allowedRoles":["anonymous","authenticated"]},{"route":"/*","allowedRoles":["authenticated"]}],"responseOverrides":{"401":{"redirect":"/.auth/login/aad","statusCode":302}},"mimeTypes":{".json":"application/json",".js":"application/javascript",".css":"text/css",".wasm":"application/wasm"},"auth":{"rolesSource":"/api/getRolesForUser","identityProviders":{"azureActiveDirectory":{"registration":{"openIdIssuer":"https://login.microsoftonline.com/3396cd22-b31f-4c56-8da6-0eebb7b78a42","clientIdSettingName":"AZURE_CLIENT_ID","clientSecretSettingName":"AZURE_CLIENT_SECRET_APP_SETTING_NAME"}}}}}
+{
+    "navigationFallback": {
+        "rewrite": "/index.html",
+        "exclude": [
+            "/_framework/*",
+            "/css/*",
+            "*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}"
+        ]
+    },
+    "routes": [
+        {
+            "route": "/_framework/*",
+            "allowedRoles": [
+                "anonymous",
+                "authenticated"
+            ]
+        },
+        {
+            "route": "/css/*",
+            "allowedRoles": [
+                "anonymous",
+                "authenticated"
+            ]
+        },
+        {
+            "route": "/*.{css,js,json,ico,png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}",
+            "allowedRoles": [
+                "anonymous",
+                "authenticated"
+            ]
+        },
+        {
+            "route": "/",
+            "allowedRoles": [
+                "anonymous",
+                "authenticated"
+            ]
+        },
+        {
+            "route": "/*",
+            "allowedRoles": [
+                "authenticated"
+            ]
+        }
+    ],
+    "responseOverrides": {
+        "401": {
+            "redirect": "/.auth/login/aad",
+            "statusCode": 302
+        }
+    },
+    "mimeTypes": {
+        ".json": "application/json",
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".wasm": "application/wasm"
+    },
+    "auth": {
+      "identityProviders": {
+        "azureActiveDirectory": {
+          "registration": {
+            "openIdIssuer": "https://login.microsoftonline.com/<YOUR_TENANT_ID>/v2.0",
+            "clientIdSettingName": "AAD_CLIENT_ID",
+            "clientSecretSettingName": "AAD_CLIENT_SECRET"
+          }
+        }
+      }
+    },
+    "routes": [
+      { "route": "/admin/*", "allowedRoles": ["admin"] },
+      { "route": "/clinician/*", "allowedRoles": ["clinician", "admin"] },
+      { "route": "/*", "allowedRoles": ["authenticated"] }
+    ],
+    "responseOverrides": {
+      "401": { "redirect": "/.auth/login/aad?post_login_redirect_uri=/" },
+      "403": { "rewrite": "/forbidden.html" }
+    }
+}
