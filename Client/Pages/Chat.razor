@@ -1,0 +1,164 @@
+@page "/chat"
+@using BlazorStaticWebApps.Shared
+@using BlazorStaticWebApps.Client.Services
+@using Microsoft.JSInterop
+@inject ChatService ChatService
+@inject AuthenticationService AuthService
+@inject IJSRuntime JSRuntime
+
+<h1>AI Chat Assistant</h1>
+
+@if (!isAuthenticated)
+{
+    <div class="alert alert-warning">
+        <p>You must be <a href="/.auth/login/aad">logged in</a> to use the chat feature.</p>
+    </div>
+}
+else
+{
+    <div class="chat-container">
+        <div class="chat-messages" @ref="messagesContainer">
+            @foreach (var msg in messages)
+            {
+                <div class="message @(msg.Role == "user" ? "user-message" : "assistant-message")">
+                    <div class="message-header">
+                        <strong>@(msg.Role == "user" ? "You" : "AI Assistant")</strong>
+                        <span class="message-time">@msg.Timestamp.ToLocalTime().ToString("h:mm tt")</span>
+                    </div>
+                    <div class="message-content">@msg.Content</div>
+                </div>
+            }
+
+            @if (isLoading)
+            {
+                <div class="message assistant-message">
+                    <div class="message-header">
+                        <strong>AI Assistant</strong>
+                    </div>
+                    <div class="message-content">
+                        <div class="typing-indicator">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                @errorMessage
+                <button type="button" class="btn-close" @onclick="ClearError"></button>
+            </div>
+        }
+
+        <div class="chat-input-container">
+            <textarea
+                class="form-control chat-input"
+                placeholder="Type your message here..."
+                @bind="currentMessage"
+                @onkeydown="HandleKeyDown"
+                rows="3"
+                disabled="@isLoading"></textarea>
+            <div class="chat-actions">
+                <button class="btn btn-secondary" @onclick="ClearConversation" disabled="@isLoading">
+                    Clear Chat
+                </button>
+                <button class="btn btn-primary" @onclick="SendMessage" disabled="@(isLoading || string.IsNullOrWhiteSpace(currentMessage))">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ChatMessage> messages = new();
+    private string currentMessage = string.Empty;
+    private bool isLoading = false;
+    private bool isAuthenticated = false;
+    private string? errorMessage;
+    private ElementReference messagesContainer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var userInfo = await AuthService.GetUserInfo();
+        isAuthenticated = userInfo != null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", messagesContainer);
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isLoading)
+            return;
+
+        var userMessage = new ChatMessage
+        {
+            Role = "user",
+            Content = currentMessage.Trim(),
+            Timestamp = DateTime.UtcNow
+        };
+
+        messages.Add(userMessage);
+        var messageToSend = currentMessage;
+        currentMessage = string.Empty;
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await ChatService.SendMessageAsync(messageToSend);
+
+            if (response.Success)
+            {
+                messages.Add(new ChatMessage
+                {
+                    Role = "assistant",
+                    Content = response.Message,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                errorMessage = response.Error ?? "An unknown error occurred";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ClearConversation()
+    {
+        messages.Clear();
+        ChatService.ClearConversation();
+        errorMessage = null;
+    }
+
+    private void ClearError()
+    {
+        errorMessage = null;
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessage();
+        }
+    }
+}

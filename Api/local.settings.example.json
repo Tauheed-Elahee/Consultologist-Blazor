@@ -2,7 +2,9 @@
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "",
-    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated"
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureAIFoundry:ProjectEndpoint": "https://<your-ai-foundry-resource-name>.services.ai.azure.com/api/projects/<your-project-name>",
+    "AzureAIFoundry:AgentId": "asst_<your-agent-id>"
   },
   "Host": {
     "LocalHttpPort": 7071,
