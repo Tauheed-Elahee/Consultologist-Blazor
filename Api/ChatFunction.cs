@@ -102,7 +102,7 @@ public class ChatFunction
             }
 
             var messages = client.Messages.GetMessagesAsync(threadId);
-            PersistentThreadMessage? assistantMessage = null;
+            var assistantMessage = default(Azure.AI.Agents.Persistent.PersistentThreadMessage);
             await foreach (var message in messages)
             {
                 if (message.Role == MessageRole.Agent)
