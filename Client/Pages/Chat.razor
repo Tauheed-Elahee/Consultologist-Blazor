@@ -84,7 +84,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var userInfo = await AuthService.GetUserInfo();
+        var userInfo = await AuthService.GetUserInfoAsync();
         isAuthenticated = userInfo != null;
     }
 
