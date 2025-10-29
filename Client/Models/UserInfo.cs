@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BlazorApp.Client.Models
+namespace BlazorStaticWebApps.Client.Models
 {
     public class AuthResponse
     {

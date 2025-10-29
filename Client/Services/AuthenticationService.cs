@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
-using BlazorApp.Client.Models;
+using BlazorStaticWebApps.Client.Models;
 
-namespace BlazorApp.Client.Services
+namespace BlazorStaticWebApps.Client.Services
 {
     public class AuthenticationService
     {
