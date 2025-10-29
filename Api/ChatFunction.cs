@@ -3,6 +3,8 @@ using System.Text.Json;
 using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Api.Helpers;
+using Api.Models;
 using BlazorStaticWebApps.Shared;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -34,7 +36,7 @@ public class ChatFunction
     {
         try
         {
-            var principal = Helpers.AuthenticationHelper.ParsePrincipal(req);
+            var principal = AuthenticationHelper.GetClientPrincipal(req);
             if (principal == null || string.IsNullOrEmpty(principal.UserId))
             {
                 var unauthorizedResponse = req.CreateResponse(HttpStatusCode.Unauthorized);
@@ -56,7 +58,7 @@ public class ChatFunction
             }
 
             var credential = new DefaultAzureCredential();
-            var client = new PersistentAgentsClient(new Uri(_projectEndpoint), credential);
+            var client = new PersistentAgentsClient(_projectEndpoint, credential);
 
             string threadId;
             if (!string.IsNullOrEmpty(chatRequest.ThreadId))
@@ -99,11 +101,16 @@ public class ChatFunction
                 return errorResponse;
             }
 
-            var messages = await client.Messages.GetMessagesAsync(threadId);
-            var assistantMessage = messages.Value.Data
-                .Where(m => m.Role == MessageRole.Assistant)
-                .OrderByDescending(m => m.CreatedAt)
-                .FirstOrDefault();
+            var messages = client.Messages.GetMessagesAsync(threadId);
+            PersistentThreadMessage? assistantMessage = null;
+            await foreach (var message in messages)
+            {
+                if (message.Role == MessageRole.Agent)
+                {
+                    assistantMessage = message;
+                    break;
+                }
+            }
 
             var responseMessage = assistantMessage?.ContentItems
                 .OfType<MessageTextContent>()
