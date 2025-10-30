@@ -1,6 +1,7 @@
 @using BlazorStaticWebApps.Client.Services
 @using BlazorStaticWebApps.Client.Models
 @inject AuthenticationService AuthService
+@implements IDisposable
 
 <div class="login-display">
     @if (isLoading)
@@ -27,10 +28,22 @@
         try
         {
             user = await AuthService.GetUserInfoAsync();
+            AuthService.OnAuthenticationStateChanged += OnAuthenticationStateChanged;
         }
         finally
         {
             isLoading = false;
         }
+    }
+
+    private async void OnAuthenticationStateChanged()
+    {
+        user = AuthService.GetCachedUser();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        AuthService.OnAuthenticationStateChanged -= OnAuthenticationStateChanged;
     }
 }

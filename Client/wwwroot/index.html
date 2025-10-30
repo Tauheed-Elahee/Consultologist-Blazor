@@ -25,6 +25,13 @@
         <a class="dismiss">🗙</a>
     </div>
     <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        window.addEventListener('storage', function (e) {
+            if (e.key === 'authState' && e.oldValue !== e.newValue) {
+                window.location.reload();
+            }
+        });
+    </script>
 </body>
 
 </html>

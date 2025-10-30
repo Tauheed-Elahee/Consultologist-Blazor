@@ -1,6 +1,7 @@
 @using BlazorStaticWebApps.Client.Services
 @using BlazorStaticWebApps.Client.Models
 @inject AuthenticationService AuthService
+@implements IDisposable
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -18,7 +19,7 @@
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
             </NavLink>
         </div>
-        @if (isAuthenticated)
+        @if (user != null)
         {
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="counter">
@@ -46,17 +47,29 @@
 
 @code {
     private bool collapseNavMenu = true;
-    private bool isAuthenticated = false;
+    private ClientPrincipal? user;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
     protected override async Task OnInitializedAsync()
     {
-        isAuthenticated = await AuthService.IsAuthenticatedAsync();
+        user = await AuthService.GetUserInfoAsync();
+        AuthService.OnAuthenticationStateChanged += OnAuthenticationStateChanged;
+    }
+
+    private async void OnAuthenticationStateChanged()
+    {
+        user = AuthService.GetCachedUser();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void ToggleNavMenu()
     {
         collapseNavMenu = !collapseNavMenu;
+    }
+
+    public void Dispose()
+    {
+        AuthService.OnAuthenticationStateChanged -= OnAuthenticationStateChanged;
     }
 }
