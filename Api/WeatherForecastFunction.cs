@@ -1,6 +1,6 @@
 using System.Net;
 using Api.Helpers;
-using BlazorStaticWebApps.Shared;
+using BlazorApp.Shared;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;

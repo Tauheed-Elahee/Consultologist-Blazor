@@ -1,7 +1,6 @@
-@using BlazorStaticWebApps.Client.Services
-@using BlazorStaticWebApps.Client.Models
+@using BlazorApp.Client.Services
+@using BlazorApp.Client.Models
 @inject AuthenticationService AuthService
-@implements IDisposable
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -12,14 +11,14 @@
     </div>
 </div>
 
-<div class="@NavMenuCssClass nav-scrollable">
+<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
     <nav class="flex-column">
         <div class="nav-item px-3">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
             </NavLink>
         </div>
-        @if (user != null)
+        @if (isAuthenticated)
         {
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="counter">
@@ -36,48 +35,23 @@
                     <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span> Profile
                 </NavLink>
             </div>
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="chat">
-                    <span class="bi bi-chat-dots-fill-nav-menu" aria-hidden="true"></span> AI Chat
-                </NavLink>
-            </div>
         }
     </nav>
 </div>
 
 @code {
     private bool collapseNavMenu = true;
-    private ClientPrincipal? user;
-    private bool isLoading = true;
+    private bool isAuthenticated = false;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            user = await AuthService.GetUserInfoAsync();
-            AuthService.OnAuthenticationStateChanged += OnAuthenticationStateChanged;
-        }
-        finally
-        {
-            isLoading = false;
-        }
-    }
-
-    private async void OnAuthenticationStateChanged()
-    {
-        user = AuthService.GetCachedUser();
-        await InvokeAsync(StateHasChanged);
+        isAuthenticated = await AuthService.IsAuthenticatedAsync();
     }
 
     private void ToggleNavMenu()
     {
         collapseNavMenu = !collapseNavMenu;
-    }
-
-    public void Dispose()
-    {
-        AuthService.OnAuthenticationStateChanged -= OnAuthenticationStateChanged;
     }
 }
