@@ -2,6 +2,7 @@
 @using BlazorApp.Client.Services
 @using BlazorApp.Client.Models
 @inject AuthenticationService AuthService
+@inject UserProfileService ProfileService
 
 <PageTitle>Profile</PageTitle>
 
@@ -11,7 +12,7 @@
 {
     <p><em>Loading...</em></p>
 }
-else if (user != null)
+else if (isAuthenticated)
 {
     <div class="profile-container">
         <div class="profile-section">
@@ -49,21 +50,63 @@ else if (user != null)
         </div>
 
         <div class="profile-section">
-            <h3>Account Information</h3>
-            <dl class="profile-info">
-                <dt>Display Name:</dt>
-                <dd>@user.DisplayName</dd>
+            <h3>Microsoft Graph Profile Data</h3>
+            @if (profile != null)
+            {
+                <dl class="profile-info">
+                    <dt>Display Name:</dt>
+                    <dd>@(profile.DisplayName ?? "(not available)")</dd>
 
-                <dt>Email:</dt>
-                <dd>@user.UserDetails</dd>
+                    <dt>Email:</dt>
+                    <dd>@(profile.Email ?? "(not available)")</dd>
 
-                <dt>User ID:</dt>
-                <dd>@user.UserId</dd>
+                    <dt>Job Title:</dt>
+                    <dd>@(profile.JobTitle ?? "(not available)")</dd>
 
-                <dt>Identity Provider:</dt>
-                <dd>@user.IdentityProvider</dd>
-            </dl>
+                    <dt>Office Location:</dt>
+                    <dd>@(profile.OfficeLocation ?? "(not available)")</dd>
+
+                    <dt>Mobile Phone:</dt>
+                    <dd>@(profile.MobilePhone ?? "(not available)")</dd>
+
+                    @if (profile.BusinessPhones != null && profile.BusinessPhones.Any())
+                    {
+                        <dt>Business Phones:</dt>
+                        <dd>@string.Join(", ", profile.BusinessPhones)</dd>
+                    }
+
+                    <dt>User ID (from Graph):</dt>
+                    <dd>@(profile.Id ?? "(not available)")</dd>
+                </dl>
+            }
+            else if (profileError != null)
+            {
+                <div class="alert alert-danger">
+                    <strong>Error loading profile:</strong> @profileError
+                </div>
+            }
+            else
+            {
+                <p><em>Loading profile from Microsoft Graph...</em></p>
+            }
         </div>
+
+        @if (user != null)
+        {
+            <div class="profile-section">
+                <h3>Static Web Apps Authentication Data</h3>
+                <dl class="profile-info">
+                    <dt>User ID (from SWA):</dt>
+                    <dd>@user.UserId</dd>
+
+                    <dt>User Details:</dt>
+                    <dd>@user.UserDetails</dd>
+
+                    <dt>Identity Provider:</dt>
+                    <dd>@user.IdentityProvider</dd>
+                </dl>
+            </div>
+        }
 
         @if (user.UserRoles != null && user.UserRoles.Any())
         {
@@ -78,29 +121,7 @@ else if (user != null)
             </div>
         }
 
-        @if (user.Claims != null && user.Claims.Any())
-        {
-            <div class="profile-section">
-                <h3>Claims</h3>
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>Value</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var claim in user.Claims)
-                        {
-                            <tr>
-                                <td>@claim.Type</td>
-                                <td>@claim.Value</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        }
+
     </div>
 }
 else
@@ -110,13 +131,36 @@ else
 
 @code {
     private ClientPrincipal? user;
+    private UserProfile? profile;
+    private bool isAuthenticated = false;
     private bool isLoading = true;
+    private string? profileError;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
+            // Check if user is authenticated and get SWA auth data
             user = await AuthService.GetUserInfoAsync();
+            isAuthenticated = user != null;
+
+            // If authenticated, fetch profile from Graph API
+            if (isAuthenticated)
+            {
+                try
+                {
+                    profile = await ProfileService.GetUserProfileAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error loading user profile: {ex.Message}");
+                    profileError = ex.Message;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in Profile page: {ex.Message}");
         }
         finally
         {
