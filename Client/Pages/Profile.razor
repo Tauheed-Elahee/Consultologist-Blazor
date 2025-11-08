@@ -41,10 +41,6 @@ else if (isAuthenticated)
                         <td>userRoles</td>
                         <td>@(user.UserRoles != null ? $"[{string.Join(", ", user.UserRoles)}]" : "(null)")</td>
                     </tr>
-                    <tr>
-                        <td>claims</td>
-                        <td>@(user.Claims != null ? $"{user.Claims.Count} claim(s)" : "(null)")</td>
-                    </tr>
                 </tbody>
             </table>
         </div>
