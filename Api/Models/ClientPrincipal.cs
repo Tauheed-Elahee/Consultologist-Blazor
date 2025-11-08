@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Api.Models
+namespace BlazorApp.Api.Models
 {
     public class ClientPrincipal
     {

@@ -1,9 +1,9 @@
 using System.Text;
 using System.Text.Json;
-using Api.Models;
+using BlazorApp.Api.Models;
 using Microsoft.Azure.Functions.Worker.Http;
 
-namespace Api.Helpers
+namespace BlazorApp.Api.Helpers
 {
     public static class AuthenticationHelper
     {
