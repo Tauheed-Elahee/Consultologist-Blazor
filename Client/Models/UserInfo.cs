@@ -24,6 +24,9 @@ namespace BlazorApp.Client.Models
 
         [JsonPropertyName("claims")]
         public List<UserClaim>? Claims { get; set; }
+
+        public string? DisplayName =>
+            Claims?.FirstOrDefault(c => c.Type == "name")?.Value ?? UserDetails;
     }
 
     public class UserClaim
