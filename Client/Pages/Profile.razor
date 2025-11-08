@@ -15,6 +15,40 @@ else if (user != null)
 {
     <div class="profile-container">
         <div class="profile-section">
+            <h3>Raw Authentication Data</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Property (JSON)</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>identityProvider</td>
+                        <td>@(user.IdentityProvider ?? "(null)")</td>
+                    </tr>
+                    <tr>
+                        <td>userId</td>
+                        <td>@(user.UserId ?? "(null)")</td>
+                    </tr>
+                    <tr>
+                        <td>userDetails</td>
+                        <td>@(user.UserDetails ?? "(null)")</td>
+                    </tr>
+                    <tr>
+                        <td>userRoles</td>
+                        <td>@(user.UserRoles != null ? $"[{string.Join(", ", user.UserRoles)}]" : "(null)")</td>
+                    </tr>
+                    <tr>
+                        <td>claims</td>
+                        <td>@(user.Claims != null ? $"{user.Claims.Count} claim(s)" : "(null)")</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="profile-section">
             <h3>Account Information</h3>
             <dl class="profile-info">
                 <dt>Display Name:</dt>
