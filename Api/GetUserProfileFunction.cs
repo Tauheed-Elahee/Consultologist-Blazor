@@ -73,11 +73,54 @@ namespace BlazorApp.Api
 
                 return response;
             }
+            catch (ArgumentNullException ex)
+            {
+                _logger.LogError(ex, "Configuration error: {Message}", ex.Message);
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new
+                {
+                    error = "Configuration Error",
+                    message = ex.Message,
+                    paramName = ex.ParamName,
+                    details = "Please configure Azure AD settings in Function App environment variables"
+                });
+                return errorResponse;
+            }
+            catch (Azure.Identity.AuthenticationFailedException ex)
+            {
+                _logger.LogError(ex, "Azure AD authentication failed: {Message}", ex.Message);
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new
+                {
+                    error = "Authentication Failed",
+                    message = "Failed to authenticate with Azure AD",
+                    details = ex.Message
+                });
+                return errorResponse;
+            }
+            catch (Microsoft.Graph.Models.ODataErrors.ODataError ex)
+            {
+                _logger.LogError(ex, "Microsoft Graph API error: {Message}", ex.Error?.Message);
+                var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+                await errorResponse.WriteAsJsonAsync(new
+                {
+                    error = "Graph API Error",
+                    message = ex.Error?.Message ?? "Unknown Graph API error",
+                    code = ex.Error?.Code
+                });
+                return errorResponse;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving user profile");
+                _logger.LogError(ex, "Unexpected error retrieving user profile: {Message}", ex.Message);
                 var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-                await errorResponse.WriteStringAsync($"Error retrieving user profile: {ex.Message}");
+                await errorResponse.WriteAsJsonAsync(new
+                {
+                    error = "Internal Server Error",
+                    message = ex.Message,
+                    type = ex.GetType().Name,
+                    stackTrace = ex.StackTrace
+                });
                 return errorResponse;
             }
         }

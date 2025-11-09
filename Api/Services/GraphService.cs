@@ -16,10 +16,31 @@ namespace BlazorApp.Api.Services
 
         public GraphService(IConfiguration configuration, ILogger<GraphService> logger)
         {
-            _tenantId = configuration["AzureAd_TenantId"] ?? throw new ArgumentNullException("AzureAd_TenantId");
-            _clientId = configuration["AzureAd_ClientId"] ?? throw new ArgumentNullException("AzureAd_ClientId");
-            _clientSecret = configuration["AzureAd_ClientSecret"] ?? throw new ArgumentNullException("AzureAd_ClientSecret");
             _logger = logger;
+
+            _tenantId = configuration["AzureAd_TenantId"];
+            _clientId = configuration["AzureAd_ClientId"];
+            _clientSecret = configuration["AzureAd_ClientSecret"];
+
+            if (string.IsNullOrEmpty(_tenantId))
+            {
+                _logger.LogError("AzureAd_TenantId configuration is missing or empty");
+                throw new ArgumentNullException("AzureAd_TenantId", "Azure AD Tenant ID is not configured. Please set the AzureAd_TenantId environment variable.");
+            }
+
+            if (string.IsNullOrEmpty(_clientId))
+            {
+                _logger.LogError("AzureAd_ClientId configuration is missing or empty");
+                throw new ArgumentNullException("AzureAd_ClientId", "Azure AD Client ID is not configured. Please set the AzureAd_ClientId environment variable.");
+            }
+
+            if (string.IsNullOrEmpty(_clientSecret))
+            {
+                _logger.LogError("AzureAd_ClientSecret configuration is missing or empty");
+                throw new ArgumentNullException("AzureAd_ClientSecret", "Azure AD Client Secret is not configured. Please set the AzureAd_ClientSecret environment variable.");
+            }
+
+            _logger.LogInformation("GraphService initialized successfully with Tenant ID: {TenantId}", _tenantId);
         }
 
         public async Task<User?> GetUserProfileAsync(string userId)
