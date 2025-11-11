@@ -10,18 +10,6 @@ namespace BlazorApp.Client.Models
         [JsonPropertyName("displayName")]
         public string? DisplayName { get; set; }
 
-        [JsonPropertyName("givenName")]
-        public string? GivenName { get; set; }
-
-        [JsonPropertyName("surname")]
-        public string? Surname { get; set; }
-
-        [JsonPropertyName("userPrincipalName")]
-        public string? UserPrincipalName { get; set; }
-
-        [JsonPropertyName("mail")]
-        public string? Mail { get; set; }
-
         [JsonPropertyName("email")]
         public string? Email { get; set; }
 
@@ -35,6 +23,6 @@ namespace BlazorApp.Client.Models
         public string? MobilePhone { get; set; }
 
         [JsonPropertyName("businessPhones")]
-        public string[]? BusinessPhones { get; set; }
+        public List<string>? BusinessPhones { get; set; }
     }
 }

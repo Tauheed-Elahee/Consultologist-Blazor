@@ -1,11 +1,15 @@
 @using BlazorApp.Client.Services
 @using BlazorApp.Client.Models
-@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationService AuthService
 @inject UserProfileService ProfileService
-@inject NavigationManager Navigation
 
-<AuthorizeView>
-    <Authorized>
+<div class="login-display">
+    @if (isLoading)
+    {
+        <span>Loading...</span>
+    }
+    else if (isAuthenticated)
+    {
         @if (loadingProfile)
         {
             <span class="user-info">Hello, loading...</span>
@@ -20,29 +24,33 @@
         }
         else
         {
-            <span class="user-info">Hello, @context.User.Identity?.Name!</span>
+            <span class="user-info">Hello, User!</span>
         }
-        <a href="authentication/logout" class="btn btn-link">Logout</a>
-    </Authorized>
-    <NotAuthorized>
-        <a href="authentication/login" class="btn btn-primary">Login</a>
-    </NotAuthorized>
-</AuthorizeView>
+        <a href="/.auth/logout" class="btn btn-link">Logout</a>
+    }
+    else
+    {
+        <a href="/.auth/login/aad" class="btn btn-primary">Login</a>
+    }
+</div>
 
 @code {
+    private bool isAuthenticated = false;
+    private bool isLoading = true;
     private bool loadingProfile = false;
     private UserProfile? profile;
     private string? errorMessage;
 
-    [CascadingParameter]
-    private Task<AuthenticationState>? authenticationStateTask { get; set; }
-
     protected override async Task OnInitializedAsync()
     {
-        if (authenticationStateTask != null)
+        try
         {
-            var authState = await authenticationStateTask;
-            if (authState.User.Identity?.IsAuthenticated == true)
+            // Check if user is authenticated
+            isAuthenticated = await AuthService.IsAuthenticatedAsync();
+            isLoading = false;
+
+            // If authenticated, fetch profile from Graph API
+            if (isAuthenticated)
             {
                 loadingProfile = true;
                 try
@@ -59,6 +67,11 @@
                     loadingProfile = false;
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in LoginDisplay: {ex.Message}");
+            isLoading = false;
         }
     }
 }
