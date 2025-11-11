@@ -59,16 +59,13 @@ namespace BlazorApp.Api
                 }
 
                 // Create response with user profile data
+                // Only return properties that work with User.ReadBasic.All permission
                 var response = req.CreateResponse(HttpStatusCode.OK);
                 await response.WriteAsJsonAsync(new
                 {
                     id = userProfile.Id,
                     displayName = userProfile.DisplayName,
-                    email = userProfile.Mail ?? userProfile.UserPrincipalName,
-                    jobTitle = userProfile.JobTitle,
-                    officeLocation = userProfile.OfficeLocation,
-                    mobilePhone = userProfile.MobilePhone,
-                    businessPhones = userProfile.BusinessPhones
+                    email = userProfile.Mail ?? userProfile.UserPrincipalName
                 });
 
                 return response;

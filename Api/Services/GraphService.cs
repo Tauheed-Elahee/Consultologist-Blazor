@@ -56,8 +56,19 @@ namespace BlazorApp.Api.Services
                 // Create Graph client
                 var graphClient = new GraphServiceClient(credential);
 
-                // Get user profile
-                var user = await graphClient.Users[userId].GetAsync();
+                // Get user profile with limited properties to work with User.ReadBasic.All permission
+                // Only request properties that don't require User.Read.All
+                var user = await graphClient.Users[userId]
+                    .GetAsync(requestConfiguration =>
+                    {
+                        requestConfiguration.QueryParameters.Select = new[]
+                        {
+                            "id",
+                            "displayName",
+                            "mail",
+                            "userPrincipalName"
+                        };
+                    });
 
                 _logger.LogInformation("Successfully retrieved profile for user: {DisplayName}", user?.DisplayName);
 

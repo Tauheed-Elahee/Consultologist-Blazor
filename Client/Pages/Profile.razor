@@ -56,21 +56,6 @@ else if (isAuthenticated)
                     <dt>Email:</dt>
                     <dd>@(profile.Email ?? "(not available)")</dd>
 
-                    <dt>Job Title:</dt>
-                    <dd>@(profile.JobTitle ?? "(not available)")</dd>
-
-                    <dt>Office Location:</dt>
-                    <dd>@(profile.OfficeLocation ?? "(not available)")</dd>
-
-                    <dt>Mobile Phone:</dt>
-                    <dd>@(profile.MobilePhone ?? "(not available)")</dd>
-
-                    @if (profile.BusinessPhones != null && profile.BusinessPhones.Any())
-                    {
-                        <dt>Business Phones:</dt>
-                        <dd>@string.Join(", ", profile.BusinessPhones)</dd>
-                    }
-
                     <dt>User ID (from Graph):</dt>
                     <dd>@(profile.Id ?? "(not available)")</dd>
                 </dl>

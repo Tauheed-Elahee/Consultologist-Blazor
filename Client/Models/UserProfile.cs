@@ -12,17 +12,5 @@ namespace BlazorApp.Client.Models
 
         [JsonPropertyName("email")]
         public string? Email { get; set; }
-
-        [JsonPropertyName("jobTitle")]
-        public string? JobTitle { get; set; }
-
-        [JsonPropertyName("officeLocation")]
-        public string? OfficeLocation { get; set; }
-
-        [JsonPropertyName("mobilePhone")]
-        public string? MobilePhone { get; set; }
-
-        [JsonPropertyName("businessPhones")]
-        public List<string>? BusinessPhones { get; set; }
     }
 }
