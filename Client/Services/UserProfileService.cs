@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using BlazorApp.Client.Models;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
+using Microsoft.Extensions.Http;
 
 namespace BlazorApp.Client.Services
 {
