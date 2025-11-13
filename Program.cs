@@ -14,16 +14,21 @@ builder.Services.AddMsalAuthentication(options =>
             .Add("https://graph.microsoft.com/User.Read");
 });
 
-builder.Services.AddScoped(sp =>
+// Named HttpClient for authenticated Graph API calls
+builder.Services.AddHttpClient("GraphAPI", client =>
 {
-    var authorizationMessageHandler =
-        sp.GetRequiredService<AuthorizationMessageHandler>();
-    authorizationMessageHandler.InnerHandler = new HttpClientHandler();
-    authorizationMessageHandler.ConfigureHandler(
-        authorizedUrls: new[] { "https://graph.microsoft.com/v1.0" },
+    client.BaseAddress = new Uri("https://graph.microsoft.com/v1.0/");
+})
+.AddHttpMessageHandler(sp =>
+{
+    var handler = sp.GetRequiredService<AuthorizationMessageHandler>();
+    handler.ConfigureHandler(
+        authorizedUrls: new[] { "https://graph.microsoft.com" },
         scopes: new[] { "User.Read" });
-
-    return new HttpClient(authorizationMessageHandler);
+    return handler;
 });
+
+// Default HttpClient without authentication
+builder.Services.AddScoped(sp => new HttpClient());
 
 await builder.Build().RunAsync();

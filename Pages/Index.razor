@@ -1,7 +1,7 @@
 ﻿@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
-@inject HttpClient Http
+@inject IHttpClientFactory HttpClientFactory
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 @page "/"
@@ -40,7 +40,8 @@
         {
           try
           {
-            using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+            var httpClient = HttpClientFactory.CreateClient("GraphAPI");
+            using var response = await httpClient.GetAsync("me");
             response.EnsureSuccessStatusCode();
             graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
           }
