@@ -355,3 +355,9 @@ healthchecksdb
 
 # Azure Functions local settings
 Api/local.settings.json
+
+# Old versions of the project
+Old/
+old/
+.Old/
+.old/
