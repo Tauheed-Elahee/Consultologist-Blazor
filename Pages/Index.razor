@@ -1,8 +1,7 @@
 ﻿@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
-@inject IHttpClientFactory HttpClientFactory
-@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject HttpClient Http
 
 @page "/"
 
@@ -32,25 +31,16 @@
 
       protected override async Task OnInitializedAsync()
       {
-        // Check if user is authenticated BEFORE calling Graph API
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var user = authState.User;
-
-        if (user.Identity?.IsAuthenticated == true)
+        try
         {
-          try
-          {
-            var httpClient = HttpClientFactory.CreateClient("GraphAPI");
-            using var response = await httpClient.GetAsync("me");
-            response.EnsureSuccessStatusCode();
-            graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
-          }
-          catch (AccessTokenNotAvailableException exception)
-          {
-            exception.Redirect();
-          }
+          using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+          response.EnsureSuccessStatusCode();
+          graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
         }
-        // If not authenticated, do nothing - no redirect
+        catch (AccessTokenNotAvailableException exception)
+        {
+          exception.Redirect();
+        }
       }
 
     }
