@@ -1,6 +1,6 @@
-using System;
+﻿using System;
 
-namespace BlazorStaticWebApps.Shared
+namespace BlazorApp.Shared
 {
     public class WeatherForecast
     {
@@ -8,7 +8,7 @@ namespace BlazorStaticWebApps.Shared
 
         public int TemperatureC { get; set; }
 
-        public string Summary { get; set; } = string.Empty;
+        public string Summary { get; set; }
 
         public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
     }
