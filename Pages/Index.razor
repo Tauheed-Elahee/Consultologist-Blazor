@@ -1,4 +1,4 @@
-﻿@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
 @inject HttpClient Http
@@ -25,24 +25,32 @@
 
          <p>Refreshing this page will continue to use the cached access token acquired for Microsoft Graph, which is valid for future page views will attempt to refresh this token as it nears its expiration.</p>
     }
-
-    @code {
-      private JsonDocument? graphApiResponse = null;
-
-      protected override async Task OnInitializedAsync()
-      {
-        try
-        {
-          using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
-          response.EnsureSuccessStatusCode();
-          graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
-        }
-        catch (AccessTokenNotAvailableException exception)
-        {
-          exception.Redirect();
-        }
-      }
-
-    }
   </Authorized>
 </AuthorizeView>
+
+@code {
+  [CascadingParameter]
+  private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+  private JsonDocument? graphApiResponse = null;
+
+  protected override async Task OnInitializedAsync()
+  {
+    var authState = await AuthenticationStateTask!;
+    var user = authState.User;
+
+    if (user.Identity?.IsAuthenticated == true)
+    {
+      try
+      {
+        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+        response.EnsureSuccessStatusCode();
+        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+      }
+      catch (AccessTokenNotAvailableException exception)
+      {
+        exception.Redirect();
+      }
+    }
+  }
+}
