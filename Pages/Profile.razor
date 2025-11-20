@@ -1,0 +1,55 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using System.Text.Json
+@inject HttpClient Http
+@attribute [Authorize]
+
+@page "/profile"
+
+<PageTitle>Profile</PageTitle>
+
+<h1>Your Profile</h1>
+
+<AuthorizeView>
+  <Authorized>
+    @if (graphApiResponse != null)
+    {
+         <p>Below is your user information retrieved from Microsoft Graph's <code>/me</code> API:</p>
+
+         <p><pre><code class="language-js">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre></p>
+
+         <p>Refreshing this page will continue to use the cached access token acquired for Microsoft Graph, which is valid for future page views and will attempt to refresh this token as it nears its expiration.</p>
+    }
+    else
+    {
+         <p>Loading your profile information...</p>
+    }
+  </Authorized>
+</AuthorizeView>
+
+@code {
+  [CascadingParameter]
+  private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+  private JsonDocument? graphApiResponse = null;
+
+  protected override async Task OnInitializedAsync()
+  {
+    var authState = await AuthenticationStateTask!;
+    var user = authState.User;
+
+    if (user.Identity?.IsAuthenticated == true)
+    {
+      try
+      {
+        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+        response.EnsureSuccessStatusCode();
+        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+      }
+      catch (AccessTokenNotAvailableException exception)
+      {
+        exception.Redirect();
+      }
+    }
+  }
+}
