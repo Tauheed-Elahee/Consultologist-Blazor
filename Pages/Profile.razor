@@ -9,24 +9,47 @@
 
 <PageTitle>Profile</PageTitle>
 
-<h1>Your Profile</h1>
+<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
+    <FluentLabel Typo="Typography.H3">Your Profile</FluentLabel>
 
-<AuthorizeView>
-  <Authorized>
-    @if (graphApiResponse != null)
-    {
-         <p>Below is your user information retrieved from Microsoft Graph's <code>/me</code> API:</p>
+    <AuthorizeView>
+        <Authorized>
+            @if (graphApiResponse != null)
+            {
+                <FluentCard>
+                    <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
+                        <FluentLabel Typo="Typography.H5">
+                            User Information from Microsoft Graph
+                        </FluentLabel>
 
-         <p><pre><code class="language-js">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre></p>
+                        <FluentLabel Typo="Typography.Body">
+                            Below is your user information retrieved from Microsoft Graph's <code>/me</code> API:
+                        </FluentLabel>
 
-         <p>Refreshing this page will continue to use the cached access token acquired for Microsoft Graph, which is valid for future page views and will attempt to refresh this token as it nears its expiration.</p>
-    }
-    else
-    {
-         <p>Loading your profile information...</p>
-    }
-  </Authorized>
-</AuthorizeView>
+                        <FluentStack Orientation="Orientation.Vertical"
+                                     Style="background: var(--neutral-layer-2); padding: 1rem; border-radius: 4px; overflow-x: auto;">
+                            <pre style="margin: 0;"><code class="language-json">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre>
+                        </FluentStack>
+
+                        <FluentMessageBar Intent="MessageIntent.Info">
+                            Refreshing this page will continue to use the cached access token acquired for Microsoft Graph,
+                            which is valid for future page views and will attempt to refresh this token as it nears its expiration.
+                        </FluentMessageBar>
+                    </FluentStack>
+                </FluentCard>
+            }
+            else
+            {
+                <FluentCard>
+                    <FluentStack Orientation="Orientation.Horizontal" HorizontalGap="16" VerticalAlignment="VerticalAlignment.Center">
+                        <FluentProgressRing />
+                        <FluentLabel Typo="Typography.Body">Loading your profile information...</FluentLabel>
+                    </FluentStack>
+                </FluentCard>
+            }
+        </Authorized>
+    </AuthorizeView>
+</FluentStack>
 
 @code {
   [CascadingParameter]

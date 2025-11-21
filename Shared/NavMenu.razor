@@ -1,38 +1,21 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">BlazorWasm</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-    </div>
-</div>
+<FluentStack Orientation="Orientation.Vertical" Style="width: 100%">
+    <FluentStack Orientation="Orientation.Horizontal" Class="nav-header">
+        <FluentLabel Typo="Typography.H5" Color="Color.Accent">Consultologist</FluentLabel>
+    </FluentStack>
 
-<div class="@NavMenuCssClass" @onclick="ToggleNavMenu">
-    <nav class="flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="oi oi-home" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
+    <FluentDivider Style="width: 100%;" />
+
+    <FluentNavMenu Style="width: 100%">
+        <FluentNavLink Href="" Match="NavLinkMatch.All">
+            Home
+        </FluentNavLink>
+
         <AuthorizeView>
             <Authorized>
-                <div class="nav-item px-3">
-                    <NavLink class="nav-link" href="profile">
-                        <span class="oi oi-person" aria-hidden="true"></span> Profile
-                    </NavLink>
-                </div>
+                <FluentNavLink Href="profile">
+                    Profile
+                </FluentNavLink>
             </Authorized>
         </AuthorizeView>
-    </nav>
-</div>
-
-@code {
-    private bool collapseNavMenu = true;
-
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
-
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
-    }
-}
+    </FluentNavMenu>
+</FluentStack>
