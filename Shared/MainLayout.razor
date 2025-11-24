@@ -1,12 +1,12 @@
 @inherits LayoutComponentBase
 
-<FluentLayout>
+<FluentLayout Style="height: 100vh; display: flex; flex-direction: column;">
 	<Header />
-    <FluentStack Orientation="Orientation.Horizontal" Width="100%" Style="min-height: 100vh;">
-        <div class="sidebar">
+    <FluentStack Orientation="Orientation.Horizontal" Width="100%" Style="flex: 1; overflow: hidden;">
+        <div class="sidebar" style="overflow-y: auto; height: 100%;">
             <NavMenu />
         </div>
-        <FluentStack Class="content" Width="100%" Style="padding: 2rem;">
+        <FluentStack Class="content" Width="100%" Style="padding: 2rem; overflow-y: auto;">
             @Body
         </FluentStack>
     </FluentStack>
