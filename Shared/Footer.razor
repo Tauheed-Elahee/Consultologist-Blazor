@@ -1,11 +1,20 @@
-<FluentFooter Style="flex-shrink: 0;">
-    <FluentStack Orientation="Orientation.Horizontal" HorizontalAlignment="HorizontalAlignment.Center" VerticalAlignment="VerticalAlignment.Center">
-        <FluentLabel>
-            &copy; 2025 - Consultologist.Blazor
-        </FluentLabel>
-        <FluentDivider Role="DividerRole.Presentation" Orientation="Orientation.Vertical" Style="height: 1rem; margin: 0 0.5rem;" />
-        <FluentAnchor Href="https://github.com/yourusername/Consultologist.Blazor" Appearance="Appearance.Lightweight" Target="_blank">
-            GitHub
-        </FluentAnchor>
+<FluentFooter Style="flex-shrink: 0; border-top: 1px solid var(--neutral-stroke-divider-rest); background: var(--neutral-layer-1); padding: 0.75rem 0;">
+    <FluentStack Orientation="Orientation.Horizontal" HorizontalAlignment="HorizontalAlignment.Center" Width="100%">
+        <FluentStack Orientation="Orientation.Horizontal" Width="100%" Style="max-width: 1600px; padding: 0 2rem;">
+            <FluentStack Orientation="Orientation.Horizontal" HorizontalGap="24" VerticalAlignment="VerticalAlignment.Center" Wrap="true">
+                <FluentLabel Style="font-size: 12px; color: var(--neutral-foreground-hint);">
+                    &copy; 2025 Consultologist
+                </FluentLabel>
+                <FluentAnchor Href="https://github.com/yourusername/Consultologist.Blazor" Appearance="Appearance.Lightweight" Target="_blank" Style="font-size: 12px;">
+                    GitHub
+                </FluentAnchor>
+                <FluentAnchor Href="#" Appearance="Appearance.Lightweight" Style="font-size: 12px;">
+                    Privacy
+                </FluentAnchor>
+                <FluentAnchor Href="#" Appearance="Appearance.Lightweight" Style="font-size: 12px;">
+                    Terms of Use
+                </FluentAnchor>
+            </FluentStack>
+        </FluentStack>
     </FluentStack>
 </FluentFooter>
