@@ -13,13 +13,18 @@
         </FluentStack>
     </Authorized>
     <NotAuthorized>
-        <FluentButton Appearance="Appearance.Accent" Href="authentication/login">
+        <FluentButton Appearance="Appearance.Accent" @onclick="BeginLogin">
             Log in
         </FluentButton>
     </NotAuthorized>
 </AuthorizeView>
 
 @code{
+    private void BeginLogin()
+    {
+        Navigation.NavigateToLogin("authentication/login");
+    }
+
     private void BeginLogout()
     {
         Navigation.NavigateToLogout("authentication/logout");
