@@ -1,0 +1,47 @@
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using System.Text.Json
+@inject HttpClient Http
+@attribute [Authorize]
+
+@page "/templates"
+
+<PageTitle>Templates</PageTitle>
+
+<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
+    <FluentLabel Typo="Typography.H3">Templates</FluentLabel>
+
+    <AuthorizeView>
+        <Authorized>
+        	<FluentLabel>This a page for templates with authorized view</FluentLabel>
+        </Authorized>
+    </AuthorizeView>
+</FluentStack>
+
+@code {
+  [CascadingParameter]
+  private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+  private JsonDocument? graphApiResponse = null;
+
+  protected override async Task OnInitializedAsync()
+  {
+    var authState = await AuthenticationStateTask!;
+    var user = authState.User;
+
+    if (user.Identity?.IsAuthenticated == true)
+    {
+      try
+      {
+        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+        response.EnsureSuccessStatusCode();
+        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+      }
+      catch (AccessTokenNotAvailableException exception)
+      {
+        exception.Redirect();
+      }
+    }
+  }
+}
