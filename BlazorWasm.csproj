@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+		<PackageReference Include="Scriban" Version="6.5.2" />
+		<PackageReference Include="Json.Schema.Net" Version="7.2.3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ServiceWorker Include="wwwroot\service-worker.js" PublishedContent="wwwroot\service-worker.published.js" />
   </ItemGroup>
 
