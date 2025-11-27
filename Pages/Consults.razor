@@ -39,17 +39,21 @@
                                      Placeholder="Enter draft for the consult"
                                      Style="max-width: 420px;" />
                     <FluentButton Appearance="Appearance.Accent"
-                                  @onclick="LoadConsultTemplateAsync"
-                                  Disabled="@isTemplateLoading">
+                                  @onclick="LoadSchemaAsync"
+                                  Disabled="@isSchemaLoading">
                         Create consult
                     </FluentButton>
-                    @if (isTemplateLoading)
+                    @if (isTemplateLoading || isSchemaLoading)
                     {
                         <FluentProgressRing />
                     }
                     @if (!string.IsNullOrEmpty(templateLoadError))
                     {
                         <FluentMessageBar Intent="MessageIntent.Error">@templateLoadError</FluentMessageBar>
+                    }
+                    @if (!string.IsNullOrEmpty(schemaLoadError))
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
                     }
                 </div>
 
@@ -75,6 +79,9 @@
   private string? renderedTemplateContent;
   private bool isTemplateLoading;
   private string? templateLoadError;
+  private string? renderedSchemaContent;
+  private bool isSchemaLoading;
+  private string? schemaLoadError;
 
   protected override async Task OnInitializedAsync()
   {
@@ -114,6 +121,27 @@
     finally
     {
       isTemplateLoading = false;
+    }
+  }
+
+  private async Task LoadSchemaAsync()
+  {
+    schemaLoadError = null;
+    renderedSchemaContent = null;
+
+    try
+    {
+      isSchemaLoading = true;
+      var schemaUri = new Uri(new Uri(Navigation.BaseUri), selectedSchemaPath);
+      renderedSchemaContent = await Http.GetStringAsync(schemaUri);
+    }
+    catch (Exception ex)
+    {
+      schemaLoadError = $"Unable to load schema: {ex.Message}";
+    }
+    finally
+    {
+      isSchemaLoading = false;
     }
   }
 
