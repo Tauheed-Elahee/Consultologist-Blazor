@@ -1,0 +1,22 @@
+.consult-builder {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+
+.consult-section {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.consult-template-label {
+	border: 1px solid var(--neutral-stroke-divider-rest);
+	border-radius: 4px;
+	padding: 16px;
+	background: var(--neutral-layer-1);
+	min-height: 200px;
+	white-space: pre-wrap;
+	font-family:
+		"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}

@@ -17,8 +17,8 @@
         <Authorized>
             <FluentLabel>This a page for consults with authorized view</FluentLabel>
 
-            <div class="consult-builder" style="display: flex; flex-direction: column; gap: 24px;">
-                <div class="consult-section" style="display: flex; flex-direction: column; gap: 12px;">
+            <div class="consult-builder">
+                <div class="consult-section">
                     <FluentLabel Typo="Typography.H5">Render context schema</FluentLabel>
                     <FluentSelect TOption="string"
                                   @bind-Value="selectedSchemaPath"
@@ -32,7 +32,7 @@
                     <FluentLabel Typo="Typography.Body">Schema path: @selectedSchemaPath</FluentLabel>
                 </div>
 
-                <div class="consult-section" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="consult-section">
                     <FluentLabel Typo="Typography.H5">Consult details</FluentLabel>
                     <FluentTextField @bind-Value="consultTitle"
                                      Label="Consult name"
@@ -53,7 +53,7 @@
                     }
                 </div>
 
-                <div class="consult-template-label" style="border: 1px solid var(--neutral-stroke-divider-rest); border-radius: 4px; padding: 16px; background: var(--neutral-layer-1); min-height: 200px; white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;">
+                <div class="consult-template-label">
                     @(renderedTemplateContent ?? string.Empty)
                 </div>
             </div>
