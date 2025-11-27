@@ -3,6 +3,7 @@
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
 @inject HttpClient Http
+@inject NavigationManager Navigation
 @attribute [Authorize]
 
 @page "/consults"
@@ -14,7 +15,48 @@
 
     <AuthorizeView>
         <Authorized>
-        	<FluentLabel>This a page for consults with authorized view</FluentLabel>
+            <FluentLabel>This a page for consults with authorized view</FluentLabel>
+
+            <div class="consult-builder" style="display: flex; flex-direction: column; gap: 24px;">
+                <div class="consult-section" style="display: flex; flex-direction: column; gap: 12px;">
+                    <FluentLabel Typo="Typography.H5">Render context schema</FluentLabel>
+                    <FluentSelect TOption="string"
+                                  @bind-Value="selectedSchemaPath"
+                                  Label="Select schema"
+                                  Style="max-width: 420px;">
+                        @foreach (var schema in schemaOptions)
+                        {
+                            <FluentOption TOption="string" Value="@schema.Path">@schema.Label</FluentOption>
+                        }
+                    </FluentSelect>
+                    <FluentLabel Typo="Typography.Body">Schema path: @selectedSchemaPath</FluentLabel>
+                </div>
+
+                <div class="consult-section" style="display: flex; flex-direction: column; gap: 12px;">
+                    <FluentLabel Typo="Typography.H5">Consult details</FluentLabel>
+                    <FluentTextField @bind-Value="consultTitle"
+                                     Label="Consult name"
+                                     Placeholder="Enter a name for the consult"
+                                     Style="max-width: 420px;" />
+                    <FluentButton Appearance="Appearance.Accent"
+                                  @onclick="LoadConsultTemplateAsync"
+                                  Disabled="@isTemplateLoading">
+                        Create consult
+                    </FluentButton>
+                    @if (isTemplateLoading)
+                    {
+                        <FluentProgressRing />
+                    }
+                    @if (!string.IsNullOrEmpty(templateLoadError))
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Error">@templateLoadError</FluentMessageBar>
+                    }
+                </div>
+
+                <div class="consult-template-label" style="border: 1px solid var(--neutral-stroke-divider-rest); border-radius: 4px; padding: 16px; background: var(--neutral-layer-1); min-height: 200px; white-space: pre-wrap; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;">
+                    @(renderedTemplateContent ?? string.Empty)
+                </div>
+            </div>
         </Authorized>
     </AuthorizeView>
 </FluentStack>
@@ -24,6 +66,15 @@
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
   private JsonDocument? graphApiResponse = null;
+  private readonly SchemaOption[] schemaOptions = new[]
+  {
+    new SchemaOption("Mortigen Render Context", "schemas/mortigen_render_context.schema.json")
+  };
+  private string selectedSchemaPath = "schemas/mortigen_render_context.schema.json";
+  private string consultTitle = string.Empty;
+  private string? renderedTemplateContent;
+  private bool isTemplateLoading;
+  private string? templateLoadError;
 
   protected override async Task OnInitializedAsync()
   {
@@ -44,4 +95,27 @@
       }
     }
   }
+
+  private async Task LoadConsultTemplateAsync()
+  {
+    templateLoadError = null;
+    renderedTemplateContent = null;
+
+    try
+    {
+      isTemplateLoading = true;
+      var templateUri = new Uri(new Uri(Navigation.BaseUri), "templates/consult_template.liquid");
+      renderedTemplateContent = await Http.GetStringAsync(templateUri);
+    }
+    catch (Exception ex)
+    {
+      templateLoadError = $"Unable to load template: {ex.Message}";
+    }
+    finally
+    {
+      isTemplateLoading = false;
+    }
+  }
+
+  private sealed record SchemaOption(string Label, string Path);
 }
