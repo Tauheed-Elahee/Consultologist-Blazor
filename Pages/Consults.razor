@@ -39,7 +39,7 @@
                                      Placeholder="Enter draft for the consult"
                                      Style="max-width: 420px;" />
                     <FluentButton Appearance="Appearance.Accent"
-                                  @onclick="LoadSchemaAsync"
+                                  @onclick="async () => { await LoadSchemaAsync(); await CreateAIRequestAsync(); }"
                                   Disabled="@(isSchemaLoading || string.IsNullOrEmpty(consultDraft))">
                         Create consult
                     </FluentButton>
@@ -58,15 +58,7 @@
 {
 	<FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
 }
-@(renderedTemplateContent ?? string.Empty)
-Text:
-```
-@(consultDraft ?? string.Empty)
-```
-JSON Schema:
-```
-@(renderedSchemaContent ?? string.Empty)
-```
+@(aiRequest ?? string.Empty)
                 </div>
             </div>
         </Authorized>
@@ -84,12 +76,14 @@ JSON Schema:
   };
   private string selectedSchemaPath = "schemas/mortigen_render_context.schema.json";
   private string consultDraft = string.Empty;
-  private string? renderedTemplateContent;
-  private bool isTemplateLoading;
-  private string? templateLoadError;
   private string? renderedSchemaContent;
   private bool isSchemaLoading;
   private string? schemaLoadError;
+  private string? aiRequest;
+  private string? aiResponse;
+  private string? renderedTemplateContent;
+  private bool isTemplateLoading;
+  private string? templateLoadError;
 
   protected override async Task OnInitializedAsync()
   {
@@ -150,6 +144,37 @@ JSON Schema:
     finally
     {
       isSchemaLoading = false;
+    }
+  }
+
+  private async Task CreateAIRequestAsync()
+  {
+    aiRequest = null;
+    aiResponse = null;
+
+    if (!string.IsNullOrEmpty(consultDraft) && !string.IsNullOrEmpty(renderedSchemaContent))
+    {
+      try
+      {
+        aiRequest = $@"Text:
+```
+{consultDraft}
+```
+
+JSONSchema:
+```
+{renderedSchemaContent}
+``";
+        // aiResponse = await Http.PostAsJsonAsync("api/ai", aiRequest);
+      }
+      catch (Exception ex)
+      {
+        aiRequest = $"Unable to create AI request: {ex.Message}";
+      }
+    }
+    else
+    {
+      aiRequest = "Require both Consult Draft and Schema Path";
     }
   }
 
