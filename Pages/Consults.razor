@@ -43,6 +43,9 @@
                                   Disabled="@isSchemaLoading">
                         Create consult
                     </FluentButton>
+                </div>
+
+                <div class="consult-template-label">
                     @if (isTemplateLoading || isSchemaLoading)
                     {
                         <FluentProgressRing />
@@ -55,10 +58,8 @@
                     {
                         <FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
                     }
-                </div>
-
-                <div class="consult-template-label">
                     @(renderedTemplateContent ?? string.Empty)
+                    @(renderedSchemaContent ?? string.Empty)
                 </div>
             </div>
         </Authorized>
