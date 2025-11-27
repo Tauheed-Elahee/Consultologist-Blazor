@@ -34,9 +34,9 @@
 
                 <div class="consult-section">
                     <FluentLabel Typo="Typography.H5">Consult details</FluentLabel>
-                    <FluentTextField @bind-Value="consultTitle"
-                                     Label="Consult name"
-                                     Placeholder="Enter a name for the consult"
+                    <FluentTextArea @bind-Value="consultDraft"
+                                     Label="Consult draft"
+                                     Placeholder="Enter draft for the consult"
                                      Style="max-width: 420px;" />
                     <FluentButton Appearance="Appearance.Accent"
                                   @onclick="LoadConsultTemplateAsync"
@@ -71,7 +71,7 @@
     new SchemaOption("Mortigen Render Context", "schemas/mortigen_render_context.schema.json")
   };
   private string selectedSchemaPath = "schemas/mortigen_render_context.schema.json";
-  private string consultTitle = string.Empty;
+  private string consultDraft = string.Empty;
   private string? renderedTemplateContent;
   private bool isTemplateLoading;
   private string? templateLoadError;
