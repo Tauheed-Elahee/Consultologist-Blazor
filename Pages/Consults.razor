@@ -40,26 +40,33 @@
                                      Style="max-width: 420px;" />
                     <FluentButton Appearance="Appearance.Accent"
                                   @onclick="LoadSchemaAsync"
-                                  Disabled="@isSchemaLoading">
+                                  Disabled="@(isSchemaLoading || string.IsNullOrEmpty(consultDraft))">
                         Create consult
                     </FluentButton>
                 </div>
 
                 <div class="consult-template-label">
-                    @if (isTemplateLoading || isSchemaLoading)
-                    {
-                        <FluentProgressRing />
-                    }
-                    @if (!string.IsNullOrEmpty(templateLoadError))
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Error">@templateLoadError</FluentMessageBar>
-                    }
-                    @if (!string.IsNullOrEmpty(schemaLoadError))
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
-                    }
-                    @(renderedTemplateContent ?? string.Empty)
-                    @(renderedSchemaContent ?? string.Empty)
+@if (isTemplateLoading || isSchemaLoading)
+{
+	<FluentProgressRing />
+}
+@if (!string.IsNullOrEmpty(templateLoadError))
+{
+	<FluentMessageBar Intent="MessageIntent.Error">@templateLoadError</FluentMessageBar>
+}
+@if (!string.IsNullOrEmpty(schemaLoadError))
+{
+	<FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
+}
+@(renderedTemplateContent ?? string.Empty)
+Text:
+```
+@(consultDraft ?? string.Empty)
+```
+JSON Schema:
+```
+@(renderedSchemaContent ?? string.Empty)
+```
                 </div>
             </div>
         </Authorized>
