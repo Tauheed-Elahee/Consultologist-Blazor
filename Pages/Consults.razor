@@ -4,6 +4,7 @@
 @using System.Text.Json
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IConfiguration Configuration
 @attribute [Authorize]
 
 @page "/consults"
@@ -40,13 +41,13 @@
                                      Style="max-width: 420px;" />
                     <FluentButton Appearance="Appearance.Accent"
                                   @onclick="async () => { await LoadSchemaAsync(); await CreateAIRequestAsync(); }"
-                                  Disabled="@(isSchemaLoading || string.IsNullOrEmpty(consultDraft))">
+                                  Disabled="@(isSchemaLoading || isAiRequestLoading || string.IsNullOrEmpty(consultDraft))">
                         Create consult
                     </FluentButton>
                 </div>
 
                 <div class="consult-template-label">
-@if (isTemplateLoading || isSchemaLoading)
+@if (isTemplateLoading || isSchemaLoading || isAiRequestLoading)
 {
 	<FluentProgressRing />
 }
@@ -58,7 +59,17 @@
 {
 	<FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
 }
-@(aiRequest ?? string.Empty)
+@if (!string.IsNullOrEmpty(aiRequestError))
+{
+	<FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
+}
+@if (!string.IsNullOrEmpty(aiResponse))
+{
+	<div>
+		<FluentLabel Typo="Typography.H6">AI Response:</FluentLabel>
+		<pre style="white-space: pre-wrap; word-wrap: break-word;">@aiResponse</pre>
+	</div>
+}
                 </div>
             </div>
         </Authorized>
@@ -79,6 +90,8 @@
   private string? renderedSchemaContent;
   private bool isSchemaLoading;
   private string? schemaLoadError;
+  private bool isAiRequestLoading;
+  private string? aiRequestError;
   private string? aiRequest;
   private string? aiResponse;
   private string? renderedTemplateContent;
@@ -149,32 +162,58 @@
 
   private async Task CreateAIRequestAsync()
   {
-    aiRequest = null;
+    aiRequestError = null;
     aiResponse = null;
 
     if (!string.IsNullOrEmpty(consultDraft) && !string.IsNullOrEmpty(renderedSchemaContent))
     {
       try
       {
-        aiRequest = $@"Text:
-```
-{consultDraft}
-```
+        isAiRequestLoading = true;
 
-JSONSchema:
-```
-{renderedSchemaContent}
-``";
-        // aiResponse = await Http.PostAsJsonAsync("api/ai", aiRequest);
+        // Read Azure AI configuration
+        var endpoint = Configuration["AzureAI:Endpoint"];
+        var agentId = Configuration["AzureAI:AgentId"];
+        var apiKey = Configuration["AzureAI:ApiKey"];
+
+        if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentId) || string.IsNullOrEmpty(apiKey))
+        {
+          aiRequestError = "Azure AI configuration is missing. Please check appsettings.";
+          return;
+        }
+
+        // Build the request message
+        aiRequest = $"Text: {consultDraft}\n\nJSON Schema: {renderedSchemaContent}";
+
+        // Create HTTP request to Azure AI Foundry agent
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{endpoint}/agents/{agentId}/runs");
+        request.Headers.Add("api-key", apiKey);
+        request.Content = JsonContent.Create(new { message = aiRequest });
+
+        // Send request
+        using var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        // Parse response
+        var responseContent = await response.Content.ReadAsStringAsync();
+        aiResponse = responseContent;
+      }
+      catch (HttpRequestException ex)
+      {
+        aiRequestError = $"HTTP error calling Azure AI: {ex.Message}";
       }
       catch (Exception ex)
       {
-        aiRequest = $"Unable to create AI request: {ex.Message}";
+        aiRequestError = $"Unable to create AI request: {ex.Message}";
+      }
+      finally
+      {
+        isAiRequestLoading = false;
       }
     }
     else
     {
-      aiRequest = "Require both Consult Draft and Schema Path";
+      aiRequestError = "Require both Consult Draft and loaded Schema";
     }
   }
 

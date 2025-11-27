@@ -352,6 +352,8 @@ healthchecksdb
 /playwright-report/
 /playwright/.cache/
 .env
+.example-code.cs
+wwwroot/appsettings.Development.json
 
 # Azure Functions local settings
 Api/local.settings.json
