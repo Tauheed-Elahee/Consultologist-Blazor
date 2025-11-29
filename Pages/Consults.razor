@@ -2,9 +2,11 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
+@using BlazorWasm.Services.AI
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
+@inject IAIEndpointService AIService
 @attribute [Authorize]
 
 @page "/consults"
@@ -92,7 +94,6 @@
   private string? schemaLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
-  private string? aiRequest;
   private string? aiResponse;
   private string? renderedTemplateContent;
   private bool isTemplateLoading;
@@ -170,100 +171,11 @@
       try
       {
         isAiRequestLoading = true;
-
-        // Read Azure AI configuration
-        var endpoint = Configuration["AzureAI:Endpoint"];
-        var agentId = Configuration["AzureAI:AgentId"];
-        var apiKey = Configuration["AzureAI:ApiKey"];
-        var apiVersion = Configuration["AzureAI:ApiVersion"] ?? "2025-05-01";
-
-        if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentId) || string.IsNullOrEmpty(apiKey))
-        {
-          aiRequestError = "Azure AI configuration is missing. Please check appsettings.";
-          return;
-        }
-
-        // Build the message content
-        var messageContent = $"Text: {consultDraft}\n\nJSON Schema: {renderedSchemaContent}";
-
-        // Step 1: Create a thread
-        var threadResponse = await SendAzureAIRequest(
-          HttpMethod.Post,
-          $"{endpoint}/threads?api-version={apiVersion}",
-          apiKey,
-          new { });
-        var threadId = threadResponse.GetProperty("id").GetString();
-
-        // Step 2: Add message to thread
-        await SendAzureAIRequest(
-          HttpMethod.Post,
-          $"{endpoint}/threads/{threadId}/messages?api-version={apiVersion}",
-          apiKey,
-          new { role = "user", content = messageContent });
-
-        // Step 3: Create run with agent ID
-        var runResponse = await SendAzureAIRequest(
-          HttpMethod.Post,
-          $"{endpoint}/threads/{threadId}/runs?api-version={apiVersion}",
-          apiKey,
-          new { assistant_id = agentId });
-        var runId = runResponse.GetProperty("id").GetString();
-
-        // Step 4: Poll run status until complete
-        JsonElement runStatusResponse;
-        string runStatus;
-        do
-        {
-          await Task.Delay(1000); // Wait 1 second between polls
-          runStatusResponse = await SendAzureAIRequest(
-            HttpMethod.Get,
-            $"{endpoint}/threads/{threadId}/runs/{runId}?api-version={apiVersion}",
-            apiKey,
-            null);
-          runStatus = runStatusResponse.GetProperty("status").GetString() ?? "";
-        } while (runStatus == "queued" || runStatus == "in_progress" || runStatus == "cancelling");
-
-        if (runStatus == "completed")
-        {
-          // Step 5: Retrieve messages
-          var messagesResponse = await SendAzureAIRequest(
-            HttpMethod.Get,
-            $"{endpoint}/threads/{threadId}/messages?api-version={apiVersion}",
-            apiKey,
-            null);
-
-          // Extract the assistant's response (first message in the list)
-          if (messagesResponse.TryGetProperty("data", out var messages) && messages.GetArrayLength() > 0)
-          {
-            var assistantMessage = messages[0];
-            if (assistantMessage.TryGetProperty("content", out var content) && content.GetArrayLength() > 0)
-            {
-              var textContent = content[0];
-              if (textContent.TryGetProperty("text", out var text) &&
-                  text.TryGetProperty("value", out var value))
-              {
-                aiResponse = value.GetString();
-              }
-            }
-          }
-
-          if (string.IsNullOrEmpty(aiResponse))
-          {
-            aiResponse = messagesResponse.ToString();
-          }
-        }
-        else
-        {
-          aiRequestError = $"Run failed with status: {runStatus}";
-        }
-      }
-      catch (HttpRequestException ex)
-      {
-        aiRequestError = $"HTTP error calling Azure AI: {ex.Message}";
+        aiResponse = await AIService.InvokeAgentAsync(consultDraft, renderedSchemaContent);
       }
       catch (Exception ex)
       {
-        aiRequestError = $"Unable to create AI request: {ex.Message}";
+        aiRequestError = $"Error calling agent: {ex.Message}";
       }
       finally
       {
@@ -274,23 +186,6 @@
     {
       aiRequestError = "Require both Consult Draft and loaded Schema";
     }
-  }
-
-  private async Task<JsonElement> SendAzureAIRequest(HttpMethod method, string url, string apiKey, object? body)
-  {
-    using var request = new HttpRequestMessage(method, url);
-    request.Headers.Add("api-key", apiKey);
-
-    if (body != null)
-    {
-      request.Content = JsonContent.Create(body);
-    }
-
-    using var response = await Http.SendAsync(request);
-    response.EnsureSuccessStatusCode();
-
-    var responseContent = await response.Content.ReadAsStringAsync();
-    return JsonDocument.Parse(responseContent).RootElement;
   }
 
   private sealed record SchemaOption(string Label, string Path);

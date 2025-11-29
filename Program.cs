@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using BlazorWasm;
+using BlazorWasm.Services.AI;
 using Microsoft.FluentUI.AspNetCore.Components;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -28,5 +29,8 @@ builder.Services.AddScoped(sp =>
 
     return new HttpClient(authorizationMessageHandler);
 });
+
+// Register AI Endpoint Service with separate HttpClient (no Graph auth handler)
+builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>();
 
 await builder.Build().RunAsync();
