@@ -1,5 +1,19 @@
 # Azure AI Foundry Integration - Authentication Options
 
+## ✅ RESOLVED - 2025-11-28
+
+**Issue**: Invalid `assistant_id` error when creating runs with Azure AI Foundry agent.
+
+**Root Cause**: Using Azure AI Foundry's internal agent ID format (`consultologist-canada-east-ai:7`) instead of the OpenAI-compatible assistant ID required by the REST API.
+
+**Solution**: Query the `/assistants` endpoint to get the correct `asst_` prefixed ID.
+
+**Correct Assistant ID**: `asst_tx4wK44h3Q4fLrMv3vZAhDy3`
+
+**See**: [Findings-AI-Endpoint.md](./Findings-AI-Endpoint.md) for complete investigation and resolution details.
+
+---
+
 ## Current Status
 
 **Problem**: Getting 401 Unauthorized when attempting to call Azure AI Foundry Agent API endpoints using API key authentication.
