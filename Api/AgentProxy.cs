@@ -70,8 +70,8 @@ public class AgentProxy
                 return new ObjectResult(new AgentResponse(null, "Azure AI configuration missing", false)) { StatusCode = 500 };
             }
 
-            // Get Azure AD token
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://cognitiveservices.azure.com/.default" });
+            // Get Azure AD token for Azure AI Foundry
+            var tokenRequestContext = new TokenRequestContext(new[] { "https://ai.azure.com/.default" });
             var token = await _credential.GetTokenAsync(tokenRequestContext);
 
             // Configure HTTP client with bearer token
