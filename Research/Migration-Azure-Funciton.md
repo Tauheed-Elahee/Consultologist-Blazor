@@ -180,6 +180,34 @@ This suggests that Azure Static Web Apps managed functions have stricter startup
 5. **Independent scaling** - Scale backend independently
 6. **No deployment coupling** - Deploy API without redeploying frontend
 
+## Important: Same Repo, Separate Deployments
+
+**You do NOT need separate repositories!** Keep everything in your current repo and use two GitHub Actions workflows to deploy them separately.
+
+### Repository Structure (No Changes Needed)
+```
+Consultologist-Blazor/
+├── Api/                          # Backend - deploys to Function App
+│   ├── AgentProxy.cs
+│   ├── Program.cs
+│   └── Api.csproj
+├── Pages/                        # Frontend - deploys to Static Web App
+├── wwwroot/
+├── .github/
+│   └── workflows/
+│       ├── azure-static-web-apps-*.yml    # Workflow 1: Frontend
+│       └── deploy-function-app.yml         # Workflow 2: Backend (NEW)
+└── BlazorWasm.csproj
+```
+
+### Benefits of Single Repo, Separate Deployments
+✅ **Single source of truth** - All code in one place  
+✅ **Coordinated changes** - Update frontend and backend together in one PR  
+✅ **Shared CI/CD** - Reuse workflows, secrets, and configuration  
+✅ **Easier code reviews** - See full-stack changes in one PR  
+✅ **Path-based triggering** - Each workflow only runs when its files change  
+✅ **Independent deployments** - Backend can deploy without touching frontend  
+
 ## Migration Plan to Separate Azure Function App
 
 ### Phase 1: Create Azure Function App Resource
@@ -262,7 +290,9 @@ az functionapp cors add \
     "https://gentle-desert-09697700f.3.azurestaticapps.net"
 ```
 
-### Phase 5: Update Deployment Pipeline
+### Phase 5: Update Deployment Pipelines
+
+**Step 5a: Create New Function App Deployment Workflow**
 
 Create `.github/workflows/deploy-function-app.yml`:
 
@@ -271,16 +301,18 @@ name: Deploy Azure Function App
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - 'Api/**'
-  workflow_dispatch:
+      - 'Api/**'  # Only run when API code changes
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
       
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
@@ -301,6 +333,48 @@ jobs:
           package: './Api/output'
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
 ```
+
+**Step 5b: Update Static Web App Workflow**
+
+Update `.github/workflows/azure-static-web-apps-gentle-desert-09697700f.yml`:
+
+Add path filter to avoid rebuilding when only API changes:
+
+```yaml
+name: Azure Static Web Apps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'Api/**'  # Don't rebuild static web app when only API changes
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+  workflow_dispatch:
+
+# ... rest of existing configuration ...
+```
+
+And change the `api_location` to empty:
+
+```yaml
+      - name: Build And Deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          # ... other settings ...
+          app_location: "."
+          api_location: ""  # Empty - no managed functions
+          output_location: "output/wwwroot"
+```
+
+**How This Works:**
+- Changing only **frontend** files → Only Static Web App workflow runs
+- Changing only **Api/** files → Only Function App workflow runs
+- Changing **both** → Both workflows run independently
+- Each deployment is isolated and won't interfere with the other
 
 ### Phase 6: Update Frontend Configuration
 
@@ -329,23 +403,30 @@ Update `wwwroot/appsettings.Development.json`:
 }
 ```
 
-### Phase 7: Remove Api from Static Web App Deployment
+### Phase 7: Get Function App Publish Profile
 
-Update `.github/workflows/azure-static-web-apps-*.yml`:
+To deploy from GitHub Actions, you need the Function App's publish profile:
 
-**Before:**
-```yaml
-app_location: "."
-api_location: "Api"  # REMOVE THIS LINE
-output_location: "output/wwwroot"
+**Option A: Azure Portal**
+1. Go to your Function App in Azure Portal
+2. Click "Download publish profile" in the Overview section
+3. Open the downloaded `.PublishSettings` file
+4. Copy the entire XML content
+
+**Option B: Azure CLI**
+```bash
+az functionapp deployment list-publishing-profiles \
+  --name consultologist-api \
+  --resource-group consultologist_group \
+  --xml
 ```
 
-**After:**
-```yaml
-app_location: "."
-api_location: ""  # Empty - no managed functions
-output_location: "output/wwwroot"
-```
+**Add to GitHub Secrets:**
+1. Go to your GitHub repo → Settings → Secrets and variables → Actions
+2. Click "New repository secret"
+3. Name: `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
+4. Value: Paste the entire publish profile XML
+5. Click "Add secret"
 
 ### Phase 8: Keep Current Code Changes
 
@@ -368,12 +449,49 @@ output_location: "output/wwwroot"
 
 The improvements made (lazy credential initialization, DI registration, timeout handling) are all valid and will work better in a separate Function App. They address the root cause; the issue is just that Static Web Apps managed functions are too restrictive for this use case.
 
-## Next Steps
+## Implementation Checklist
 
-1. ✅ Keep current code changes (do not revert)
-2. Create separate Azure Function App resource
-3. Configure Managed Identity and RBAC
-4. Set up deployment pipeline for Function App
-5. Update frontend to point to new Function App URL
-6. Remove `api_location` from Static Web App workflow
-7. Deploy and test
+### Azure Resource Setup
+- [ ] **Phase 1:** Create Azure Function App resource (Portal or CLI)
+- [ ] **Phase 1:** Enable System-assigned Managed Identity on Function App
+- [ ] **Phase 2:** Configure RBAC - Assign "Cognitive Services User" role to Function App's Managed Identity
+- [ ] **Phase 3:** Configure Function App application settings (AzureAI__ variables)
+- [ ] **Phase 4:** Configure CORS on Function App to allow Static Web App origins
+
+### GitHub Actions Setup
+- [ ] **Phase 5a:** Create `.github/workflows/deploy-function-app.yml`
+- [ ] **Phase 5b:** Update existing Static Web App workflow with `paths-ignore: ['Api/**']`
+- [ ] **Phase 5b:** Change `api_location: ""` in Static Web App workflow
+- [ ] **Phase 7:** Download Function App publish profile
+- [ ] **Phase 7:** Add `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` to GitHub Secrets
+
+### Code Updates
+- [ ] **Phase 6:** Update `wwwroot/appsettings.json` with new Function App URL
+- [ ] **Phase 6:** Update `wwwroot/appsettings.Development.json` (keep localhost)
+- [ ] **Phase 8:** Verify all previous code changes are still in place (do NOT revert)
+
+### Testing & Deployment
+- [ ] Commit and push all changes to trigger deployments
+- [ ] Verify Function App deployment succeeds
+- [ ] Verify Static Web App deployment succeeds (without Api folder)
+- [ ] Test the application end-to-end
+- [ ] Monitor Application Insights for any errors
+
+## Expected Timeline
+
+- **Azure setup:** 15-30 minutes
+- **GitHub Actions setup:** 10-15 minutes
+- **Code updates:** 5 minutes
+- **First deployment:** 5-10 minutes
+- **Testing:** 10-15 minutes
+- **Total:** ~1 hour
+
+## Success Criteria
+
+✅ Function App deploys successfully without timeout errors  
+✅ Static Web App deploys successfully (frontend only)  
+✅ Frontend can call Function App endpoint  
+✅ Function App can authenticate to Azure AI using Managed Identity  
+✅ End-to-end AI agent functionality works  
+✅ CORS is properly configured  
+✅ Both workflows run independently based on file changes
