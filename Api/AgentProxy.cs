@@ -16,13 +16,13 @@ public class AgentProxy
 {
     private readonly ILogger<AgentProxy> _logger;
     private readonly HttpClient _httpClient;
-    private readonly DefaultAzureCredential _credential;
+    private readonly TokenCredential _credential;
 
-    public AgentProxy(ILogger<AgentProxy> logger, IHttpClientFactory httpClientFactory)
+    public AgentProxy(ILogger<AgentProxy> logger, IHttpClientFactory httpClientFactory, TokenCredential credential)
     {
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient();
-        _credential = new DefaultAzureCredential();
+        _credential = credential;
     }
 
     // TODO: Change AuthorizationLevel.Anonymous to AuthorizationLevel.Function for production
@@ -30,11 +30,6 @@ public class AgentProxy
     [Function("AgentProxy")]
     public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "post", "options")] HttpRequest req)
     {
-        // Add CORS headers to all responses
-        req.HttpContext.Response.Headers["Access-Control-Allow-Origin"] = "*";
-        req.HttpContext.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-        req.HttpContext.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-
         // Handle CORS preflight
         if (req.Method == "OPTIONS")
         {
@@ -73,7 +68,23 @@ public class AgentProxy
 
             // Get Azure AD token for Azure AI Foundry
             var tokenRequestContext = new TokenRequestContext(new[] { "https://ai.azure.com/.default" });
-            var token = await _credential.GetTokenAsync(tokenRequestContext);
+
+            AccessToken token;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                token = await _credential.GetTokenAsync(tokenRequestContext, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogError("Token acquisition timed out");
+                return new ObjectResult(new AgentResponse(null, "Authentication timeout", false)) { StatusCode = 500 };
+            }
+            catch (AuthenticationFailedException ex)
+            {
+                _logger.LogError(ex, "Authentication failed");
+                return new ObjectResult(new AgentResponse(null, "Authentication failed", false)) { StatusCode = 500 };
+            }
 
             // Configure HTTP client with bearer token
             _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
