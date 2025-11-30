@@ -149,3 +149,231 @@ catch (Azure.Identity.AuthenticationFailedException ex)
 - ✅ Function worker starts quickly (<5 seconds)
 - ✅ Credential initialized only on first request
 - ✅ Proper timeout protection prevents hanging
+
+---
+
+## Result: Fix Attempted but Still Failing
+
+**Status:** Deployment still fails after implementing lazy credential initialization, though failure occurs faster (15s vs 19s), indicating timeout improvements are working.
+
+**Deployment still fails with:** "Failed to deploy the Azure Functions"
+
+This suggests that Azure Static Web Apps managed functions have stricter startup constraints that even lazy initialization cannot overcome.
+
+---
+
+# Recommended Solution: Separate Azure Function App
+
+## Why Switch to Separate Deployment?
+
+### Problems with Managed Functions in Static Web Apps
+1. **Stricter startup constraints** - Limited timeout during deployment polling
+2. **Limited diagnostic visibility** - Cannot see detailed startup logs
+3. **Restricted configuration** - Cannot access all Azure Functions settings
+4. **Managed Identity initialization timing** - May not be fully available during startup
+
+### Benefits of Separate Function App
+1. **Full control** - Access to all Azure Functions configuration
+2. **Better diagnostics** - Complete access to logs, metrics, and Application Insights
+3. **Proven pattern** - Standard Azure Functions deployment is well-tested
+4. **Managed Identity control** - Full RBAC configuration
+5. **Independent scaling** - Scale backend independently
+6. **No deployment coupling** - Deploy API without redeploying frontend
+
+## Migration Plan to Separate Azure Function App
+
+### Phase 1: Create Azure Function App Resource
+
+**Option A: Using Azure Portal**
+1. Navigate to Azure Portal → Create Resource → Function App
+2. Configuration:
+   - **Name:** `consultologist-api` (or similar)
+   - **Publish:** Code
+   - **Runtime stack:** .NET
+   - **Version:** 8 (Isolated)
+   - **Region:** Same as Static Web App (East US 2)
+   - **Operating System:** Linux (cheaper) or Windows
+   - **Plan type:** Consumption (pay-per-use) or Premium (better performance)
+3. Enable **System-assigned Managed Identity** under Identity tab
+
+**Option B: Using Azure CLI**
+```bash
+# Create Function App
+az functionapp create \
+  --resource-group consultologist_group \
+  --name consultologist-api \
+  --storage-account <storage-account-name> \
+  --consumption-plan-location eastus2 \
+  --runtime dotnet-isolated \
+  --runtime-version 8 \
+  --functions-version 4 \
+  --os-type Linux
+
+# Enable Managed Identity
+az functionapp identity assign \
+  --name consultologist-api \
+  --resource-group consultologist_group
+```
+
+### Phase 2: Configure Managed Identity RBAC
+
+Get the Azure AI resource ID and assign the "Cognitive Services User" role:
+
+```bash
+# Get the Function App's Managed Identity Principal ID
+PRINCIPAL_ID=$(az functionapp identity show \
+  --name consultologist-api \
+  --resource-group consultologist_group \
+  --query principalId -o tsv)
+
+# Assign Cognitive Services User role to Azure AI resource
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "a97b65f3-24c7-4388-baec-2e87135dc908" \
+  --scope "/subscriptions/a11ce24e-a0c7-4d6f-9674-2264a87483d0/resourceGroups/consultologist_group/providers/Microsoft.CognitiveServices/accounts/<azure-ai-resource-name>"
+```
+
+**Note:** Role "a97b65f3-24c7-4388-baec-2e87135dc908" is "Cognitive Services User"
+
+### Phase 3: Configure Function App Settings
+
+Set the same environment variables currently in Static Web App:
+
+```bash
+az functionapp config appsettings set \
+  --name consultologist-api \
+  --resource-group consultologist_group \
+  --settings \
+    "AzureAI__Endpoint=https://consultologist-canada-east-resou.services.ai.azure.com/api/projects/consultologist-canada-east" \
+    "AzureAI__AgentId=asst_tx4wK44h3Q4fLrMv3vZAhDy3" \
+    "AzureAI__ApiVersion=2025-05-01"
+```
+
+### Phase 4: Update CORS Configuration
+
+Allow your Static Web App domains to call the Function App:
+
+```bash
+az functionapp cors add \
+  --name consultologist-api \
+  --resource-group consultologist_group \
+  --allowed-origins \
+    "https://app.consultologist.ai" \
+    "https://gentle-desert-09697700f.3.azurestaticapps.net"
+```
+
+### Phase 5: Update Deployment Pipeline
+
+Create `.github/workflows/deploy-function-app.yml`:
+
+```yaml
+name: Deploy Azure Function App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Api/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Build and publish
+        run: |
+          cd Api
+          dotnet restore
+          dotnet build --configuration Release
+          dotnet publish --configuration Release --output ./output
+      
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: consultologist-api
+          package: './Api/output'
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+```
+
+### Phase 6: Update Frontend Configuration
+
+Update `wwwroot/appsettings.json`:
+
+```json
+{
+  "AzureAd": {
+    "Authority": "https://login.microsoftonline.com/organizations",
+    "ClientId": "7aea065e-4632-43d3-adb7-9cd315f2b8da",
+    "ValidateAuthority": true
+  },
+  "AzureFunction": {
+    "AgentProxyUrl": "https://consultologist-api.azurewebsites.net/api/AgentProxy"
+  }
+}
+```
+
+Update `wwwroot/appsettings.Development.json`:
+
+```json
+{
+  "AzureFunction": {
+    "AgentProxyUrl": "http://localhost:7071/api/AgentProxy"
+  }
+}
+```
+
+### Phase 7: Remove Api from Static Web App Deployment
+
+Update `.github/workflows/azure-static-web-apps-*.yml`:
+
+**Before:**
+```yaml
+app_location: "."
+api_location: "Api"  # REMOVE THIS LINE
+output_location: "output/wwwroot"
+```
+
+**After:**
+```yaml
+app_location: "."
+api_location: ""  # Empty - no managed functions
+output_location: "output/wwwroot"
+```
+
+### Phase 8: Keep Current Code Changes
+
+**DO NOT REVERT** the changes made in the previous fix:
+- ✅ Keep Microsoft.Extensions.Azure package
+- ✅ Keep lazy credential initialization in Program.cs
+- ✅ Keep TokenCredential injection in AgentProxy.cs
+- ✅ Keep timeout handling for token acquisition
+- ✅ Keep removed manual CORS headers
+
+**Why keep these changes?**
+- They're all production-ready improvements
+- Will work perfectly in a standalone Function App
+- Make the code more robust and testable
+- Follow Azure SDK best practices
+
+## Summary: Should You Revert Previous Changes?
+
+**Answer: NO - Keep all the changes.**
+
+The improvements made (lazy credential initialization, DI registration, timeout handling) are all valid and will work better in a separate Function App. They address the root cause; the issue is just that Static Web Apps managed functions are too restrictive for this use case.
+
+## Next Steps
+
+1. ✅ Keep current code changes (do not revert)
+2. Create separate Azure Function App resource
+3. Configure Managed Identity and RBAC
+4. Set up deployment pipeline for Function App
+5. Update frontend to point to new Function App URL
+6. Remove `api_location` from Static Web App workflow
+7. Deploy and test
