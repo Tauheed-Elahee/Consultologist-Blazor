@@ -64,11 +64,11 @@ builder.Services.AddAzureClients(clientBuilder =>
         ExcludeVisualStudioCredential = true,
         ExcludeVisualStudioCodeCredential = true,
         ExcludeAzurePowerShellCredential = true,
-        
+
         // Critical: Set timeout to prevent deployment hanging
         Retry = { NetworkTimeout = TimeSpan.FromSeconds(10) }
     };
-    
+
     // Credential will be lazy-loaded on first use, not during startup
     clientBuilder.UseCredential(new DefaultAzureCredential(credentialOptions));
 });
@@ -87,7 +87,7 @@ builder.Build().Run();
 private readonly TokenCredential _credential; // Change from DefaultAzureCredential
 
 public AgentProxy(
-    ILogger<AgentProxy> logger, 
+    ILogger<AgentProxy> logger,
     IHttpClientFactory httpClientFactory,
     TokenCredential credential) // Inject from DI
 {
@@ -201,12 +201,12 @@ Consultologist-Blazor/
 ```
 
 ### Benefits of Single Repo, Separate Deployments
-✅ **Single source of truth** - All code in one place  
-✅ **Coordinated changes** - Update frontend and backend together in one PR  
-✅ **Shared CI/CD** - Reuse workflows, secrets, and configuration  
-✅ **Easier code reviews** - See full-stack changes in one PR  
-✅ **Path-based triggering** - Each workflow only runs when its files change  
-✅ **Independent deployments** - Backend can deploy without touching frontend  
+✅ **Single source of truth** - All code in one place
+✅ **Coordinated changes** - Update frontend and backend together in one PR
+✅ **Shared CI/CD** - Reuse workflows, secrets, and configuration
+✅ **Easier code reviews** - See full-stack changes in one PR
+✅ **Path-based triggering** - Each workflow only runs when its files change
+✅ **Independent deployments** - Backend can deploy without touching frontend
 
 ## Migration Plan to Separate Azure Function App
 
@@ -313,19 +313,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '8.0.x'
-      
+
       - name: Build and publish
         run: |
           cd Api
           dotnet restore
           dotnet build --configuration Release
           dotnet publish --configuration Release --output ./output
-      
+
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:
@@ -488,10 +488,10 @@ The improvements made (lazy credential initialization, DI registration, timeout 
 
 ## Success Criteria
 
-✅ Function App deploys successfully without timeout errors  
-✅ Static Web App deploys successfully (frontend only)  
-✅ Frontend can call Function App endpoint  
-✅ Function App can authenticate to Azure AI using Managed Identity  
-✅ End-to-end AI agent functionality works  
-✅ CORS is properly configured  
+✅ Function App deploys successfully without timeout errors
+✅ Static Web App deploys successfully (frontend only)
+✅ Frontend can call Function App endpoint
+✅ Function App can authenticate to Azure AI using Managed Identity
+✅ End-to-end AI agent functionality works
+✅ CORS is properly configured
 ✅ Both workflows run independently based on file changes
