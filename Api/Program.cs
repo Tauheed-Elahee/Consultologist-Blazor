@@ -4,6 +4,7 @@ using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Azure.Identity;
+using Azure.Core;
 using Api;
 
 // Deployment: 2025-12-01 22:40 UTC - Fixed TokenCredential DI registration
@@ -17,14 +18,13 @@ builder.Services
 
 builder.Services.AddHttpClient();
 
-// Configure Azure clients with lazy DefaultAzureCredential initialization
-builder.Services.AddAzureClients(clientBuilder =>
+// Register TokenCredential explicitly for DI
+builder.Services.AddSingleton<TokenCredential>(sp =>
 {
     var credentialOptions = new DefaultAzureCredentialOptions
     {
         // Exclude interactive credentials for server environments
         ExcludeInteractiveBrowserCredential = true,
-
         ExcludeVisualStudioCredential = true,
         ExcludeVisualStudioCodeCredential = true,
         ExcludeAzurePowerShellCredential = true,
@@ -33,8 +33,7 @@ builder.Services.AddAzureClients(clientBuilder =>
         Retry = { NetworkTimeout = TimeSpan.FromSeconds(10) }
     };
 
-    // Credential will be lazy-loaded on first use, not during startup
-    clientBuilder.UseCredential(new DefaultAzureCredential(credentialOptions));
+    return new DefaultAzureCredential(credentialOptions);
 });
 
 // Register AgentProxy in DI container
