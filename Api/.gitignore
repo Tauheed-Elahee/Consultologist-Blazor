@@ -6,6 +6,9 @@ local.settings.json
 # Azure host file
 local.host.json
 
+# output folder
+output/
+
 # User-specific files
 *.suo
 *.user
