@@ -6,7 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Azure.Identity;
 using Api;
 
-// Force deployment: 2025-12-01
+// Deployment: 2025-12-01 22:40 UTC - Fixed TokenCredential DI registration
 var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.ConfigureFunctionsWebApplication();
