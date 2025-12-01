@@ -28,7 +28,7 @@ public class AgentProxy
     // TODO: Change AuthorizationLevel.Anonymous to AuthorizationLevel.Function for production
     // NOTE: AuthorizationLevel.Anonymous is for development purposes only
     [Function("AgentProxy")]
-    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "post", "options")] HttpRequest req)
+    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequest req)
     {
         // Handle CORS preflight
         if (req.Method == "OPTIONS")

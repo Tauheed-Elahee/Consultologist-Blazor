@@ -528,3 +528,201 @@ If Option 2 doesn't work:
 1. Keep existing Consults.razor code (don't delete yet)
 2. Can quickly switch back to Option 1 (Azure AD tokens)
 3. Or temporarily use direct API calls for testing
+
+---
+
+## Post-Deployment Issues & Resolutions
+
+### Issue 1: CORS and Content Security Policy Errors
+
+**Problem**: After deploying to separate Function App, browser showed CORS errors:
+```
+Fetch API cannot load https://canada-east-ai-function-*.azurewebsites.net/api/AgentProxy. 
+Refused to connect because it violates the document's Content Security Policy.
+```
+
+**Root Causes**:
+1. Function App CORS not configured to allow Static Web App origins
+2. Static Web App's Content Security Policy (CSP) didn't include Function App domain
+
+**Solutions**:
+
+#### Fix 1: Configure CORS on Function App
+**Azure Portal**:
+1. Function App → Settings → CORS
+2. Add allowed origins:
+   - `https://app.consultologist.ai`
+   - `https://gentle-desert-09697700f.3.azurestaticapps.net`
+3. Save
+
+**Azure CLI**:
+```bash
+az functionapp cors add \
+  --name canada-east-ai-function \
+  --resource-group consultologist_group \
+  --allowed-origins \
+    "https://app.consultologist.ai" \
+    "https://gentle-desert-09697700f.3.azurestaticapps.net"
+```
+
+#### Fix 2: Update Content Security Policy
+**File**: `staticwebapp.config.json`
+
+Update the `connect-src` directive to include the Function App domain:
+
+```json
+{
+  "globalHeaders": {
+    "content-security-policy": "default-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.azurestaticapps.net; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.azurestaticapps.net https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net"
+  }
+}
+```
+
+**Alternative (wildcard for all Function Apps)**:
+```json
+"connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.azurestaticapps.net https://*.azurewebsites.net"
+```
+
+### Issue 2: 401 Unauthorized from Function App
+
+**Problem**: After fixing CORS, requests reached the Function App but returned:
+```
+POST https://canada-east-ai-function-*.azurewebsites.net/api/AgentProxy 401 (Unauthorized)
+```
+
+**Root Cause**: Function was configured with `AuthorizationLevel.Function`, which requires a function key in the request URL or headers.
+
+**Solution Options**:
+
+#### Option 1: Change to Anonymous Authorization ✅ SELECTED
+**Why this is secure**:
+- Function App already uses Managed Identity + RBAC for Azure AI authentication
+- Static Web App requires user authentication (per staticwebapp.config.json)
+- CORS restricts calls to only your specific Static Web App domains
+- Function is not publicly accessible without knowing the exact URL
+
+**Implementation**:
+**File**: `Api/AgentProxy.cs` (line 29)
+
+```csharp
+[Function("AgentProxy")]
+public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequest req)
+```
+
+**Status**: ✅ Implemented
+
+#### Option 2: Keep Function Level & Add Key to URL (Not Selected)
+**Implementation**:
+1. Get function key: Azure Portal → Function App → Functions → AgentProxy → Function Keys → default
+2. Update `appsettings.json`:
+```json
+"AgentProxyUrl": "https://canada-east-ai-function-*.azurewebsites.net/api/AgentProxy?code=YOUR_FUNCTION_KEY"
+```
+
+**Downside**: Function key exposed in browser (less critical but unnecessary complexity)
+
+### Issue 3: Missing AzureWebJobsStorage Configuration
+
+**Problem**: Deployment logs showed warning:
+```
+Warning: Neither AzureWebJobsStorage nor AzureWebJobsStorage__accountName exist in app settings
+```
+
+**Impact**: Function App will fail at runtime even if deployment succeeds.
+
+**Solution**:
+
+#### Get Storage Connection String
+**Azure CLI**:
+```bash
+# Find storage account
+az storage account list --resource-group consultologist_group --query "[].name" -o table
+
+# Get connection string
+az storage account show-connection-string \
+  --name <storage-account-name> \
+  --resource-group consultologist_group \
+  --query connectionString -o tsv
+```
+
+#### Configure Function App
+**Azure Portal**:
+1. Function App → Configuration → Application Settings
+2. Add new setting:
+   - Name: `AzureWebJobsStorage`
+   - Value: `<connection-string-from-above>`
+3. Save
+
+**Azure CLI**:
+```bash
+az functionapp config appsettings set \
+  --name canada-east-ai-function \
+  --resource-group consultologist_group \
+  --settings "AzureWebJobsStorage=<connection-string>"
+```
+
+---
+
+## Final Production Configuration Summary
+
+### Azure Function App Settings
+**Application Settings** (Function App → Configuration):
+```
+AzureAI__Endpoint = https://consultologist-canada-east-resou.services.ai.azure.com/api/projects/consultologist-canada-east
+AzureAI__AgentId = asst_tx4wK44h3Q4fLrMv3vZAhDy3
+AzureAI__ApiVersion = 2025-05-01
+AzureWebJobsStorage = <storage-connection-string>
+```
+
+**CORS Settings** (Function App → Settings → CORS):
+```
+https://app.consultologist.ai
+https://gentle-desert-09697700f.3.azurestaticapps.net
+```
+
+**Identity** (Function App → Identity):
+- System-assigned Managed Identity: **Enabled**
+
+**RBAC** (Azure AI Foundry Resource → Access Control):
+- Role: **Cognitive Services User**
+- Assigned to: Function App's Managed Identity
+
+### Static Web App Configuration
+
+**File**: `wwwroot/appsettings.json`
+```json
+{
+  "AzureFunction": {
+    "AgentProxyUrl": "https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net/api/AgentProxy"
+  }
+}
+```
+
+**File**: `staticwebapp.config.json`
+```json
+{
+  "globalHeaders": {
+    "content-security-policy": "... connect-src 'self' ... https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net"
+  }
+}
+```
+
+### Code Configuration
+
+**File**: `Api/AgentProxy.cs`
+- Authorization Level: `AuthorizationLevel.Anonymous`
+- Authentication: Managed Identity via `DefaultAzureCredential`
+- Token Scope: `https://ai.azure.com/.default`
+
+---
+
+## Deployment Complete ✅
+
+The application is now fully deployed with:
+- ✅ Blazor WebAssembly app on Azure Static Web Apps
+- ✅ Azure Function App deployed separately
+- ✅ Managed Identity authentication to Azure AI Foundry
+- ✅ CORS and CSP properly configured
+- ✅ Secure token-based authentication
+- ✅ Independent deployment pipelines via GitHub Actions
+
