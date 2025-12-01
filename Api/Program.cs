@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Azure.Identity;
 using Api;
 
+// Force deployment: 2025-12-01
 var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.ConfigureFunctionsWebApplication();
