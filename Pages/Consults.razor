@@ -4,11 +4,13 @@
 @using System.Text.Json
 @using BlazorWasm.Services.AI
 @using BlazorWasm.Services.Templates
+@using Microsoft.JSInterop
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject IAIEndpointService AIService
 @inject ITemplateRenderService TemplateRenderService
+@inject IJSRuntime JSRuntime
 @attribute [Authorize]
 
 @page "/consults"
@@ -212,9 +214,12 @@
         isAiRequestLoading = true;
         aiResponse = await AIService.InvokeAgentAsync(consultDraft, renderedSchemaContent);
 
-        // AUTO-RENDER: Load template and render after getting AI response
+        // Log AI response to browser console
         if (!string.IsNullOrEmpty(aiResponse))
         {
+          await JSRuntime.InvokeVoidAsync("console.log", "AI Response JSON:\n", aiResponse);
+
+          // AUTO-RENDER: Load template and render after getting AI response
           await LoadConsultTemplateAsync();
           await RenderConsultTemplateAsync();
         }
