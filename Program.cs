@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using BlazorWasm;
 using BlazorWasm.Services.AI;
+using BlazorWasm.Services.Templates;
 using Microsoft.FluentUI.AspNetCore.Components;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -32,5 +33,8 @@ builder.Services.AddScoped(sp =>
 
 // Register AI Endpoint Service with separate HttpClient (no Graph auth handler)
 builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>();
+
+// Register template rendering service
+builder.Services.AddScoped<ITemplateRenderService, ScribanTemplateRenderService>();
 
 await builder.Build().RunAsync();

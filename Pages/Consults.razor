@@ -3,10 +3,12 @@
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text.Json
 @using BlazorWasm.Services.AI
+@using BlazorWasm.Services.Templates
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject IAIEndpointService AIService
+@inject ITemplateRenderService TemplateRenderService
 @attribute [Authorize]
 
 @page "/consults"
@@ -65,12 +67,45 @@
 {
 	<FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
 }
-@if (!string.IsNullOrEmpty(aiResponse))
+@if (isRenderLoading)
 {
-	<div>
-		<FluentLabel Typo="Typography.H6">AI Response:</FluentLabel>
-		<pre style="white-space: pre-wrap; word-wrap: break-word;">@aiResponse</pre>
-	</div>
+	<FluentProgressRing />
+	<FluentLabel>Rendering template...</FluentLabel>
+}
+@if (!string.IsNullOrEmpty(renderError))
+{
+	<FluentMessageBar Intent="MessageIntent.Error">@renderError</FluentMessageBar>
+}
+@if (renderResult != null && !renderResult.Success)
+{
+	<FluentMessageBar Intent="MessageIntent.Error" Title="Template Rendering Errors">
+		<ul style="margin: 0; padding-left: 20px;">
+			@foreach (var error in renderResult.Errors)
+			{
+				<li>@error</li>
+			}
+		</ul>
+	</FluentMessageBar>
+
+	<details style="margin-top: 16px;">
+		<summary style="cursor: pointer; color: #666;">Show Raw AI Response (JSON)</summary>
+		<pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 12px; margin-top: 8px; padding: 12px; background: #f5f5f5; border: 1px solid #ddd;">@aiResponse</pre>
+	</details>
+}
+@if (renderResult?.Success == true && !string.IsNullOrEmpty(renderResult.RenderedHtml))
+{
+	<FluentCard>
+		<FluentStack Orientation="Orientation.Horizontal">
+			<FluentLabel Typo="Typography.H5" Style="flex: 1;">Consultation Note</FluentLabel>
+			<FluentBadge Appearance="Appearance.Accent">
+				Rendered in @renderResult.RenderDuration.TotalMilliseconds ms
+			</FluentBadge>
+		</FluentStack>
+
+		<div style="border: 1px solid #ccc; padding: 24px; background: white; margin-top: 16px; max-height: 600px; overflow-y: auto;">
+			@((MarkupString)renderResult.RenderedHtml)
+		</div>
+	</FluentCard>
 }
                 </div>
             </div>
@@ -98,6 +133,9 @@
   private string? renderedTemplateContent;
   private bool isTemplateLoading;
   private string? templateLoadError;
+  private TemplateRenderResult? renderResult;
+  private bool isRenderLoading;
+  private string? renderError;
 
   protected override async Task OnInitializedAsync()
   {
@@ -165,6 +203,7 @@
   {
     aiRequestError = null;
     aiResponse = null;
+    renderResult = null; // Clear previous render
 
     if (!string.IsNullOrEmpty(consultDraft) && !string.IsNullOrEmpty(renderedSchemaContent))
     {
@@ -172,6 +211,13 @@
       {
         isAiRequestLoading = true;
         aiResponse = await AIService.InvokeAgentAsync(consultDraft, renderedSchemaContent);
+
+        // AUTO-RENDER: Load template and render after getting AI response
+        if (!string.IsNullOrEmpty(aiResponse))
+        {
+          await LoadConsultTemplateAsync();
+          await RenderConsultTemplateAsync();
+        }
       }
       catch (Exception ex)
       {
@@ -185,6 +231,34 @@
     else
     {
       aiRequestError = "Require both Consult Draft and loaded Schema";
+    }
+  }
+
+  private async Task RenderConsultTemplateAsync()
+  {
+    renderError = null;
+    renderResult = null;
+
+    if (string.IsNullOrEmpty(aiResponse) || string.IsNullOrEmpty(renderedTemplateContent))
+    {
+      renderError = "Template and AI response required for rendering";
+      return;
+    }
+
+    try
+    {
+      isRenderLoading = true;
+      renderResult = await TemplateRenderService.RenderAsync(
+        renderedTemplateContent,
+        aiResponse);
+    }
+    catch (Exception ex)
+    {
+      renderError = $"Error rendering template: {ex.Message}";
+    }
+    finally
+    {
+      isRenderLoading = false;
     }
   }
 

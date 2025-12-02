@@ -102,9 +102,22 @@ ScribanCustomFunctions (newline_to_br filter)
 
 **File**: `Extensions/Scriban/ScribanCustomFunctions.cs`
 
+**Important**: All standard Liquid filters used by the template must be implemented as custom functions in Scriban.
+
+The template uses these filters:
+- `newline_to_br` - Custom filter for converting newlines to `<br>` tags
+- `default` - Provides fallback values for null/empty (e.g., `{{ value | default: 'fallback' }}`)
+- `replace` - Replaces text (e.g., `{{ text | replace: 'old', 'new' }}`)
+- `strip` - Trims whitespace
+- `join` - Joins arrays with separator
+- `downcase` - Converts to lowercase
+- `capitalize` - Capitalizes first character
+- `date` - Formats dates with strftime format conversion
+
 ```csharp
 using Scriban;
 using Scriban.Runtime;
+using System.Globalization;
 
 namespace BlazorWasm.Extensions.Scriban;
 
@@ -114,7 +127,7 @@ public static class ScribanCustomFunctions
     /// Converts newlines to HTML br tags
     /// Liquid: {{ text | newline_to_br }}
     /// </summary>
-    public static string NewlineToBr(string text)
+    public static string NewlineToBr(string? text)
     {
         if (string.IsNullOrEmpty(text))
             return string.Empty;
@@ -126,11 +139,148 @@ public static class ScribanCustomFunctions
     }
 
     /// <summary>
+    /// Provides a default value if the input is null or empty
+    /// Liquid: {{ value | default: 'fallback' }}
+    /// </summary>
+    public static object? Default(object? value, object? defaultValue)
+    {
+        if (value == null)
+            return defaultValue;
+
+        if (value is string str && string.IsNullOrEmpty(str))
+            return defaultValue;
+
+        return value;
+    }
+
+    /// <summary>
+    /// Replaces occurrences of a string with another string
+    /// Liquid: {{ text | replace: 'old', 'new' }}
+    /// </summary>
+    public static string Replace(string? text, string oldValue, string newValue)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(oldValue))
+            return text ?? string.Empty;
+
+        return text.Replace(oldValue, newValue);
+    }
+
+    /// <summary>
+    /// Removes leading and trailing whitespace
+    /// Liquid: {{ text | strip }}
+    /// </summary>
+    public static string Strip(string? text)
+    {
+        return text?.Trim() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Joins array elements with a separator
+    /// Liquid: {{ array | join: ', ' }}
+    /// </summary>
+    public static string Join(object? array, string separator)
+    {
+        if (array == null)
+            return string.Empty;
+
+        if (array is System.Collections.IEnumerable enumerable and not string)
+        {
+            var items = new List<string>();
+            foreach (var item in enumerable)
+            {
+                items.Add(item?.ToString() ?? string.Empty);
+            }
+            return string.Join(separator, items);
+        }
+
+        return array.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Converts string to lowercase
+    /// Liquid: {{ text | downcase }}
+    /// </summary>
+    public static string Downcase(string? text)
+    {
+        return text?.ToLowerInvariant() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Capitalizes the first character of a string
+    /// Liquid: {{ text | capitalize }}
+    /// </summary>
+    public static string Capitalize(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        if (text.Length == 1)
+            return text.ToUpperInvariant();
+
+        return char.ToUpperInvariant(text[0]) + text.Substring(1);
+    }
+
+    /// <summary>
+    /// Formats a date string
+    /// Liquid: {{ date | date: "%B %-d, %Y" }}
+    /// Note: Converts strftime format to .NET DateTime format
+    /// </summary>
+    public static string Date(object? date, string format)
+    {
+        if (date == null)
+            return string.Empty;
+
+        DateTime dateTime;
+        
+        if (date is DateTime dt)
+        {
+            dateTime = dt;
+        }
+        else if (date is string dateStr && DateTime.TryParse(dateStr, out var parsed))
+        {
+            dateTime = parsed;
+        }
+        else
+        {
+            return date.ToString() ?? string.Empty;
+        }
+
+        // Convert strftime format to .NET format
+        var dotnetFormat = format
+            .Replace("%B", "MMMM")      // Full month name
+            .Replace("%b", "MMM")       // Abbreviated month name
+            .Replace("%d", "dd")        // Day with leading zero
+            .Replace("%-d", "d")        // Day without leading zero
+            .Replace("%Y", "yyyy")      // 4-digit year
+            .Replace("%y", "yy")        // 2-digit year
+            .Replace("%H", "HH")        // Hour (24-hour)
+            .Replace("%M", "mm")        // Minute
+            .Replace("%S", "ss")        // Second
+            .Replace("%Z", "zzz");      // Timezone
+
+        try
+        {
+            return dateTime.ToString(dotnetFormat, CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return dateTime.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>
     /// Register all custom functions with Scriban template context
     /// </summary>
     public static void Register(ScriptObject scriptObject)
     {
-        scriptObject.Import("newline_to_br", new Func<string, string>(NewlineToBr));
+        scriptObject.Import("newline_to_br", new Func<string?, string>(NewlineToBr));
+        scriptObject.Import("default", new Func<object?, object?, object?>(Default));
+        scriptObject.Import("replace", new Func<string?, string, string, string>(Replace));
+        scriptObject.Import("strip", new Func<string?, string>(Strip));
+        scriptObject.Import("join", new Func<object?, string, string>(Join));
+        scriptObject.Import("downcase", new Func<string?, string>(Downcase));
+        scriptObject.Import("capitalize", new Func<string?, string>(Capitalize));
+        scriptObject.Import("date", new Func<object?, string, string>(Date));
     }
 }
 ```
@@ -217,6 +367,8 @@ public class ScribanTemplateRenderService : ITemplateRenderService
             scriptObject.Import(dataDict);
 
             var templateContext = new TemplateContext();
+            templateContext.MemberRenamer = member => member.Name;
+            templateContext.StrictVariables = false; // Allow null member access (Liquid-like behavior)
             templateContext.PushGlobal(scriptObject);
 
             // 4. Render template
@@ -601,3 +753,56 @@ When implementing the full template management system from Migration-Scriban.md:
 - Service interface designed for future expansion to full template system
 - Auto-rendering provides seamless user experience
 - Collapsible JSON fallback aids debugging without cluttering UI
+
+---
+
+## Liquid Compatibility Configuration
+
+### Key Scriban Settings for Liquid-like Behavior
+
+To make Scriban behave like Liquid (relaxed/forgiving with null values), the following configuration is critical:
+
+```csharp
+var templateContext = new TemplateContext();
+templateContext.MemberRenamer = member => member.Name;
+templateContext.StrictVariables = false; // CRITICAL: Allow null member access
+templateContext.PushGlobal(scriptObject);
+```
+
+**Why `StrictVariables = false` is necessary:**
+
+- **Liquid behavior**: `{{ enc.datetime }}` on a null `enc` returns null/empty, template continues
+- **Scriban default**: `{{ enc.datetime }}` on a null `enc` throws error: "Cannot get the member enc.datetime for a null object"
+- **With `StrictVariables = false`**: Matches Liquid behavior - null member access returns null instead of throwing
+
+This is essential for templates with optional fields and conditional checks like:
+```liquid
+{%- if enc.datetime -%}
+  {{ enc.datetime | date: "%B %-d, %Y" }}
+{%- endif -%}
+```
+
+### Custom Liquid Filters Required
+
+All standard Liquid filters used by the template must be manually implemented as custom functions:
+
+1. **`default`** - Provides fallback values (e.g., `{{ side | default: 'right' }}`)
+2. **`replace`** - String replacement (e.g., `{{ stage_group | replace: 'Stage ', '' }}`)
+3. **`strip`** - Trim whitespace
+4. **`join`** - Join arrays (e.g., `{{ diagnosis | join: ', ' }}`)
+5. **`downcase`** - Lowercase conversion
+6. **`capitalize`** - Capitalize first letter
+7. **`date`** - Date formatting with strftime→.NET format conversion
+8. **`newline_to_br`** - Custom filter to convert newlines to `<br>` tags
+
+**Important**: If the template uses a Liquid filter and it's not implemented in `ScribanCustomFunctions.cs`, you'll get a runtime error: "The function `[filter_name]` was not found"
+
+### Debugging Missing Filters
+
+If you encounter "function not found" errors:
+
+1. Check the error message for the filter name: `error : The function 'xyz' was not found`
+2. Search the template for usage: `grep '| xyz' wwwroot/templates/consult_template.liquid`
+3. Implement the filter in `ScribanCustomFunctions.cs`
+4. Register it in the `Register()` method
+5. Rebuild and test
