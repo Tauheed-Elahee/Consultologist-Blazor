@@ -43,7 +43,7 @@ end ~}}
 {{~## ==================== DEMOGRAPHICS ==================== ~}}
 {{~ if any_exists([pf.full_name, pf.name, pf.dob, pf.age_years, pf.sex]) ~}}
   {{~ parts = [] ~}}
-  {{~ if pf.full_name; parts = parts | array.add pf.full_name; else if pf.name; parts = parts | array.add pf.name; end; end ~}}
+  {{~ if pf.full_name; parts = parts | array.add pf.full_name; else if pf.name; parts = parts | array.add pf.name; end ~}}
   {{~ if pf.dob; parts = parts | array.add ("DOB: " + pf.dob); end ~}}
   {{~ if pf.age_years; parts = parts | array.add ("Age: " + pf.age_years); end ~}}
   {{~ if pf.sex; parts = parts | array.add ("Sex: " + pf.sex); end ~}}
