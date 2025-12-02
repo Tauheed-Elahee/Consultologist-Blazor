@@ -167,7 +167,7 @@
     try
     {
       isTemplateLoading = true;
-      var templateUri = new Uri(new Uri(Navigation.BaseUri), "templates/consult_template.liquid");
+      var templateUri = new Uri(new Uri(Navigation.BaseUri), "templates/consult_template.scriban");
       renderedTemplateContent = await Http.GetStringAsync(templateUri);
     }
     catch (Exception ex)

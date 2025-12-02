@@ -28,9 +28,9 @@ public class ScribanTemplateRenderService : ITemplateRenderService
             var jsonDoc = JsonDocument.Parse(jsonData);
             var dataDict = JsonElementToDictionary(jsonDoc.RootElement);
 
-            // 2. Compile template with Liquid compatibility mode
+            // 2. Compile template with native Scriban syntax
             _logger.LogInformation("Compiling Scriban template");
-            var template = Template.ParseLiquid(templateContent);
+            var template = Template.Parse(templateContent);
 
             if (template.HasErrors)
             {
