@@ -4,7 +4,7 @@ Render context must conform to mortigen_render_context.schema.json
 ~}}
 {{~## Initialize shortcuts for nested objects ~}}
 {{~ pf = patient ~}}
-{{~ enc = encounter ~}}
+{{~ enc = visit ~}}
 {{~ stage = assessment.staging ~}}
 {{~ path = assessment.pathology ~}}
 {{~ rcpt = assessment.receptors ~}}
@@ -18,7 +18,7 @@ Render context must conform to mortigen_render_context.schema.json
 {{~ her2_label = rcpt.her2.label ~}}
 {{~ her2_detail = rcpt.her2.detail ~}}
 {{~ stage_clean = stage.stage_group | replace 'Stage ' '' ~}}
-{{~ reason_text = content.reason | default (encounter.reason | default assessment.diagnosis) | join ', ' ~}}
+{{~ reason_text = content.reason | default (visit.reason | default assessment.diagnosis) | join ', ' ~}}
 {{~## Helper function: Section with header and content ~}}
 {{~ func section(title, content)
   if content
@@ -95,7 +95,6 @@ end ~}}
 {{~## ==================== ASSESSMENT/PLAN ==================== ~}}
 <h2>Assessment/Plan</h2>
 {{~ if assessment && stage && stage.tnm && stage.tnm.T && stage.tnm.N && stage.tnm.M && path && path.grade && path.histology && rcpt && rcpt.ER && rcpt.PR ~}}
-<h2>Assessment/Plan</h2>
 {{~## Primary diagnosis paragraph ~}}
 <p>{{ pf.name }} is a {{ pf.age_years }}-year old {{ pf.sex }} with a {{ stage.tnm.T }}{{~ if path.tumor_size_cm }} ({{ path.tumor_size_cm }} cm){{~ end }} {{ stage.tnm.N }}{{~ if path.nodes_positive || path.nodes_examined }} ({{ path.nodes_positive }}/{{ path.nodes_examined }}){{~ end }} {{ stage.tnm.M }}, grade {{ path.grade }}, ER+ ({{ rcpt.ER }}) PR+ ({{ rcpt.PR }}) {{ her2_label }}{{~ if her2_detail }} ({{ her2_detail }}){{~ end ~}}, {{ path.histology }} of the {{ side }} breast. Overall, {{ pf.name }} has a stage {{ stage_clean }} breast cancer.</p>
 {{~## OncotypeDx results ~}}
