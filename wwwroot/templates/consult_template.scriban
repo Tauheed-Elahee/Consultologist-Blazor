@@ -3,13 +3,13 @@ Mortigen Oncology Note — HTML output (optimized Scriban)
 Render context must conform to mortigen_render_context.schema.json
 ~}}
 {{~## Initialize shortcuts for nested objects ~}}
-{{~ pf = front_matter.patient ~}}
-{{~ enc = front_matter.encounter ~}}
-{{~ stage = front_matter.staging ~}}
-{{~ path = front_matter.pathology ~}}
-{{~ rcpt = front_matter.receptors ~}}
-{{~ onc = front_matter.oncotype ~}}
-{{~ plan = front_matter.plan_structured ~}}
+{{~ pf = patient ~}}
+{{~ enc = encounter ~}}
+{{~ stage = assessment.staging ~}}
+{{~ path = assessment.pathology ~}}
+{{~ rcpt = assessment.receptors ~}}
+{{~ onc = assessment.oncotype ~}}
+{{~ plan = plan_structured ~}}
 {{~## Derived values ~}}
 {{~ side = extras.side | default 'right' ~}}
 {{~ p_nom = pf.pronoun.nom ~}}
@@ -18,7 +18,7 @@ Render context must conform to mortigen_render_context.schema.json
 {{~ her2_label = rcpt.her2.label ~}}
 {{~ her2_detail = rcpt.her2.detail ~}}
 {{~ stage_clean = stage.stage_group | replace 'Stage ' '' ~}}
-{{~ reason_text = content.reason | default front_matter.diagnosis | join ', ' ~}}
+{{~ reason_text = content.reason | default (encounter.reason | default assessment.diagnosis) | join ', ' ~}}
 {{~## Helper function: Section with header and content ~}}
 {{~ func section(title, content)
   if content
@@ -55,9 +55,9 @@ end ~}}
 {{ section "Past Medical History" content.pmh }}
 {{~## ==================== MEDICATIONS ==================== ~}}
 <h2>Medication</h2>
-{{~ if front_matter.medications.size > 0 ~}}
+{{~ if medications.size > 0 ~}}
 <ul>
-{{~ for m in front_matter.medications ~}}
+{{~ for m in medications ~}}
 <li>{{ m.label | default m }}{{~ if m.dose }} {{ m.dose }}{{ m.dose_unit }}{{~ end ~}}{{~ if m.route }} {{ m.route }}{{~ end ~}}{{~ if m.frequency }} {{ m.frequency }}{{~ end ~}}{{~ if m.prn }} PRN{{~ end ~}}{{~ if m.indication }} — for {{ m.indication }}{{~ end ~}}</li>
 {{~ end ~}}
 </ul><br>
@@ -68,10 +68,10 @@ end ~}}
 {{~ end ~}}
 {{~## ==================== ALLERGIES ==================== ~}}
 <h2>Allergies</h2>
-{{~ if front_matter.allergies.size > 0 ~}}
+{{~ if allergies.list.size > 0 ~}}
 <ul>
-{{~ for a in front_matter.allergies ~}}
-<li>{{ a.agent | default a }}{{~ if a.reaction }} — {{ a.reaction }}{{~ end ~}}{{~ if a.severity }} ({{ a.severity }}){{~ end ~}}</li>
+{{~ for a in allergies.list ~}}
+<li>{{ a.allergen | default a }}{{~ if a.reaction }} — {{ a.reaction }}{{~ end ~}}{{~ if a.onset }} (onset: {{ a.onset }}){{~ end ~}}</li>
 {{~ end ~}}
 </ul><br>
 {{~ else if content.allergies ~}}
@@ -93,7 +93,8 @@ end ~}}
 {{~## ==================== INVESTIGATIONS ==================== ~}}
 {{ section "Investigations" content.investigations }}
 {{~## ==================== ASSESSMENT/PLAN ==================== ~}}
-{{~ if stage.tnm.T && stage.tnm.N && stage.tnm.M && path.grade && path.histology && rcpt.ER && rcpt.PR ~}}
+<h2>Assessment/Plan</h2>
+{{~ if assessment && stage && stage.tnm && stage.tnm.T && stage.tnm.N && stage.tnm.M && path && path.grade && path.histology && rcpt && rcpt.ER && rcpt.PR ~}}
 <h2>Assessment/Plan</h2>
 {{~## Primary diagnosis paragraph ~}}
 <p>{{ pf.name }} is a {{ pf.age_years }}-year old {{ pf.sex }} with a {{ stage.tnm.T }}{{~ if path.tumor_size_cm }} ({{ path.tumor_size_cm }} cm){{~ end }} {{ stage.tnm.N }}{{~ if path.nodes_positive || path.nodes_examined }} ({{ path.nodes_positive }}/{{ path.nodes_examined }}){{~ end }} {{ stage.tnm.M }}, grade {{ path.grade }}, ER+ ({{ rcpt.ER }}) PR+ ({{ rcpt.PR }}) {{ her2_label }}{{~ if her2_detail }} ({{ her2_detail }}){{~ end ~}}, {{ path.histology }} of the {{ side }} breast. Overall, {{ pf.name }} has a stage {{ stage_clean }} breast cancer.</p>
