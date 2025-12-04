@@ -7,7 +7,7 @@
 	"additionalProperties": false,
 	"required": [
 		"patient",
-		"encounter",
+		"visit",
 		"medications",
 		"pastMedicalHistory",
 		"allergies",
@@ -43,16 +43,222 @@
 				}
 			}
 		},
-		"encounter": {
-			"$comment": "Encounter details",
+		"visit": {
+			"$comment": "Visit details",
 			"description": "Details of the appointment with datetime, reason for consultation",
 			"type": "object",
 			"additionalProperties": false,
 			"properties": {
-				"datetime": { "type": "string" },
-				"reason": { "type": "string" }
+				"datetime": {
+					"type": "string",
+					"format": "ISO 8601"
+				},
+				"visit_type": {
+					"type": "string",
+					"enum": ["new_consult", "follow_up", "second_opinion"],
+					"description": "Type of visit"
+				},
+				"note_focus": {
+					"type": "string",
+					"enum": [
+						"chemotherapy_initiation",
+						"adjuvant_therapy_planning",
+						"treatment_toxicity_assessment",
+						"disease_progression_assessment",
+						"other"
+					],
+					"description": "Focus of the note"
+				},
+				"reason": {
+					"type": "string",
+					"description": "Reason for the visit"
+				}
 			}
 		},
+		"historyPresentIllness": {
+			"type": "object",
+			"properties": {
+				"presenting_problem": {
+		      "type": "string",
+		      "description": "Concise description of why the patient is being seen today, from the oncologist's perspective."
+		    },
+				"symptom_course": {
+		      "type": "object",
+		      "description": "Narrative-structured description of key cancer-related symptoms leading to this visit.",
+		      "properties": {
+		        "primary_symptoms": {
+		          "type": "array",
+		          "items": {
+		            "type": "object",
+		            "properties": {
+		              "symptom": { "type": "string" },
+		              "onset": { "type": "string" },
+		              "pattern": { "type": "string" },
+		              "severity": { "type": "string" },
+		              "aggravating_relieving_factors": { "type": "string" },
+		              "impact_on_function": { "type": "string" }
+		            },
+		            "required": ["symptom"]
+		          }
+		        },
+		        "systemic_symptoms": {
+		          "type": "object",
+		          "properties": {
+		            "weight_loss": { "type": "string" },
+		            "fatigue": { "type": "string" },
+		            "appetite_change": { "type": "string" },
+		            "fevers_or_night_sweats": { "type": "string" }
+		          }
+		        },
+		        "treatment_toxicity_symptoms": { "type": "string" }
+		      }
+		    },
+
+		    "breast_cancer_history": {
+		      "type": "object",
+		      "properties": {
+		        "side": {
+		          "type": "string",
+		          "enum": ["right", "left", "bilateral", "unknown"]
+		        },
+		        "initial_diagnosis_date": { "type": "string", "format": "date" },
+		        "mode_of_detection": {
+		          "type": "string",
+		          "enum": [
+		            "screening_mammogram",
+		            "diagnostic_imaging_for_symptoms",
+		            "self_detected_mass",
+		            "clinician_detected_mass",
+		            "incidental",
+		            "other"
+		          ]
+		        },
+		        "histology": { "type": "string" },
+		        "grade": { "type": "integer", "minimum": 1, "maximum": 3 },
+		        "clinical_stage_tnm": { "type": "string" },
+		        "pathologic_stage_tnm": { "type": "string" },
+		        "ajcc_stage_group": { "type": "string" },
+		        "receptor_status": {
+		          "type": "object",
+		          "properties": {
+		            "er_status": {
+		              "type": "string",
+		              "enum": ["positive", "negative", "low_positive", "unknown"]
+		            },
+		            "er_percentage": { "type": "number", "minimum": 0, "maximum": 100 },
+		            "pr_status": {
+		              "type": "string",
+		              "enum": ["positive", "negative", "low_positive", "unknown"]
+		            },
+		            "pr_percentage": { "type": "number", "minimum": 0, "maximum": 100 },
+		            "her2_status": {
+		              "type": "string",
+		              "enum": ["positive", "negative", "equivocal", "unknown"]
+		            },
+		            "her2_ihc_score": {
+		              "type": "string",
+		              "enum": ["0", "1+", "2+", "3+", "unknown"]
+		            },
+		            "her2_fish_result": {
+		              "type": "string",
+		              "enum": ["amplified", "non_amplified", "equivocal", "not_done", "unknown"]
+		            },
+		            "ki67_index": { "type": "number", "minimum": 0, "maximum": 100 },
+		            "molecular_subtype": {
+		              "type": "string",
+		              "enum": [
+		                "hr_positive_her2_negative",
+		                "her2_positive",
+		                "triple_negative",
+		                "other",
+		                "unknown"
+		              ]
+		            }
+		          }
+		        },
+		        "genomic_risk_assessment": {
+		          "type": "array",
+		          "items": {
+		            "type": "object",
+		            "properties": {
+		              "test_name": { "type": "string" },
+		              "score": { "type": "number" },
+		              "risk_category": { "type": "string" },
+		              "date_performed": { "type": "string", "format": "date" }
+		            },
+		            "required": ["test_name"]
+		          }
+		        }
+		      }
+		    },
+
+		    "prior_cancer_treatments": {
+		      "type": "object",
+		      "properties": {
+		        "surgery": {
+		          "type": "object",
+		          "properties": {
+		            "performed": { "type": "boolean" },
+		            "procedure_type": { "type": "string" },
+		            "date": { "type": "string", "format": "date" },
+		            "margins_status": { "type": "string" },
+		            "lymph_nodes_removed": { "type": "integer" },
+		            "lymph_nodes_positive": { "type": "integer" }
+		          }
+		        },
+		        "radiation_therapy": {
+		          "type": "object",
+		          "properties": {
+		            "received": { "type": "boolean" },
+		            "indication": { "type": "string" },
+		            "fields_treated": { "type": "string" },
+		            "completion_date": { "type": "string", "format": "date" }
+		          }
+		        },
+		        "systemic_therapy": {
+		          "type": "array",
+		          "items": {
+		            "type": "object",
+		            "properties": {
+		              "therapy_type": {
+		                "type": "string",
+		                "enum": ["chemotherapy", "endocrine", "her2_targeted", "immunotherapy", "other"]
+		              },
+		              "regimen_name": { "type": "string" },
+		              "line_of_therapy": { "type": "string" },
+		              "start_date": { "type": "string", "format": "date" },
+		              "end_date": { "type": "string", "format": "date" },
+		              "best_response": { "type": "string" },
+		              "reason_stopped": { "type": "string" }
+		            },
+		            "required": ["therapy_type"]
+		          }
+		        }
+		      }
+		    },
+
+		    "current_disease_status": {
+		      "type": "object",
+		      "properties": {
+		        "status": {
+		          "type": "string",
+		          "enum": [
+		            "no_evidence_of_disease",
+		            "residual_local_disease",
+		            "locoregional_recurrence",
+		            "distant_metastatic",
+		            "unknown"
+		          ]
+		        },
+		        "sites_of_disease": {
+		          "type": "array",
+		          "items": { "type": "string" }
+		        },
+		        "most_recent_imaging_summary": { "type": "string" }
+		      }
+		    }
+			}
+		}
 		"medications": {
 			"$comment": "Array of medications",
 			"description": "List of medications with name, dose, dose unit, route, frequency, prn, indication",
@@ -818,19 +1024,47 @@
 		},
 		"content": {
 			"type": "object",
-			"$comment": "Free-text narrative sections of the consultation note",
-			"description": "Unstructured text content for various sections of the consultation note (reason, HPI, PMH, medications, allergies, social, family, exam, investigations)",
+			"$comment": "AI generated  draft free-text narrative sections of the consultation note",
+			"description": "AI generated draft text content for various sections of the consultation note (reason, HPI, PMH, medications, allergies, social, family, exam, investigations) based on the information gathered in the previous sections of this JSON object.",
 			"additionalProperties": false,
 			"properties": {
-				"reason": { "type": ["string", "null"] },
-				"hpi": { "type": ["string", "null"] },
-				"pmh": { "type": ["string", "null"] },
-				"meds": { "type": ["string", "null"] },
-				"allergies": { "type": ["string", "null"] },
-				"social": { "type": ["string", "null"] },
-				"family": { "type": ["string", "null"] },
-				"exam": { "type": ["string", "null"] },
-				"investigations": { "type": ["string", "null"] }
+				"reason": {
+					"type": ["string", "null"],
+					"maxLength": 1000,
+					"description": "Reason for consultation"
+				},
+				"hpi": {
+					"type": ["string", "null"],
+					"description": "History of present illness"
+				},
+				"pmh": {
+					"type": ["string", "null"],
+					"description": "Past medical history"
+				},
+				"meds": {
+					"type": ["string", "null"],
+					"description": "Current medications. Only list current taken medications, i.e. medications already being taken, not medications that have been recommended in this consultation."
+				},
+				"allergies": {
+					"type": ["string", "null"],
+					"description": "Allergies to medications, foods, or other substances that are known and currently active."
+				},
+				"social": {
+					"type": ["string", "null"],
+					"description": "Social history"
+				},
+				"family": {
+					"type": ["string", "null"],
+					"description": "Family history"
+				},
+				"exam": {
+					"type": ["string", "null"],
+					"description": "Any physical examinations that have been conducted during the current consultation, not before nor recommended to be conducted after this consultation."
+				},
+				"investigations": {
+					"type": ["string", "null"],
+					"description": "Any investigations or physical examinations that have been performed, not examinations that have been recommended in this consultation."
+				}
 			}
 		},
 		"extras": {
