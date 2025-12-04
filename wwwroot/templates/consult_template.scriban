@@ -2,7 +2,6 @@
 Mortigen Oncology Note — HTML output (optimized Scriban)
 Render context must conform to mortigen_render_context.schema.json
 ~}}
-
 {{~## Initialize shortcuts for nested objects ~}}
 {{~ pf = front_matter.patient ~}}
 {{~ enc = front_matter.encounter ~}}
@@ -11,7 +10,6 @@ Render context must conform to mortigen_render_context.schema.json
 {{~ rcpt = front_matter.receptors ~}}
 {{~ onc = front_matter.oncotype ~}}
 {{~ plan = front_matter.plan_structured ~}}
-
 {{~## Derived values ~}}
 {{~ side = extras.side | default 'right' ~}}
 {{~ p_nom = pf.pronoun.nom ~}}
@@ -21,14 +19,14 @@ Render context must conform to mortigen_render_context.schema.json
 {{~ her2_detail = rcpt.her2.detail ~}}
 {{~ stage_clean = stage.stage_group | replace 'Stage ' '' ~}}
 {{~ reason_text = content.reason | default front_matter.diagnosis | join ', ' ~}}
-
 {{~## Helper function: Section with header and content ~}}
 {{~ func section(title, content)
   if content
     ret "<h2>" + title + "</h2><p>" + (content | strip | newline_to_br) + "</p><br>"
+  else
+    ret "<h2>" + title + "</h2><p>No information provided.</p><br>"
   end
 end ~}}
-
 {{~## Helper function: Check if any value exists ~}}
 {{~ func any_exists(values)
   for v in values
@@ -36,10 +34,8 @@ end ~}}
   end
   ret false
 end ~}}
-
 {{~## Helper: Standard exam paragraph ~}}
 {{~ exam_standard = "Alert, attentive, and in no distress. There is no evidence of peripheral lymphadenopathy. Cardiovascular and respiratory exams are unremarkable. No tenderness on palpation of the spine. Abdominal is soft and nontender, with no palpable masses. No hepatosplenomegaly. No peripheral edema. Bilateral breast exam was unremarkable with no worrisome masses or skin changes." ~}}
-
 {{~## ==================== DEMOGRAPHICS ==================== ~}}
 {{~ if any_exists([pf.full_name, pf.name, pf.dob, pf.age_years, pf.sex]) ~}}
 {{~ parts = [] ~}}
@@ -53,27 +49,26 @@ end ~}}
 {{~ if enc.datetime ~}}
 <p>{{ enc.datetime | date '%B %-d, %Y %H:%M %Z' }}</p><br>
 {{~ end ~}}
-
 {{~## ==================== BASIC SECTIONS ==================== ~}}
 {{ section "Reason for Consultation" reason_text }}
 {{ section "History of Present Illness" content.hpi }}
 {{ section "Past Medical History" content.pmh }}
-
 {{~## ==================== MEDICATIONS ==================== ~}}
-{{~ if front_matter.medications.size > 0 ~}}
 <h2>Medication</h2>
+{{~ if front_matter.medications.size > 0 ~}}
 <ul>
 {{~ for m in front_matter.medications ~}}
 <li>{{ m.label | default m }}{{~ if m.dose }} {{ m.dose }}{{ m.dose_unit }}{{~ end ~}}{{~ if m.route }} {{ m.route }}{{~ end ~}}{{~ if m.frequency }} {{ m.frequency }}{{~ end ~}}{{~ if m.prn }} PRN{{~ end ~}}{{~ if m.indication }} — for {{ m.indication }}{{~ end ~}}</li>
 {{~ end ~}}
 </ul><br>
-{{~ else if content.meds ~}}
+{{~ else if content.meds != null && content.meds.size > 0 ~}}
 {{ section "Medication" content.meds }}
+{{~ else ~}}
+<p>No known medications.</p>
 {{~ end ~}}
-
 {{~## ==================== ALLERGIES ==================== ~}}
-{{~ if front_matter.allergies.size > 0 ~}}
 <h2>Allergies</h2>
+{{~ if front_matter.allergies.size > 0 ~}}
 <ul>
 {{~ for a in front_matter.allergies ~}}
 <li>{{ a.agent | default a }}{{~ if a.reaction }} — {{ a.reaction }}{{~ end ~}}{{~ if a.severity }} ({{ a.severity }}){{~ end ~}}</li>
@@ -81,22 +76,22 @@ end ~}}
 </ul><br>
 {{~ else if content.allergies ~}}
 {{ section "Allergies" content.allergies }}
+{{~ else ~}}
+<p>No allergies reported.</p>
 {{~ end ~}}
-
 {{~## ==================== MORE BASIC SECTIONS ==================== ~}}
 {{ section "Social History" content.social }}
 {{ section "Family History" content.family }}
-
 {{~## ==================== PHYSICAL EXAM ==================== ~}}
-{{~ if content.exam || flags.exam_present ~}}
 <h2>Physical Exam</h2>
+{{~ if content.exam || flags.exam_present ~}}
 {{~ if content.exam ~}}<p>{{ content.exam | strip | newline_to_br }}</p>{{~ end ~}}
 <p>{{ exam_standard }}</p><br>
+{{~ else ~}}
+<p>No physical exam performed.</p>
 {{~ end ~}}
-
 {{~## ==================== INVESTIGATIONS ==================== ~}}
 {{ section "Investigations" content.investigations }}
-
 {{~## ==================== ASSESSMENT/PLAN ==================== ~}}
 {{~ if stage.tnm.T && stage.tnm.N && stage.tnm.M && path.grade && path.histology && rcpt.ER && rcpt.PR ~}}
 <h2>Assessment/Plan</h2>
