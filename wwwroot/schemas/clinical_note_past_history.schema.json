@@ -6,12 +6,18 @@
 	"properties": {
 		"pastMedicalHistory": {
 			"type": "object",
+			"$comment": "Comprehensive past medical history including chronic conditions and comorbidities",
+			"description": "Patient's past medical history covering major chronic diseases (COPD, CKD, CAD, CHF, diabetes, strokes, atrial fibrillation, osteoporosis, dementia) with structured fields for diagnosis status, medications, specialists, and hospitalizations",
 			"properties": {
 				"COPD": {
 					"type": "object",
 					"$comment": "Chronic Obstructive Pulmonary Disease",
+					"description": "COPD diagnosis status with pulmonary function test results, hospitalization history, and specialist follow-up",
 					"properties": {
-						"diagnosed": { "type": "boolean" },
+						"diagnosed": {
+							"type": "boolean",
+							"description": "Whether patient has been diagnosed with COPD"
+						},
 						"diagnosisMethod": {
 							"type": "object",
 							"properties": {
@@ -43,9 +49,14 @@
 						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
-							"format": "date"
+							"format": "date",
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent hospitalization for COPD exacerbation"
 						},
-						"respirologist": { "type": ["string", "null"] }
+						"respirologist": {
+							"type": ["string", "null"],
+							"description": "Name of respirologist (lung specialist) following patient for COPD"
+						}
 					},
 					"required": ["diagnosed"],
 					"additionalProperties": false,
@@ -67,11 +78,16 @@
 				"CKD": {
 					"type": "object",
 					"$comment": "Chronic Kidney Disease",
+					"description": "Chronic kidney disease history including dialysis status, kidney-specific medications, lab values (creatinine, eGFR), and specialist care",
 					"properties": {
-						"previousDialysis": { "type": "boolean" },
+						"previousDialysis": {
+							"type": "boolean",
+							"description": "Whether patient has ever required dialysis treatment"
+						},
 						"kidneyMedications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "List of kidney-specific medications"
 						},
 						"creatinine": {
 							"type": ["number", "null"],
@@ -87,9 +103,14 @@
 						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
-							"format": "date"
+							"format": "date",
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent hospitalization related to kidney disease"
 						},
-						"nephrologist": { "type": ["string", "null"] }
+						"nephrologist": {
+							"type": ["string", "null"],
+							"description": "Name of nephrologist (kidney specialist) following patient"
+						}
 					},
 					"required": ["previousDialysis"],
 					"additionalProperties": false,
@@ -113,6 +134,7 @@
 				"CAD": {
 					"type": "object",
 					"$comment": "Coronary Artery Disease",
+					"description": "Coronary artery disease assessment including NYHA functional class, degree of stenosis, and cardiology follow-up",
 					"properties": {
 						"NYHA_class": {
 							"type": ["string", "null"],
@@ -122,20 +144,30 @@
 						},
 						"degreeOfStenosis": {
 							"type": "object",
+							"description": "Extent of coronary artery narrowing",
 							"properties": {
-								"measuredByAngiography": { "type": ["string", "null"] },
+								"measuredByAngiography": {
+									"type": ["string", "null"],
+									"description": "Stenosis percentage as measured by coronary angiography"
+								},
 								"type": {
 									"type": ["string", "null"],
-									"enum": ["Type I", "Type II", null]
+									"enum": ["Type I", "Type II", null],
+									"description": "Classification type of stenosis"
 								}
 							},
 							"additionalProperties": false
 						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
-							"format": "date"
+							"format": "date",
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent hospitalization for CAD-related event (e.g., angina, MI)"
 						},
-						"cardiologist": { "type": ["string", "null"] }
+						"cardiologist": {
+							"type": ["string", "null"],
+							"description": "Name of cardiologist following patient for CAD"
+						}
 					},
 					"additionalProperties": false
 				},
@@ -143,6 +175,7 @@
 				"CHF": {
 					"type": "object",
 					"$comment": "Congestive Heart Failure",
+					"description": "Heart failure classification with echocardiogram results, medications including GDMT, and cardiology care",
 					"properties": {
 						"type": {
 							"type": ["string", "null"],
@@ -151,6 +184,7 @@
 						},
 						"echo": {
 							"type": "object",
+							"description": "Echocardiogram findings",
 							"properties": {
 								"date": {
 									"type": ["string", "null"],
@@ -169,31 +203,46 @@
 						},
 						"medications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "List of all heart failure medications"
 						},
 						"GDMT_medications": {
-							"$comment": "Goal-directed medical therapy",
 							"type": "array",
+							"$comment": "Goal-directed medical therapy",
+							"description": "Evidence-based medications for heart failure (e.g., ACE inhibitors, beta-blockers, SGLT2 inhibitors)",
 							"items": { "type": "string" }
 						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
-							"format": "date"
+							"format": "date",
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent hospitalization for heart failure exacerbation"
 						},
-						"cardiologist": { "type": ["string", "null"] }
+						"cardiologist": {
+							"type": ["string", "null"],
+							"description": "Name of cardiologist managing heart failure"
+						}
 					},
 					"additionalProperties": false
 				},
 
 				"diabetes": {
 					"type": "object",
+					"description": "Diabetes mellitus diagnosis, medications, and endocrinology care",
 					"properties": {
-						"diagnosed": { "type": "boolean" },
+						"diagnosed": {
+							"type": "boolean",
+							"description": "Whether patient has been diagnosed with diabetes mellitus"
+						},
 						"medications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "List of diabetes medications (oral hypoglycemics, insulin, etc.)"
 						},
-						"endocrinologist": { "type": ["string", "null"] }
+						"endocrinologist": {
+							"type": ["string", "null"],
+							"description": "Name of endocrinologist managing diabetes"
+						}
 					},
 					"required": ["diagnosed"],
 					"additionalProperties": false,
@@ -213,18 +262,27 @@
 
 				"strokes": {
 					"type": "object",
+					"description": "Stroke/CVA history with medications and neurology follow-up",
 					"properties": {
-						"historyOfStroke": { "type": "boolean" },
+						"historyOfStroke": {
+							"type": "boolean",
+							"description": "Whether patient has history of stroke or cerebrovascular accident (CVA)"
+						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
 							"format": "date",
-							"$comment": "ISO 8601 format: YYYY-MM-DD"
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent stroke event or hospitalization"
 						},
 						"medications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "Stroke prevention medications (antiplatelet, anticoagulation, etc.)"
 						},
-						"neurologist": { "type": ["string", "null"] }
+						"neurologist": {
+							"type": ["string", "null"],
+							"description": "Name of neurologist following patient for stroke"
+						}
 					},
 					"required": ["historyOfStroke"],
 					"additionalProperties": false,
@@ -245,19 +303,31 @@
 
 				"atrialFibrillation": {
 					"type": "object",
+					"description": "Atrial fibrillation diagnosis with rate control, anticoagulation, and cardiology care",
 					"properties": {
-						"diagnosed": { "type": "boolean" },
+						"diagnosed": {
+							"type": "boolean",
+							"description": "Whether patient has been diagnosed with atrial fibrillation"
+						},
 						"rateControlMedications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "Medications for heart rate control in atrial fibrillation"
 						},
-						"anticoagulation": { "type": ["string", "null"] },
+						"anticoagulation": {
+							"type": ["string", "null"],
+							"description": "Anticoagulation medication (e.g., warfarin, DOACs)"
+						},
 						"lastHospitalization": {
 							"type": ["string", "null"],
 							"format": "date",
-							"$comment": "ISO 8601 format: YYYY-MM-DD"
+							"$comment": "ISO 8601 format: YYYY-MM-DD",
+							"description": "Date of most recent hospitalization for atrial fibrillation"
 						},
-						"cardiologist": { "type": ["string", "null"] }
+						"cardiologist": {
+							"type": ["string", "null"],
+							"description": "Name of cardiologist managing atrial fibrillation"
+						}
 					},
 					"required": ["diagnosed"],
 					"additionalProperties": false,
@@ -279,11 +349,24 @@
 
 				"osteoporosis": {
 					"type": "object",
+					"description": "Osteoporosis diagnosis with bone density testing and risk factor history",
 					"properties": {
-						"diagnosed": { "type": "boolean" },
-						"timeOfDiagnosis": { "type": ["string", "null"] },
-						"boneScanResults": { "type": ["string", "null"] },
-						"previousBirthControlUse": { "type": ["string", "null"] }
+						"diagnosed": {
+							"type": "boolean",
+							"description": "Whether patient has been diagnosed with osteoporosis"
+						},
+						"timeOfDiagnosis": {
+							"type": ["string", "null"],
+							"description": "When osteoporosis was diagnosed (free text)"
+						},
+						"boneScanResults": {
+							"type": ["string", "null"],
+							"description": "Bone density scan results (T-score, DEXA findings)"
+						},
+						"previousBirthControlUse": {
+							"type": ["string", "null"],
+							"description": "History of birth control use (relevant for estrogen exposure)"
+						}
 					},
 					"required": ["diagnosed"],
 					"additionalProperties": false,
@@ -304,14 +387,25 @@
 
 				"dementia": {
 					"type": "object",
+					"description": "Dementia diagnosis with cognitive medications and geriatric specialist care",
 					"properties": {
-						"diagnosed": { "type": "boolean" },
-						"followedBy": { "type": ["string", "null"] },
+						"diagnosed": {
+							"type": "boolean",
+							"description": "Whether patient has been diagnosed with dementia or cognitive impairment"
+						},
+						"followedBy": {
+							"type": ["string", "null"],
+							"description": "Healthcare provider managing dementia care"
+						},
 						"medications": {
 							"type": "array",
-							"items": { "type": "string" }
+							"items": { "type": "string" },
+							"description": "Cognitive medications (cholinesterase inhibitors, memantine, etc.)"
 						},
-						"gerontologist": { "type": ["string", "null"] }
+						"gerontologist": {
+							"type": ["string", "null"],
+							"description": "Name of gerontologist or geriatrician following patient"
+						}
 					},
 					"required": ["diagnosed"],
 					"additionalProperties": false,
@@ -332,10 +426,14 @@
 
 				"otherPastMedicalHistory": {
 					"type": "array",
-					"items": { "type": "string" }
+					"items": { "type": "string" },
+					"description": "Other medical conditions not covered by the structured fields above"
 				},
 
-				"previouslyHealthy": { "type": "boolean" }
+				"previouslyHealthy": {
+					"type": "boolean",
+					"description": "Whether patient was previously healthy with no significant past medical history"
+				}
 			},
 			"required": ["previouslyHealthy"],
 			"additionalProperties": false
@@ -343,29 +441,46 @@
 
 		"allergies": {
 			"type": "object",
+			"$comment": "Patient allergy information with comprehensive tracking",
+			"description": "Allergy history including specific allergens with reactions and onset timing, epipen prescription status, other anti-allergy medications, and NKDA flag",
 			"properties": {
 				"list": {
 					"type": "array",
+					"description": "List of specific allergens with reactions and onset timing",
 					"items": {
 						"type": "object",
 						"properties": {
-							"allergen": { "type": "string" },
-							"reaction": { "type": "string" },
+							"allergen": {
+								"type": "string",
+								"description": "Name of allergen (medication, food, environmental)"
+							},
+							"reaction": {
+								"type": "string",
+								"description": "Type of allergic reaction experienced"
+							},
 							"onset": {
 								"type": "string",
-								"enum": ["childhood", "adolescence", "adult"]
+								"enum": ["childhood", "adolescence", "adult"],
+								"description": "Life stage when allergy first appeared"
 							}
 						},
 						"required": ["allergen", "reaction", "onset"],
 						"additionalProperties": false
 					}
 				},
-				"epipenPrescribed": { "type": "boolean" },
+				"epipenPrescribed": {
+					"type": "boolean",
+					"description": "Whether patient has been prescribed an EpiPen for severe allergies"
+				},
 				"otherAntiAllergyMeds": {
 					"type": "array",
-					"items": { "type": "string" }
+					"items": { "type": "string" },
+					"description": "Other anti-allergy medications (antihistamines, etc.)"
 				},
-				"noKnownDrugAllergies": { "type": "boolean" }
+				"noKnownDrugAllergies": {
+					"type": "boolean",
+					"description": "Whether patient has no known drug allergies (NKDA)"
+				}
 			},
 			"required": ["epipenPrescribed", "noKnownDrugAllergies"],
 			"additionalProperties": false
@@ -373,54 +488,66 @@
 
 		"socialHistory": {
 			"type": "object",
+			"$comment": "Social determinants of health and lifestyle factors",
+			"description": "Comprehensive social history including tobacco use, alcohol consumption, recreational drug use, living situation with hazards assessment, and work/exercise information",
 			"properties": {
 				"smoking": {
 					"type": "object",
+					"description": "Tobacco smoking history with pack-years and cessation details",
 					"properties": {
 						"status": {
 							"type": "string",
-							"enum": ["never", "previous", "current"]
+							"enum": ["never", "previous", "current"],
+							"description": "Current smoking status"
 						},
 						"previous": {
 							"type": "object",
+							"description": "Details for previous smokers who have quit",
 							"properties": {
 								"packsPerDay": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 10
+									"maximum": 10,
+									"description": "Average packs smoked per day when smoking"
 								},
 								"years": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 100
+									"maximum": 100,
+									"description": "Total years of smoking"
 								},
 								"quitYearsAgo": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 100
+									"maximum": 100,
+									"description": "How many years ago patient quit smoking"
 								}
 							},
 							"additionalProperties": false
 						},
 						"current": {
 							"type": "object",
+							"description": "Details for current active smokers",
 							"properties": {
 								"packsPerDay": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 10
+									"maximum": 10,
+									"description": "Average packs smoked per day currently"
 								},
 								"startedYearsAgo": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 100
+									"maximum": 100,
+									"description": "How many years ago patient started smoking"
 								},
 								"type": {
 									"type": "array",
 									"items": {
 										"type": "string",
 										"enum": ["cigarettes", "marijuana"]
-									}
+									},
+									"description": "Types of substances smoked"
 								}
 							},
 							"additionalProperties": false
@@ -432,28 +559,34 @@
 
 				"alcohol": {
 					"type": "object",
+					"description": "Alcohol consumption history with current and past drinking patterns",
 					"properties": {
 						"status": {
 							"type": "string",
-							"enum": ["never", "previous", "drinks"]
+							"enum": ["never", "previous", "drinks"],
+							"description": "Current alcohol consumption status"
 						},
 						"drinksPerDay": {
 							"type": ["number", "null"],
 							"minimum": 0,
-							"maximum": 50
+							"maximum": 50,
+							"description": "Current average drinks per day (if status is 'drinks')"
 						},
 						"previous": {
 							"type": "object",
+							"description": "Details for previous drinkers who have stopped",
 							"properties": {
 								"drinksPerDay": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 50
+									"maximum": 50,
+									"description": "Average drinks per day when drinking"
 								},
 								"quitYearsAgo": {
 									"type": ["number", "null"],
 									"minimum": 0,
-									"maximum": 100
+									"maximum": 100,
+									"description": "How many years ago patient stopped drinking"
 								}
 							},
 							"additionalProperties": false
@@ -465,24 +598,37 @@
 
 				"recreationalDrugs": {
 					"type": "object",
+					"description": "Recreational drug use history with frequency and timeline for each substance",
 					"properties": {
-						"used": { "type": "boolean" },
+						"used": {
+							"type": "boolean",
+							"description": "Whether patient has ever used recreational drugs"
+						},
 						"substances": {
 							"type": "array",
+							"description": "List of substances used with individual usage patterns",
 							"items": {
 								"type": "object",
 								"properties": {
-									"substance": { "type": "string" },
-									"useFrequency": { "type": ["string", "null"] },
+									"substance": {
+										"type": "string",
+										"description": "Name of recreational substance"
+									},
+									"useFrequency": {
+										"type": ["string", "null"],
+										"description": "Frequency of use (e.g., daily, weekly, monthly)"
+									},
 									"startedYearsAgo": {
 										"type": ["number", "null"],
 										"minimum": 0,
-										"maximum": 100
+										"maximum": 100,
+										"description": "How many years ago use began"
 									},
 									"finishedYearsAgo": {
 										"type": ["number", "null"],
 										"minimum": 0,
-										"maximum": 100
+										"maximum": 100,
+										"description": "How many years ago use stopped (null if ongoing)"
 									}
 								},
 								"required": ["substance"],
@@ -496,9 +642,11 @@
 
 				"livingSituation": {
 					"type": "object",
+					"description": "Patient's living situation including household members, residence type, and environmental hazards",
 					"properties": {
 						"livesWith": {
 							"type": "array",
+							"description": "Who the patient lives with",
 							"items": {
 								"type": "string",
 								"enum": [
@@ -517,13 +665,21 @@
 						},
 						"typeOfResidence": {
 							"type": ["string", "null"],
-							"enum": ["apartment", "house", null]
+							"enum": ["apartment", "house", null],
+							"description": "Type of residence patient lives in"
 						},
 						"hazards": {
 							"type": "object",
+							"description": "Environmental hazards in the home",
 							"properties": {
-								"leadPipes": { "type": "boolean" },
-								"insulationIssues": { "type": "boolean" }
+								"leadPipes": {
+									"type": "boolean",
+									"description": "Presence of lead pipes in home plumbing"
+								},
+								"insulationIssues": {
+									"type": "boolean",
+									"description": "Issues with home insulation or temperature control"
+								}
 							},
 							"additionalProperties": false
 						}
@@ -533,10 +689,20 @@
 
 				"work": {
 					"type": "object",
+					"description": "Occupational and physical activity information",
 					"properties": {
-						"typeOfWork": { "type": ["string", "null"] },
-						"standingWalkingRequired": { "type": ["string", "null"] },
-						"exerciseRoutine": { "type": ["string", "null"] }
+						"typeOfWork": {
+							"type": ["string", "null"],
+							"description": "Patient's occupation or type of work"
+						},
+						"standingWalkingRequired": {
+							"type": ["string", "null"],
+							"description": "Amount of standing/walking required for work"
+						},
+						"exerciseRoutine": {
+							"type": ["string", "null"],
+							"description": "Patient's regular exercise or physical activity routine"
+						}
 					},
 					"additionalProperties": false
 				}
@@ -546,15 +712,22 @@
 
 		"familyHistory": {
 			"type": "object",
+			"$comment": "Family medical history for genetic and familial risk assessment",
+			"description": "Medical conditions present in family members (mother, father, siblings, children) that may indicate genetic predisposition or familial risk factors",
 			"properties": {
 				"conditions": {
 					"type": "array",
+					"description": "List of medical conditions affecting family members",
 					"items": {
 						"type": "object",
 						"properties": {
-							"condition": { "type": "string" },
+							"condition": {
+								"type": "string",
+								"description": "Name of medical condition present in family"
+							},
 							"familyMembers": {
 								"type": "array",
+								"description": "Which family members have this condition",
 								"items": {
 									"type": "string",
 									"enum": ["mother", "father", "sibling", "child", "other"]
@@ -565,7 +738,10 @@
 						"additionalProperties": false
 					}
 				},
-				"unknownFamilyHistory": { "type": "boolean" }
+				"unknownFamilyHistory": {
+					"type": "boolean",
+					"description": "Whether family history is unknown (adopted, estranged, or patient unable to provide)"
+				}
 			},
 			"required": ["unknownFamilyHistory"],
 			"additionalProperties": false
