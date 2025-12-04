@@ -17,6 +17,8 @@
 	"properties": {
 		"patient": {
 			"type": "object",
+			"$comment": "Patient demographic and identification information",
+			"description": "Core patient demographics including name, age, sex, and preferred pronouns",
 			"additionalProperties": false,
 			"required": ["name", "age_years", "sex", "pronoun"],
 			"properties": {
@@ -42,6 +44,8 @@
 			}
 		},
 		"encounter": {
+			"$comment": "Encounter details",
+			"description": "Details of the appointment with datetime, reason for consultation",
 			"type": "object",
 			"additionalProperties": false,
 			"properties": {
@@ -69,6 +73,8 @@
 		},
 		"pastMedicalHistory": {
 			"type": "object",
+			"$comment": "Patient's past medical history including chronic conditions and comorbidities",
+			"description": "Comprehensive past medical history covering major chronic diseases, conditions, and whether patient was previously healthy",
 			"properties": {
 				"COPD": {
 					"type": "object",
@@ -406,6 +412,8 @@
 
 		"allergies": {
 			"type": "object",
+			"$comment": "Patient allergy information including medications, foods, and environmental allergens",
+			"description": "Comprehensive allergy history with allergen list, reactions, severity, and emergency medication status",
 			"properties": {
 				"list": {
 					"type": "array",
@@ -436,6 +444,8 @@
 
 		"socialHistory": {
 			"type": "object",
+			"$comment": "Patient's social history including lifestyle factors, living situation, and occupation",
+			"description": "Social determinants of health covering smoking, alcohol, recreational drug use, living situation, and work environment",
 			"properties": {
 				"smoking": {
 					"type": "object",
@@ -609,6 +619,8 @@
 
 		"familyHistory": {
 			"type": "object",
+			"$comment": "Family medical history and genetic risk factors",
+			"description": "Family history of medical conditions in first and second-degree relatives that may indicate genetic or familial risk",
 			"properties": {
 				"conditions": {
 					"type": "array",
@@ -635,6 +647,8 @@
 		},
 		"assessment": {
 			"type": "object",
+			"$comment": "Optional oncology-specific assessment fields for cancer consultations",
+			"description": "Oncology assessment including diagnosis, cancer staging, pathology results, receptor status, and genomic testing (e.g., Oncotype DX). Only populated for oncology consultations.",
 			"additionalProperties": false,
 			"properties": {
 				"diagnosis": {
@@ -761,6 +775,8 @@
 		},
 		"plan_structured": {
 			"type": "object",
+			"$comment": "Structured treatment plan for oncology patients",
+			"description": "Oncology treatment plan with structured fields for endocrine therapy, radiation referral, and chemotherapy recommendations. Optional field for non-oncology consultations.",
 			"additionalProperties": false,
 			"properties": {
 				"endocrine": {
@@ -802,6 +818,8 @@
 		},
 		"content": {
 			"type": "object",
+			"$comment": "Free-text narrative sections of the consultation note",
+			"description": "Unstructured text content for various sections of the consultation note (reason, HPI, PMH, medications, allergies, social, family, exam, investigations)",
 			"additionalProperties": false,
 			"properties": {
 				"reason": { "type": ["string", "null"] },
@@ -817,16 +835,27 @@
 		},
 		"extras": {
 			"type": "object",
+			"$comment": "Additional context-specific metadata",
+			"description": "Extra metadata fields for specialized use cases (e.g., laterality for cancer side)",
 			"additionalProperties": false,
 			"properties": {
-				"side": { "type": "string", "enum": ["left", "right"] }
+				"side": {
+					"type": "string",
+					"enum": ["left", "right"],
+					"description": "Laterality for cases where side matters (e.g., breast cancer)"
+				}
 			}
 		},
 		"flags": {
 			"type": "object",
+			"$comment": "Boolean flags for document processing and rendering logic",
+			"description": "Control flags used by rendering engine to determine what sections to display or how to format the output",
 			"additionalProperties": false,
 			"properties": {
-				"exam_present": { "type": "boolean" }
+				"exam_present": {
+					"type": "boolean",
+					"description": "Indicates whether physical exam section has content and should be rendered"
+				}
 			}
 		}
 	}
