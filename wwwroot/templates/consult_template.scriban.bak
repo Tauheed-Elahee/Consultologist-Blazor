@@ -11,7 +11,7 @@ Render context must conform to mortigen_render_context.schema.json
 {{~ onc = front_matter.oncotype ~}}
 {{~ plan = front_matter.plan_structured ~}}
 {{~## Derived values ~}}
-{{~ side = extras.side | default 'right' ~}}
+{{~ side = historyPresentIllness.breast_cancer_history.side | default 'right' ~}}
 {{~ p_nom = pf.pronoun.nom ~}}
 {{~ p_gen = pf.pronoun.gen ~}}
 {{~ p_obj = pf.pronoun.obj ~}}

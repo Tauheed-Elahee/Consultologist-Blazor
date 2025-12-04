@@ -1095,15 +1095,9 @@
 		"extras": {
 			"type": "object",
 			"$comment": "Additional context-specific metadata",
-			"description": "Extra metadata fields for specialized use cases (e.g., laterality for cancer side)",
+			"description": "Extra metadata fields for specialized use cases",
 			"additionalProperties": false,
-			"properties": {
-				"side": {
-					"type": "string",
-					"enum": ["left", "right"],
-					"description": "Laterality for cases where side matters (e.g., breast cancer)"
-				}
-			}
+			"properties": {}
 		},
 		"flags": {
 			"type": "object",

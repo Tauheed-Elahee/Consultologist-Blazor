@@ -11,7 +11,7 @@ Render context must conform to mortigen_render_context.schema.json
 {%- assign rcpt  = front_matter.receptors -%}
 {%- assign onc   = front_matter.oncotype -%}
 {%- assign plan  = front_matter.plan_structured -%}
-{%- assign side  = extras.side | default: 'right' -%}
+{%- assign side  = historyPresentIllness.breast_cancer_history.side | default: 'right' -%}
 
 {%- assign p_nom  = pf.pronoun.nom -%}
 {%- assign p_gen  = pf.pronoun.gen -%}
