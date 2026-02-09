@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/clinical_note_objective.schema.json",
+  "title": "Clinical Note Objective Schema",
+  "type": "object",
+  "properties": {
+    "physicalExam": {
+      "type": "object",
+      "properties": {
+        "vitals": {
+          "type": "object",
+          "properties": {
+            "temperature": { "type": ["number", "string", "null"] },
+            "respiratoryRate": { "type": ["number", "null"] },
+            "oxygenSaturation": { "type": ["number", "null"] },
+            "oxygenSupport": { "type": ["string", "null"] },
+            "heartRate": { "type": ["number", "null"] },
+            "bloodPressure": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "general": {
+          "type": "object",
+          "properties": {
+            "appearance": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["well", "unwell", "toxic", "pallor", "jaundice", "cyanotic", "erythematous", "cachexic", "large"]
+              }
+            },
+            "alertness": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "HEENT": {
+          "type": "object",
+          "properties": {
+            "cervicalLymphadenopathy": { "type": "boolean" },
+            "oropharynx": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["erythematous", "rash", "unremarkable"]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "respiratory": {
+          "type": "object",
+          "properties": {
+            "airEntry": { "type": ["string", "null"], "enum": ["good", "reduced", null] },
+            "crackles": { "type": "boolean" },
+            "wheezes": { "type": "boolean" },
+            "adventitiousSounds": { "type": "boolean" },
+            "pleuralRub": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "cardiovascular": {
+          "type": "object",
+          "properties": {
+            "capillaryRefillSeconds": { "type": ["number", "null"] },
+            "pulseStrength": { "type": ["string", "null"], "enum": ["strong", "weak", null] },
+            "pulseRegularity": { "type": ["string", "null"], "enum": ["regular", "regularly irregular", "irregularly irregular", null] },
+            "pulseLaterality": { "type": ["string", "null"], "enum": ["bilateral", "unilateral", null] },
+            "heartSounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["normal S1 S2", "holosystolic murmur"]
+              }
+            },
+            "pericardialRub": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "chest": {
+          "type": "object",
+          "properties": {
+            "surgicalScars": { "type": ["string", "null"] },
+            "breastFindings": { "type": ["string", "null"] },
+            "areola": { "type": ["string", "null"] },
+            "chestRise": { "type": ["string", "null"], "enum": ["normal", "reduced", "asymmetric", "extended", null] },
+            "palpationLumps": { "type": ["string", "null"] },
+            "axillaryLymphadenopathy": { "type": "boolean" },
+            "breastDensityConsistent": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "abdomen": {
+          "type": "object",
+          "properties": {
+            "density": { "type": ["string", "null"], "enum": ["soft", "hard", null] },
+            "tenderness": { "type": ["string", "null"] },
+            "distention": { "type": ["string", "null"], "enum": ["distended", "non-distended", null] },
+            "abdominalLymphadenopathy": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "investigations": {
+      "type": "object",
+      "properties": {
+        "labTests": {
+          "type": "object",
+          "properties": {
+            "CEA": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date": { "type": ["string", "null"], "format": "date" },
+                  "value": { "type": ["number", "null"] }
+                },
+                "additionalProperties": false
+              }
+            },
+            "CA19_9": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date": { "type": ["string", "null"], "format": "date" },
+                  "value": { "type": ["number", "null"] }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "imaging": {
+          "type": "object",
+          "properties": {
+            "xray": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string" },
+                  "location": { "type": "string" },
+                  "date": { "type": ["string", "null"], "format": "date" },
+                  "findings": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "ct": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string" },
+                  "location": { "type": "string" },
+                  "date": { "type": ["string", "null"], "format": "date" },
+                  "findings": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "mri": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string" },
+                  "location": { "type": "string" },
+                  "date": { "type": ["string", "null"], "format": "date" },
+                  "findings": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "pathology": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "location": { "type": "string" },
+              "date": { "type": ["string", "null"], "format": "date" },
+              "findings": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "oncotypeDX": {
+          "type": "object",
+          "properties": {
+            "date": { "type": ["string", "null"], "format": "date" },
+            "score": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["physicalExam", "investigations"],
+  "additionalProperties": false
+}
