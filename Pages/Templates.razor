@@ -9,15 +9,34 @@
 
 <PageTitle>Templates</PageTitle>
 
-<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
-    <FluentLabel Typo="Typography.H3">Templates</FluentLabel>
+<section class="page-header">
+    <div class="page-header__content">
+        <span class="section-eyebrow">Templates</span>
+        <h1 class="page-title">Reusable consult structures.</h1>
+        <p class="page-description">
+            Template definitions keep generated notes consistent, reviewable, and aligned to the
+            clinical context expected by each specialty.
+        </p>
+    </div>
+</section>
 
-    <AuthorizeView>
-        <Authorized>
-        	<FluentLabel>This a page for templates with authorized view</FluentLabel>
-        </Authorized>
-    </AuthorizeView>
-</FluentStack>
+<AuthorizeView>
+    <Authorized>
+        <section class="content-card">
+            <div class="form-stack">
+                <h2 class="panel-title">Consult note template</h2>
+                <p class="panel-description">
+                    The active template renders structured AI output into a physician-facing note.
+                    Future template editing controls will use this same panel and form pattern.
+                </p>
+                <div class="state-panel">
+                    <span class="muted-text">Current template</span>
+                    <strong>templates/consult_template.scriban</strong>
+                </div>
+            </div>
+        </section>
+    </Authorized>
+</AuthorizeView>
 
 @code {
   [CascadingParameter]

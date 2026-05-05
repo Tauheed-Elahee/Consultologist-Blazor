@@ -17,45 +17,77 @@
 
 <PageTitle>Consults</PageTitle>
 
-<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
-    <FluentLabel Typo="Typography.H3">Consults</FluentLabel>
+<section class="page-header">
+    <div class="page-header__content">
+        <span class="section-eyebrow">Consults</span>
+        <h1 class="page-title">Draft and review specialist consult notes.</h1>
+        <p class="page-description">
+            Select the render context, enter the referral draft, and generate a structured note for physician review.
+        </p>
+    </div>
+</section>
 
-    <AuthorizeView>
-        <Authorized>
-            <FluentLabel>This a page for consults with authorized view</FluentLabel>
+<AuthorizeView>
+    <Authorized>
+        <div class="consult-builder">
+            <section class="workflow-grid">
+                <div class="workflow-panel">
+                    <div class="form-stack">
+                        <h2 class="panel-title">Render context</h2>
+                        <p class="panel-description">
+                            Choose the schema that guides structured extraction before the note is rendered.
+                        </p>
 
-            <div class="consult-builder">
-                <div class="consult-section">
-                    <FluentLabel Typo="Typography.H5">Render context schema</FluentLabel>
-                    <FluentSelect TOption="string"
-                                  @bind-Value="selectedSchemaPath"
-                                  Label="Select schema"
-                                  Style="max-width: 420px;">
-                        @foreach (var schema in schemaOptions)
-                        {
-                            <FluentOption TOption="string" Value="@schema.Path">@schema.Label</FluentOption>
-                        }
-                    </FluentSelect>
-                    <FluentLabel Typo="Typography.Body">Schema path: @selectedSchemaPath</FluentLabel>
+                        <label class="input-field">
+                            <span>Select schema</span>
+                            <FluentSelect TOption="string" @bind-Value="selectedSchemaPath">
+                                @foreach (var schema in schemaOptions)
+                                {
+                                    <FluentOption TOption="string" Value="@schema.Path">@schema.Label</FluentOption>
+                                }
+                            </FluentSelect>
+                        </label>
+
+                        <div class="state-panel">
+                            <span class="muted-text">Schema path</span>
+                            <strong>@selectedSchemaPath</strong>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="consult-section">
-                    <FluentLabel Typo="Typography.H5">Consult details</FluentLabel>
-                    <FluentTextArea @bind-Value="consultDraft"
-                                     Label="Consult draft"
-                                     Placeholder="Enter draft for the consult"
-                                     Style="max-width: 420px;" />
-                    <FluentButton Appearance="Appearance.Accent"
-                                  @onclick="async () => { await LoadSchemaAsync(); await CreateAIRequestAsync(); }"
-                                  Disabled="@(isSchemaLoading || isAiRequestLoading || string.IsNullOrEmpty(consultDraft))">
-                        Create consult
-                    </FluentButton>
-                </div>
+                <div class="workflow-panel">
+                    <div class="form-stack">
+                        <h2 class="panel-title">Consult details</h2>
+                        <p class="panel-description">
+                            Paste the source referral, history, or draft note to create the consultation output.
+                        </p>
 
-                <div class="consult-template-label">
+                        <label class="input-field">
+                            <span>Consult draft</span>
+                            <FluentTextArea @bind-Value="consultDraft"
+                                            Placeholder="Enter referral details, clinical context, and the consult question..."
+                                            Rows="8" />
+                        </label>
+
+                        <div class="action-row">
+                            <FluentButton Appearance="Appearance.Accent"
+                                          @onclick="async () => { await LoadSchemaAsync(); await CreateAIRequestAsync(); }"
+                                          Disabled="@(isSchemaLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft))">
+                                Create consult
+                            </FluentButton>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="result-panel">
+                <div class="consult-status">
 @if (isTemplateLoading || isSchemaLoading || isAiRequestLoading)
 {
-	<FluentProgressRing />
+	<div class="loading-state">
+		<FluentProgressRing />
+		<span>Preparing consult output...</span>
+	</div>
 }
 @if (!string.IsNullOrEmpty(templateLoadError))
 {
@@ -71,8 +103,10 @@
 }
 @if (isRenderLoading)
 {
-	<FluentProgressRing />
-	<FluentLabel>Rendering template...</FluentLabel>
+	<div class="loading-state">
+		<FluentProgressRing />
+		<span>Rendering template...</span>
+	</div>
 }
 @if (!string.IsNullOrEmpty(renderError))
 {
@@ -89,31 +123,31 @@
 		</ul>
 	</FluentMessageBar>
 
-	<details style="margin-top: 16px;">
-		<summary style="cursor: pointer; color: #666;">Show Raw AI Response (JSON)</summary>
-		<pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 12px; margin-top: 8px; padding: 12px; background: #f5f5f5; border: 1px solid #ddd;">@aiResponse</pre>
+	<details class="raw-response">
+		<summary>Show raw AI response (JSON)</summary>
+		<pre class="code-panel">@aiResponse</pre>
 	</details>
 }
 @if (renderResult?.Success == true && !string.IsNullOrEmpty(renderResult.RenderedHtml))
 {
-	<FluentCard>
-		<FluentStack Orientation="Orientation.Horizontal">
-			<FluentLabel Typo="Typography.H5" Style="flex: 1;">Consultation Note</FluentLabel>
+	<div>
+		<div class="result-header">
+			<h2 class="panel-title">Consultation note</h2>
 			<FluentBadge Appearance="Appearance.Accent">
 				Rendered in @renderResult.RenderDuration.TotalMilliseconds ms
 			</FluentBadge>
-		</FluentStack>
+		</div>
 
-		<div style="border: 1px solid #ccc; padding: 24px; background: white; margin-top: 16px; max-height: 600px; overflow-y: auto;">
+		<div class="note-preview">
 			@((MarkupString)renderResult.RenderedHtml)
 		</div>
-	</FluentCard>
+	</div>
 }
                 </div>
-            </div>
-        </Authorized>
-    </AuthorizeView>
-</FluentStack>
+            </section>
+        </div>
+    </Authorized>
+</AuthorizeView>
 
 @code {
   [CascadingParameter]

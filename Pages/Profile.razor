@@ -9,47 +9,51 @@
 
 <PageTitle>Profile</PageTitle>
 
-<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
-    <FluentLabel Typo="Typography.H3">Your Profile</FluentLabel>
+<section class="page-header">
+    <div class="page-header__content">
+        <span class="section-eyebrow">Profile</span>
+        <h1 class="page-title">Workspace identity.</h1>
+        <p class="page-description">
+            Confirm the signed-in account used for protected Consultologist workflows and Microsoft identity access.
+        </p>
+    </div>
+</section>
 
-    <AuthorizeView>
-        <Authorized>
-            @if (graphApiResponse != null)
-            {
-                <FluentCard>
-                    <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
-                        <FluentLabel Typo="Typography.H5">
-                            User Information from Microsoft Graph
-                        </FluentLabel>
+<AuthorizeView>
+    <Authorized>
+        @if (graphApiResponse != null)
+        {
+            <section class="content-card">
+                <div class="form-stack">
+                    <h2 class="panel-title">
+                        Signed-in account details
+                    </h2>
 
-                        <FluentLabel Typo="Typography.Body">
-                            Below is your user information retrieved from Microsoft Graph's <code>/me</code> API:
-                        </FluentLabel>
+                    <p class="panel-description">
+                        These details come from the Microsoft Graph <code>/me</code> endpoint for the current session.
+                    </p>
 
-                        <FluentStack Orientation="Orientation.Vertical"
-                                     Style="background: var(--neutral-layer-2); padding: 1rem; border-radius: 4px; overflow-x: auto;">
-                            <pre style="margin: 0;"><code class="language-json">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre>
-                        </FluentStack>
+                    <div class="code-panel">
+                        <pre style="margin: 0;"><code class="language-json">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre>
+                    </div>
 
-                        <FluentMessageBar Intent="MessageIntent.Info">
-                            Refreshing this page will continue to use the cached access token acquired for Microsoft Graph,
-                            which is valid for future page views and will attempt to refresh this token as it nears its expiration.
-                        </FluentMessageBar>
-                    </FluentStack>
-                </FluentCard>
-            }
-            else
-            {
-                <FluentCard>
-                    <FluentStack Orientation="Orientation.Horizontal" HorizontalGap="16" VerticalAlignment="VerticalAlignment.Center">
-                        <FluentProgressRing />
-                        <FluentLabel Typo="Typography.Body">Loading your profile information...</FluentLabel>
-                    </FluentStack>
-                </FluentCard>
-            }
-        </Authorized>
-    </AuthorizeView>
-</FluentStack>
+                    <FluentMessageBar Intent="MessageIntent.Info">
+                        The workspace uses the cached access token for protected session requests and refreshes it when available.
+                    </FluentMessageBar>
+                </div>
+            </section>
+        }
+        else
+        {
+            <section class="state-panel">
+                <div class="loading-state">
+                    <FluentProgressRing />
+                    <span>Loading profile information...</span>
+                </div>
+            </section>
+        }
+    </Authorized>
+</AuthorizeView>
 
 @code {
   [CascadingParameter]

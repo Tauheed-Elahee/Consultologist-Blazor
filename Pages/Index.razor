@@ -1,44 +1,62 @@
 @page "/"
 
-<PageTitle>Index</PageTitle>
+<PageTitle>Consultologist Clinical Workspace</PageTitle>
 
-<FluentStack Orientation="Orientation.Vertical" VerticalGap="24">
-    <FluentLabel Typo="Typography.H3">
-        Welcome to User Sign In ASP.NET Core Blazor WebAssembly
-    </FluentLabel>
+<section class="page-header">
+    <div class="page-header__content">
+        <span class="section-eyebrow">Clinical workspace</span>
+        <h1 class="page-title">Consult drafting with traceable clinical context.</h1>
+        <p class="page-description">
+            Build structured specialist consults from referral details, review the generated note,
+            and keep the physician in control before anything reaches the chart.
+        </p>
+    </div>
+</section>
 
-    <AuthorizeView>
-        <NotAuthorized>
-            <FluentCard>
-                <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
-                    <FluentLabel Typo="Typography.Body">
-                        This page can be accessed by all users, authenticated or not.
-                    </FluentLabel>
-                    <FluentLabel Typo="Typography.Body">
-                        Click <FluentAnchor Href="authentication/login" Appearance="Appearance.Hypertext">Log in</FluentAnchor> to sign into the application.
-                        Navigating to it while not logged in will automatically initiate the login process.
-                        Please note that it doesn't require that your user has any specific application roles assigned,
-                        and will access Microsoft Graph on your behalf.
-                    </FluentLabel>
+<AuthorizeView>
+    <NotAuthorized>
+        <section class="content-card">
+            <div class="form-stack">
+                <h2 class="panel-title">Sign in to continue</h2>
+                <p class="panel-description">
+                    Access consult drafts, templates, and your clinical workspace profile.
+                </p>
+                <div class="action-row">
                     <FluentButton Appearance="Appearance.Accent" Href="authentication/login">
-                        Log in now
+                        Log in
                     </FluentButton>
-                </FluentStack>
-            </FluentCard>
-        </NotAuthorized>
-        <Authorized>
-            <FluentCard>
-                <FluentStack Orientation="Orientation.Vertical" VerticalGap="16">
-                    <FluentLabel Typo="Typography.H5">Welcome! You are now logged in.</FluentLabel>
-                    <FluentLabel Typo="Typography.Body">
-                        Visit your <FluentAnchor Href="profile" Appearance="Appearance.Hypertext">Profile</FluentAnchor>
-                        to view your information from Microsoft Graph.
-                    </FluentLabel>
-                    <FluentButton Appearance="Appearance.Accent" Href="profile">
-                        View Profile
-                    </FluentButton>
-                </FluentStack>
-            </FluentCard>
-        </Authorized>
-    </AuthorizeView>
-</FluentStack>
+                </div>
+            </div>
+        </section>
+    </NotAuthorized>
+    <Authorized>
+        <section class="workflow-grid">
+            <div class="content-card">
+                <div class="form-stack">
+                    <h2 class="panel-title">Start a consult</h2>
+                    <p class="panel-description">
+                        Enter referral context and generate a draft consultation note for review.
+                    </p>
+                    <div class="action-row">
+                        <FluentButton Appearance="Appearance.Accent" Href="consults">
+                            Open consults
+                        </FluentButton>
+                    </div>
+                </div>
+            </div>
+            <div class="content-card">
+                <div class="form-stack">
+                    <h2 class="panel-title">Manage templates</h2>
+                    <p class="panel-description">
+                        Review the structures that guide consistent consult outputs across specialties.
+                    </p>
+                    <div class="action-row">
+                        <FluentButton Appearance="Appearance.Outline" Href="templates">
+                            View templates
+                        </FluentButton>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </Authorized>
+</AuthorizeView>

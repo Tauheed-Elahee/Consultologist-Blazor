@@ -1,23 +1,10 @@
-.sidebar {
-	background: var(--neutral-layer-1);
-	min-height: 100vh;
-	width: 250px;
+.app-header fluent-button,
+.app-footer fluent-anchor {
+	flex-shrink: 0;
 }
 
-.top-bar {
-	background: var(--neutral-layer-2);
-	border-bottom: 1px solid var(--neutral-stroke-rest);
-	padding: 1rem 2rem;
-}
-
-.content {
-	padding: 2rem;
-	flex: 1;
-}
-
-@media (max-width: 640px) {
-	.sidebar {
-		width: 100%;
-		min-height: auto;
+@media (max-width: 760px) {
+	.app-header .brand-name {
+		font-size: 1rem;
 	}
 }

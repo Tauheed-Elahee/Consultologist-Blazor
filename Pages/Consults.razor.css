@@ -1,22 +1,30 @@
 .consult-builder {
 	display: flex;
 	flex-direction: column;
-	gap: 24px;
+	gap: var(--section-gap);
+	min-width: 0;
 }
 
-.consult-section {
+.consult-status {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 0.75rem;
 }
 
-.consult-template-label {
-	border: 1px solid var(--neutral-stroke-divider-rest);
-	border-radius: 4px;
-	padding: 16px;
-	background: var(--neutral-layer-1);
-	min-height: 200px;
-	white-space: pre-wrap;
-	font-family:
-		"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+.result-header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	margin-bottom: 1rem;
+}
+
+details.raw-response {
+	margin-top: 1rem;
+}
+
+details.raw-response summary {
+	cursor: pointer;
+	color: var(--consultologist-text-muted);
 }

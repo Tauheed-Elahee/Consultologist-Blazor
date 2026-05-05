@@ -1,12 +1,43 @@
-<FluentHeader Style="border-bottom: 1px solid var(--neutral-stroke-divider-rest); background: var(--neutral-layer-1);">
-    <FluentStack Orientation="Orientation.Horizontal" HorizontalAlignment="HorizontalAlignment.Center" VerticalAlignment="VerticalAlignment.Center" Width="100%">
-        <FluentStack Orientation="Orientation.Horizontal" HorizontalAlignment="HorizontalAlignment.SpaceBetween" VerticalAlignment="VerticalAlignment.Center" Width="100%" Style="max-width: 1600px; padding: 0 2rem;">
-            <FluentStack Orientation="Orientation.Horizontal" HorizontalGap="32" VerticalAlignment="VerticalAlignment.Center">
-                <FluentLabel Typo="Typography.Body" Style="font-size: 20px; font-weight: 600; color: var(--neutral-foreground-rest);">
-                    Consultologist
-                </FluentLabel>
-            </FluentStack>
+<FluentDesignTheme @ref="@_theme" Mode="@_themeMode" StorageName="consultologist-clinical-theme" />
+
+<FluentHeader Class="app-header">
+    <div class="app-header__inner">
+        <a class="brand-lockup" href="/">
+            <img src="icon.png" alt="" />
+            <span class="brand-name">Consultologist</span>
+        </a>
+        <nav class="top-nav" aria-label="Workspace navigation">
+            <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+            <AuthorizeView>
+                <Authorized>
+                    <NavLink href="profile">Profile</NavLink>
+                    <NavLink href="templates">Templates</NavLink>
+                    <NavLink href="consults">Consults</NavLink>
+                </Authorized>
+            </AuthorizeView>
+        </nav>
+        <div class="app-header__actions">
+            <FluentButton IconStart="@_themeIcon"
+                          Appearance="Appearance.Stealth"
+                          Title="Toggle theme"
+                          OnClick="@ToggleTheme" />
             <LoginDisplay />
-        </FluentStack>
-    </FluentStack>
+        </div>
+    </div>
 </FluentHeader>
+
+@code {
+    private FluentDesignTheme? _theme;
+    private DesignThemeModes _themeMode = DesignThemeModes.System;
+
+    private Icon _themeIcon => _themeMode == DesignThemeModes.Dark
+        ? new Icons.Regular.Size20.WeatherSunny()
+        : new Icons.Regular.Size20.WeatherMoon();
+
+    private void ToggleTheme()
+    {
+        _themeMode = _themeMode == DesignThemeModes.Dark
+            ? DesignThemeModes.Light
+            : DesignThemeModes.Dark;
+    }
+}

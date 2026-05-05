@@ -1,6 +1,48 @@
+@import "_content/Microsoft.FluentUI.AspNetCore.Components/css/reboot.css";
+
+:root {
+	--consultologist-font:
+		"Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
+		sans-serif;
+	--consultologist-bg: var(--neutral-layer-2, #f7f9fc);
+	--consultologist-surface: var(--neutral-layer-1, #ffffff);
+	--consultologist-surface-muted: var(--neutral-layer-3, #eef5fb);
+	--consultologist-text: var(--neutral-foreground-rest, #172033);
+	--consultologist-text-muted: var(--neutral-foreground-hint, #5d6a7c);
+	--consultologist-border: var(--neutral-stroke-divider-rest, rgba(23, 32, 51, 0.12));
+	--consultologist-accent: var(--accent-fill-rest, #0067b8);
+	--consultologist-accent-soft: rgba(0, 103, 184, 0.08);
+	--consultologist-success: #107c10;
+	--consultologist-error: #a4262c;
+	--consultologist-radius-sm: 4px;
+	--consultologist-radius-md: 8px;
+	--consultologist-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+	--consultologist-shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
+	--page-gutter: clamp(1rem, 3vw, 2rem);
+	--section-gap: clamp(1.25rem, 3vw, 2rem);
+}
+
 html,
 body {
-	font-family: var(--body-font);
+	box-sizing: border-box;
+	min-width: 0;
+	overflow-x: hidden;
+	background: var(--consultologist-bg);
+	color: var(--consultologist-text);
+	font-family: var(--consultologist-font);
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: inherit;
+}
+
+img,
+svg,
+video,
+canvas {
+	max-width: 100%;
 }
 
 h1:focus {
@@ -8,19 +50,331 @@ h1:focus {
 }
 
 a {
-	color: var(--accent-fill-rest);
+	color: var(--consultologist-accent);
+}
+
+a:focus-visible,
+button:focus-visible,
+fluent-button:focus-visible,
+fluent-anchor:focus-visible,
+fluent-nav-link:focus-visible,
+fluent-text-field:focus-within,
+fluent-text-area:focus-within,
+fluent-select:focus-within {
+	outline: 2px solid var(--consultologist-accent);
+	outline-offset: 2px;
 }
 
 .valid.modified:not([type="checkbox"]) {
-	outline: 1px solid var(--success);
+	outline: 1px solid var(--consultologist-success);
 }
 
 .invalid {
-	outline: 1px solid var(--error);
+	outline: 1px solid var(--consultologist-error);
 }
 
 .validation-message {
-	color: var(--error);
+	color: var(--consultologist-error);
+	font-size: 0.875rem;
+}
+
+.app-shell {
+	min-height: 100dvh;
+	display: flex;
+	flex-direction: column;
+	background: var(--consultologist-bg);
+}
+
+.app-header,
+.app-footer {
+	flex-shrink: 0;
+	border-color: var(--consultologist-border) !important;
+	background: var(--consultologist-surface) !important;
+	color: var(--consultologist-text);
+}
+
+.app-header {
+	border-bottom: 2px solid var(--consultologist-accent) !important;
+	background: var(--neutral-layer-4, var(--consultologist-surface)) !important;
+}
+
+header.header.app-header {
+	height: 50px !important;
+	min-height: 50px;
+	overflow: hidden;
+}
+
+.app-header .header-gutters {
+	width: 100%;
+}
+
+.app-header__inner,
+.app-footer__inner {
+	width: 100%;
+	max-width: 1600px;
+	margin: 0 auto;
+	padding: 0.625rem var(--page-gutter);
+}
+
+.app-header__inner {
+	display: flex;
+	align-items: center;
+	min-height: 3rem;
+}
+
+.brand-lockup {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.625rem;
+	min-width: 0;
+	color: var(--consultologist-text);
+	text-decoration: none;
+	flex: 0 0 auto;
+}
+
+.brand-lockup img {
+	width: 28px;
+	height: 28px;
+	border-radius: var(--consultologist-radius-sm);
+	flex: 0 0 auto;
+}
+
+.brand-name {
+	font-size: 1.05rem;
+	font-weight: 700;
+	letter-spacing: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.top-nav {
+	display: flex;
+	align-items: center;
+	flex: 0 1 auto;
+	gap: 0.25rem;
+	margin-left: 1rem;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+	white-space: nowrap;
+}
+
+.top-nav::-webkit-scrollbar {
+	display: none;
+}
+
+.top-nav a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 2rem;
+	padding: 0.25rem 0.65rem;
+	border-radius: var(--consultologist-radius-sm);
+	color: var(--consultologist-text);
+	font-size: 0.95rem;
+	font-weight: 600;
+	text-decoration: none;
+	transition: background-color 0.12s ease;
+	flex: 0 0 auto;
+}
+
+.top-nav a:hover,
+.top-nav a.active {
+	background: var(--consultologist-accent-soft);
+	color: var(--consultologist-text);
+	text-decoration: underline;
+	text-underline-offset: 0.18em;
+}
+
+.app-header__actions {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	flex: 0 0 auto;
+	margin-left: auto;
+}
+
+.content {
+	flex: 1 1 auto;
+	min-width: 0;
+	width: 100%;
+	padding: var(--section-gap) var(--page-gutter);
+}
+
+.content-shell {
+	width: min(1180px, 100%);
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--section-gap);
+}
+
+.page-header {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: flex-end;
+	gap: 1rem;
+}
+
+.page-header__content {
+	min-width: 0;
+	max-width: 760px;
+}
+
+.section-eyebrow {
+	display: block;
+	margin-bottom: 0.45rem;
+	color: var(--consultologist-accent);
+	font-size: 0.78rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.page-title {
+	margin: 0;
+	color: var(--consultologist-text);
+	font-size: clamp(1.75rem, 3vw, 2.5rem);
+	font-weight: 700;
+	line-height: 1.15;
+	white-space: normal;
+	overflow-wrap: break-word;
+}
+
+.page-description {
+	margin: 0.65rem 0 0;
+	color: var(--consultologist-text-muted);
+	font-size: 1rem;
+	line-height: 1.65;
+	white-space: normal;
+	overflow-wrap: break-word;
+}
+
+.action-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75rem;
+}
+
+.content-card,
+.workflow-panel,
+.result-panel,
+.state-panel {
+	width: 100%;
+	min-width: 0;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-md);
+	background: var(--consultologist-surface);
+	box-shadow: var(--consultologist-shadow-sm);
+}
+
+.content-card,
+.workflow-panel,
+.result-panel {
+	padding: clamp(1rem, 2.5vw, 1.5rem);
+}
+
+.workflow-grid {
+	display: grid;
+	grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+	gap: 1rem;
+	align-items: start;
+}
+
+.form-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+	min-width: 0;
+}
+
+.input-field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+	min-width: 0;
+	color: var(--consultologist-text-muted);
+	font-size: 0.95rem;
+	font-weight: 600;
+}
+
+.input-field fluent-text-field,
+.input-field fluent-text-area,
+.input-field fluent-select {
+	width: 100%;
+	max-width: 100%;
+}
+
+.input-field fluent-text-area::part(control) {
+	min-height: 9rem;
+}
+
+.panel-title {
+	margin: 0;
+	color: var(--consultologist-text);
+	font-size: 1.05rem;
+	font-weight: 700;
+	line-height: 1.35;
+	white-space: normal;
+	overflow-wrap: break-word;
+}
+
+.panel-description,
+.muted-text {
+	margin: 0;
+	color: var(--consultologist-text-muted);
+	line-height: 1.6;
+	white-space: normal;
+	overflow-wrap: break-word;
+}
+
+.state-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	padding: 1rem;
+	background: var(--consultologist-surface-muted);
+}
+
+.loading-state {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	color: var(--consultologist-text-muted);
+}
+
+.code-panel,
+.note-preview {
+	min-width: 0;
+	overflow: auto;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm);
+	background: var(--consultologist-surface);
+}
+
+.code-panel {
+	padding: 0.875rem;
+	font-size: 0.82rem;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.note-preview {
+	max-height: 600px;
+	padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.app-footer a {
+	color: var(--consultologist-text-muted);
+	text-decoration: none;
+}
+
+.app-footer a:hover {
+	color: var(--consultologist-text);
+	text-decoration: underline;
 }
 
 #blazor-error-ui {
@@ -53,4 +407,81 @@ a {
 
 .blazor-error-boundary::after {
 	content: "An error has occurred.";
+}
+
+@media (max-width: 760px) {
+	header.header.app-header {
+		height: auto !important;
+		overflow: visible;
+	}
+
+	.app-header__inner,
+	.app-footer__inner {
+		padding-inline: 1rem;
+	}
+
+	.app-header__inner {
+		display: grid !important;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas:
+			"brand actions"
+			"nav nav";
+		column-gap: 0.75rem;
+		row-gap: 0.25rem;
+		align-items: center;
+		min-height: 0;
+	}
+
+	.brand-lockup {
+		grid-area: brand;
+		min-width: 0;
+	}
+
+	.brand-name {
+		min-width: 0;
+		max-width: 9rem;
+	}
+
+	.top-nav {
+		grid-area: nav;
+		margin-left: 0;
+		width: 100%;
+		padding-top: 0.1rem;
+	}
+
+	.top-nav a {
+		min-height: 1.75rem;
+		padding-inline: 0.45rem;
+	}
+
+	.app-header__actions {
+		grid-area: actions;
+		justify-self: end;
+		margin-left: 0;
+	}
+
+	.content {
+		overflow: visible;
+		padding: 1.25rem 1rem;
+	}
+
+	.content-card,
+	.workflow-panel,
+	.result-panel,
+	.state-panel {
+		max-width: calc(100vw - 2rem);
+	}
+
+	.workflow-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.page-header {
+		align-items: flex-start;
+	}
+
+	.action-row,
+	.action-row fluent-button {
+		width: 100%;
+	}
 }
