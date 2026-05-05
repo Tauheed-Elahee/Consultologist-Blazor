@@ -163,6 +163,22 @@ header.header.app-header {
 	display: none;
 }
 
+.top-nav .fluent-nav-item,
+.top-nav .fluent-nav-link,
+.top-nav .positioning-region {
+	display: inline-flex;
+	width: auto;
+}
+
+.top-nav .fluent-nav-item,
+.top-nav .fluent-nav-link {
+	flex: 0 0 auto;
+}
+
+.top-nav .fluent-nav-link {
+	padding: 0;
+}
+
 .top-nav a {
 	display: inline-flex;
 	align-items: center;
@@ -177,8 +193,38 @@ header.header.app-header {
 	flex: 0 0 auto;
 }
 
+.top-nav .content-region {
+	width: auto;
+	min-height: 2rem;
+	padding: 0.25rem 0.65rem;
+	border-radius: var(--consultologist-radius-sm);
+	color: var(--consultologist-text);
+	font-size: 0.95rem;
+	font-weight: 600;
+	text-decoration: none;
+	transition: background-color 0.12s ease;
+}
+
+.top-nav .fluent-nav-icon {
+	display: none;
+}
+
 .top-nav a:hover,
 .top-nav a.active {
+	background: var(--consultologist-accent-soft);
+	color: var(--consultologist-text);
+	text-decoration: underline;
+	text-underline-offset: 0.18em;
+}
+
+.top-nav a.fluent-nav-link:hover,
+.top-nav a.fluent-nav-link.active {
+	background: transparent;
+	text-decoration: none;
+}
+
+.top-nav a.fluent-nav-link:hover .content-region,
+.top-nav a.fluent-nav-link.active .content-region {
 	background: var(--consultologist-accent-soft);
 	color: var(--consultologist-text);
 	text-decoration: underline;
@@ -451,6 +497,11 @@ header.header.app-header {
 	}
 
 	.top-nav a {
+		min-height: 1.75rem;
+		padding-inline: 0.45rem;
+	}
+
+	.top-nav .content-region {
 		min-height: 1.75rem;
 		padding-inline: 0.45rem;
 	}
