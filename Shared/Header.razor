@@ -1,7 +1,10 @@
 <FluentDesignTheme @ref="@_theme" Mode="@_themeMode" StorageName="consultologist-clinical-theme" />
 
 <FluentHeader Class="app-header">
-    <div class="app-header__inner">
+    <FluentStack Class="app-header__inner"
+                 Orientation="Orientation.Horizontal"
+                 VerticalAlignment="VerticalAlignment.Center"
+                 Width="100%">
         <a class="brand-lockup" href="/">
             <img src="icon.png" alt="" />
             <span class="brand-name">Consultologist</span>
@@ -16,14 +19,18 @@
                 </Authorized>
             </AuthorizeView>
         </nav>
-        <div class="app-header__actions">
+        <FluentSpacer />
+        <FluentStack Class="app-header__actions"
+                     Orientation="Orientation.Horizontal"
+                     HorizontalGap="12"
+                     VerticalAlignment="VerticalAlignment.Center">
             <FluentButton IconStart="@_themeIcon"
                           Appearance="Appearance.Stealth"
                           Title="Toggle theme"
                           OnClick="@ToggleTheme" />
             <LoginDisplay />
-        </div>
-    </div>
+        </FluentStack>
+    </FluentStack>
 </FluentHeader>
 
 @code {
