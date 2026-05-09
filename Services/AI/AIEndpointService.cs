@@ -4,7 +4,7 @@ namespace BlazorWasm.Services.AI;
 
 public interface IAIEndpointService
 {
-    Task<string?> InvokeAgentAsync(string consultDraft, string jsonSchema);
+    Task<string?> InvokeAgentAsync(string consultDraft, string sectionName, string sectionStandard);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -20,7 +20,7 @@ public class AIEndpointService : IAIEndpointService
         _logger = logger;
     }
 
-    public async Task<string?> InvokeAgentAsync(string consultDraft, string jsonSchema)
+    public async Task<string?> InvokeAgentAsync(string consultDraft, string sectionName, string sectionStandard)
     {
         try
         {
@@ -32,7 +32,7 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException("Azure Function URL is not configured");
             }
 
-            var request = new AgentRequest(consultDraft, jsonSchema);
+            var request = new AgentSectionRequest(consultDraft, sectionName, sectionStandard);
 
             _logger.LogInformation("Calling Azure Function at {Url}", functionUrl);
 
@@ -70,5 +70,5 @@ public class AIEndpointService : IAIEndpointService
     }
 }
 
-public record AgentRequest(string ConsultDraft, string JsonSchema);
+public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
 public record AgentResponse(string? Response, string? Error, bool Success);

@@ -1,8 +1,12 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using System.Net
+@using System.Text
 @using System.Text.Json
 @inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
 @attribute [Authorize]
 
 @page "/templates"
@@ -12,10 +16,9 @@
 <section class="page-header">
     <div class="page-header__content">
         <span class="section-eyebrow">Templates</span>
-        <h1 class="page-title">Reusable consult structures.</h1>
+        <h1 class="page-title">Section standards for consult notes.</h1>
         <p class="page-description">
-            Template definitions keep generated notes consistent, reviewable, and aligned to the
-            clinical context expected by each specialty.
+            Edit the clinical writing standards used for each generated section. Changes are stored in this browser.
         </p>
     </div>
 </section>
@@ -24,43 +27,337 @@
     <Authorized>
         <section class="content-card">
             <div class="form-stack">
-                <h2 class="panel-title">Consult note template</h2>
-                <p class="panel-description">
-                    The active template renders structured AI output into a physician-facing note.
-                    Future template editing controls will use this same panel and form pattern.
-                </p>
-                <div class="state-panel">
-                    <span class="muted-text">Current template</span>
-                    <strong>templates/consult_template.scriban</strong>
+                <div class="result-header">
+                    <div>
+                        <h2 class="panel-title">Active standards</h2>
+                        <p class="panel-description">
+                            Standards guide organization and tone only. Patient facts still come from the draft consult.
+                        </p>
+                    </div>
+                    <div class="action-row">
+                        <FluentButton Appearance="Appearance.Neutral"
+                                      @onclick="ResetToDefaultsAsync"
+                                      Disabled="@(isLoading || isSaving)">
+                            Reset defaults
+                        </FluentButton>
+                        <FluentButton Appearance="Appearance.Accent"
+                                      @onclick="SaveStandardsAsync"
+                                      Disabled="@(isLoading || isSaving || standards.Count == 0)">
+                            Save changes
+                        </FluentButton>
+                    </div>
                 </div>
+
+                @if (isLoading)
+                {
+                    <div class="loading-state">
+                        <FluentProgressRing />
+                        <span>Loading section standards...</span>
+                    </div>
+                }
+
+                @if (!string.IsNullOrWhiteSpace(statusMessage))
+                {
+                    <FluentMessageBar Intent="@statusIntent">@statusMessage</FluentMessageBar>
+                }
+
+                @foreach (var standard in standards)
+                {
+                    <article class="template-section">
+                        <div class="template-section__header">
+                            <div>
+                                <h3 class="panel-title">@standard.Name</h3>
+                                <p class="muted-text">@standard.Id</p>
+                            </div>
+                        </div>
+
+                        <div class="template-editor-grid">
+                            <label class="input-field">
+                                <span>Markdown standard</span>
+                                <FluentTextArea @bind-Value="standard.Standard"
+                                                Rows="9"
+                                                Disabled="@isSaving" />
+                            </label>
+
+                            <div class="input-field">
+                                <span>Preview</span>
+                                <div class="markdown-preview">
+                                    @((MarkupString)RenderMarkdownPreview(standard.Standard))
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                }
             </div>
         </section>
     </Authorized>
 </AuthorizeView>
 
 @code {
+  private const string StandardsPath = "templates/consult_section_standards.md";
+  private const string StorageKey = "consultologist.consultSectionStandards.v1";
+
   [CascadingParameter]
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
-  private JsonDocument? graphApiResponse = null;
+  private JsonDocument? graphApiResponse;
+  private List<SectionStandard> standards = new();
+  private string? defaultMarkdown;
+  private bool isLoading;
+  private bool isSaving;
+  private string? statusMessage;
+  private MessageIntent statusIntent = MessageIntent.Info;
 
   protected override async Task OnInitializedAsync()
+  {
+    await LoadUserProfileAsync();
+    await LoadStandardsAsync();
+  }
+
+  private async Task LoadUserProfileAsync()
   {
     var authState = await AuthenticationStateTask!;
     var user = authState.User;
 
-    if (user.Identity?.IsAuthenticated == true)
+    if (user.Identity?.IsAuthenticated != true)
     {
-      try
+      return;
+    }
+
+    try
+    {
+      using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+      response.EnsureSuccessStatusCode();
+      graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
+    }
+  }
+
+  private async Task LoadStandardsAsync()
+  {
+    isLoading = true;
+    statusMessage = null;
+
+    try
+    {
+      defaultMarkdown = await LoadBundledStandardsAsync();
+      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+      standards = ParseStandards(string.IsNullOrWhiteSpace(storedMarkdown) ? defaultMarkdown : storedMarkdown);
+    }
+    catch (Exception ex)
+    {
+      standards = new();
+      statusIntent = MessageIntent.Error;
+      statusMessage = $"Unable to load section standards: {ex.Message}";
+    }
+    finally
+    {
+      isLoading = false;
+    }
+  }
+
+  private async Task SaveStandardsAsync()
+  {
+    isSaving = true;
+    statusMessage = null;
+
+    try
+    {
+      await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, SerializeStandards(standards));
+      statusIntent = MessageIntent.Success;
+      statusMessage = "Section standards saved.";
+    }
+    catch (Exception ex)
+    {
+      statusIntent = MessageIntent.Error;
+      statusMessage = $"Unable to save standards: {ex.Message}";
+    }
+    finally
+    {
+      isSaving = false;
+    }
+  }
+
+  private async Task ResetToDefaultsAsync()
+  {
+    isSaving = true;
+    statusMessage = null;
+
+    try
+    {
+      defaultMarkdown ??= await LoadBundledStandardsAsync();
+      standards = ParseStandards(defaultMarkdown);
+      await JSRuntime.InvokeVoidAsync("localStorage.removeItem", StorageKey);
+      statusIntent = MessageIntent.Success;
+      statusMessage = "Default section standards restored.";
+    }
+    catch (Exception ex)
+    {
+      statusIntent = MessageIntent.Error;
+      statusMessage = $"Unable to reset standards: {ex.Message}";
+    }
+    finally
+    {
+      isSaving = false;
+    }
+  }
+
+  private async Task<string> LoadBundledStandardsAsync()
+  {
+    var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
+    return await Http.GetStringAsync(standardsUri);
+  }
+
+  private static List<SectionStandard> ParseStandards(string markdown)
+  {
+    var sections = new List<SectionStandard>();
+    SectionStandard? current = null;
+    var content = new StringBuilder();
+
+    foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
+    {
+      if (line.StartsWith("## ", StringComparison.Ordinal))
       {
-        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
-        response.EnsureSuccessStatusCode();
-        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+        if (current != null)
+        {
+          current.Standard = content.ToString().Trim();
+          sections.Add(current);
+          content.Clear();
+        }
+
+        var heading = line[3..].Trim();
+        var separatorIndex = heading.IndexOf(':');
+        var id = separatorIndex >= 0 ? heading[..separatorIndex].Trim() : CreateId(heading);
+        var name = separatorIndex >= 0 ? heading[(separatorIndex + 1)..].Trim() : heading;
+        current = new SectionStandard(id, name, string.Empty);
+        continue;
       }
-      catch (AccessTokenNotAvailableException exception)
+
+      if (current != null)
       {
-        exception.Redirect();
+        content.AppendLine(line);
       }
     }
+
+    if (current != null)
+    {
+      current.Standard = content.ToString().Trim();
+      sections.Add(current);
+    }
+
+    return sections;
+  }
+
+  private static string SerializeStandards(IEnumerable<SectionStandard> sections)
+  {
+    var builder = new StringBuilder();
+
+    foreach (var section in sections)
+    {
+      if (builder.Length > 0)
+      {
+        builder.AppendLine();
+        builder.AppendLine();
+      }
+
+      builder.Append("## ");
+      builder.Append(section.Id);
+      builder.Append(": ");
+      builder.AppendLine(section.Name);
+      builder.AppendLine();
+      builder.Append(section.Standard.Trim());
+    }
+
+    return builder.ToString();
+  }
+
+  private static string RenderMarkdownPreview(string markdown)
+  {
+    if (string.IsNullOrWhiteSpace(markdown))
+    {
+      return "<p class=\"muted-text\">No standard text.</p>";
+    }
+
+    var builder = new StringBuilder();
+    var lines = markdown.Replace("\r\n", "\n").Split('\n');
+    var inList = false;
+
+    foreach (var rawLine in lines)
+    {
+      var line = rawLine.Trim();
+
+      if (string.IsNullOrEmpty(line))
+      {
+        if (inList)
+        {
+          builder.AppendLine("</ul>");
+          inList = false;
+        }
+
+        continue;
+      }
+
+      if (line.StartsWith("- ", StringComparison.Ordinal))
+      {
+        if (!inList)
+        {
+          builder.AppendLine("<ul>");
+          inList = true;
+        }
+
+        builder.Append("<li>");
+        builder.Append(WebUtility.HtmlEncode(line[2..]));
+        builder.AppendLine("</li>");
+        continue;
+      }
+
+      if (inList)
+      {
+        builder.AppendLine("</ul>");
+        inList = false;
+      }
+
+      if (line.StartsWith("### ", StringComparison.Ordinal))
+      {
+        builder.Append("<h4>");
+        builder.Append(WebUtility.HtmlEncode(line[4..]));
+        builder.AppendLine("</h4>");
+      }
+      else
+      {
+        builder.Append("<p>");
+        builder.Append(WebUtility.HtmlEncode(line));
+        builder.AppendLine("</p>");
+      }
+    }
+
+    if (inList)
+    {
+      builder.AppendLine("</ul>");
+    }
+
+    return builder.ToString();
+  }
+
+  private static string CreateId(string value)
+  {
+    return value.Trim().ToLowerInvariant().Replace(' ', '_');
+  }
+
+  private sealed class SectionStandard
+  {
+    public SectionStandard(string id, string name, string standard)
+    {
+      Id = id;
+      Name = name;
+      Standard = standard;
+    }
+
+    public string Id { get; }
+    public string Name { get; }
+    public string Standard { get; set; }
   }
 }

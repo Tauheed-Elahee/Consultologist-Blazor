@@ -1,15 +1,12 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using System.Text
 @using System.Text.Json
 @using BlazorWasm.Services.AI
-@using BlazorWasm.Services.Templates
-@using Microsoft.JSInterop
 @inject HttpClient Http
 @inject NavigationManager Navigation
-@inject IConfiguration Configuration
 @inject IAIEndpointService AIService
-@inject ITemplateRenderService TemplateRenderService
 @inject IJSRuntime JSRuntime
 @attribute [Authorize]
 
@@ -22,7 +19,7 @@
         <span class="section-eyebrow">Consults</span>
         <h1 class="page-title">Draft and review specialist consult notes.</h1>
         <p class="page-description">
-            Select the render context, enter the referral draft, and generate a structured note for physician review.
+            Paste the source consult draft and generate each note section from the active writing standards.
         </p>
     </div>
 </section>
@@ -33,25 +30,23 @@
             <section class="workflow-grid">
                 <div class="workflow-panel">
                     <div class="form-stack">
-                        <h2 class="panel-title">Render context</h2>
+                        <h2 class="panel-title">Section standards</h2>
                         <p class="panel-description">
-                            Choose the schema that guides structured extraction before the note is rendered.
+                            The active standards are loaded from browser storage, with bundled defaults as the fallback.
                         </p>
 
-                        <label class="input-field">
-                            <span>Select schema</span>
-                            <FluentSelect TOption="string" @bind-Value="selectedSchemaPath">
-                                @foreach (var schema in schemaOptions)
-                                {
-                                    <FluentOption TOption="string" Value="@schema.Path">@schema.Label</FluentOption>
-                                }
-                            </FluentSelect>
-                        </label>
-
                         <div class="state-panel">
-                            <span class="muted-text">Schema path</span>
-                            <strong>@selectedSchemaPath</strong>
+                            <span class="muted-text">Sections loaded</span>
+                            <strong>@sectionStandards.Count</strong>
                         </div>
+
+                        @if (generatedSections.Count > 0)
+                        {
+                            <div class="state-panel">
+                                <span class="muted-text">Generated sections</span>
+                                <strong>@generatedSections.Count of @sectionStandards.Count</strong>
+                            </div>
+                        }
                     </div>
                 </div>
 
@@ -59,20 +54,20 @@
                     <div class="form-stack">
                         <h2 class="panel-title">Consult details</h2>
                         <p class="panel-description">
-                            Paste the source referral, history, or draft note to create the consultation output.
+                            Paste the referral, history, or draft note. Each output section uses this draft as the source of truth.
                         </p>
 
                         <label class="input-field">
                             <span>Consult draft</span>
                             <FluentTextArea @bind-Value="consultDraft"
                                             Placeholder="Enter referral details, clinical context, and the consult question..."
-                                            Rows="8" />
+                                            Rows="10" />
                         </label>
 
                         <div class="action-row">
                             <FluentButton Appearance="Appearance.Accent"
-                                          @onclick="async () => { await LoadSchemaAsync(); await CreateAIRequestAsync(); }"
-                                          Disabled="@(isSchemaLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft))">
+                                          @onclick="CreateConsultAsync"
+                                          Disabled="@(isStandardsLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || sectionStandards.Count == 0)">
                                 Create consult
                             </FluentButton>
                         </div>
@@ -82,67 +77,56 @@
 
             <section class="result-panel">
                 <div class="consult-status">
-@if (isTemplateLoading || isSchemaLoading || isAiRequestLoading)
-{
-	<div class="loading-state">
-		<FluentProgressRing />
-		<span>Preparing consult output...</span>
-	</div>
-}
-@if (!string.IsNullOrEmpty(templateLoadError))
-{
-	<FluentMessageBar Intent="MessageIntent.Error">@templateLoadError</FluentMessageBar>
-}
-@if (!string.IsNullOrEmpty(schemaLoadError))
-{
-	<FluentMessageBar Intent="MessageIntent.Error">@schemaLoadError</FluentMessageBar>
-}
-@if (!string.IsNullOrEmpty(aiRequestError))
-{
-	<FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
-}
-@if (isRenderLoading)
-{
-	<div class="loading-state">
-		<FluentProgressRing />
-		<span>Rendering template...</span>
-	</div>
-}
-@if (!string.IsNullOrEmpty(renderError))
-{
-	<FluentMessageBar Intent="MessageIntent.Error">@renderError</FluentMessageBar>
-}
-@if (renderResult != null && !renderResult.Success)
-{
-	<FluentMessageBar Intent="MessageIntent.Error" Title="Template Rendering Errors">
-		<ul style="margin: 0; padding-left: 20px;">
-			@foreach (var error in renderResult.Errors)
-			{
-				<li>@error</li>
-			}
-		</ul>
-	</FluentMessageBar>
+                    @if (isStandardsLoading)
+                    {
+                        <div class="loading-state">
+                            <FluentProgressRing />
+                            <span>Loading section standards...</span>
+                        </div>
+                    }
 
-	<details class="raw-response">
-		<summary>Show raw AI response (JSON)</summary>
-		<pre class="code-panel">@aiResponse</pre>
-	</details>
-}
-@if (renderResult?.Success == true && !string.IsNullOrEmpty(renderResult.RenderedHtml))
-{
-	<div>
-		<div class="result-header">
-			<h2 class="panel-title">Consultation note</h2>
-			<FluentBadge Appearance="Appearance.Accent">
-				Rendered in @renderResult.RenderDuration.TotalMilliseconds ms
-			</FluentBadge>
-		</div>
+                    @if (isAiRequestLoading)
+                    {
+                        <div class="loading-state">
+                            <FluentProgressRing />
+                            <span>Generating @activeSectionName...</span>
+                        </div>
+                    }
 
-		<div class="note-preview">
-			@((MarkupString)renderResult.RenderedHtml)
-		</div>
-	</div>
-}
+                    @if (!string.IsNullOrEmpty(standardsLoadError))
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                    }
+
+                    @if (!string.IsNullOrEmpty(aiRequestError))
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
+                    }
+
+                    @if (generatedSections.Count > 0)
+                    {
+                        <div>
+                            <div class="result-header">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <FluentBadge Appearance="Appearance.Accent">
+                                    @generatedSections.Count sections
+                                </FluentBadge>
+                            </div>
+
+                            <article class="note-preview generated-note">
+                                @foreach (var standard in sectionStandards)
+                                {
+                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                    {
+                                        <section class="note-section">
+                                            <h3>@standard.Name</h3>
+                                            <p>@prose</p>
+                                        </section>
+                                    }
+                                }
+                            </article>
+                        </div>
+                    }
                 </div>
             </section>
         </div>
@@ -150,156 +134,178 @@
 </AuthorizeView>
 
 @code {
+  private const string StandardsPath = "templates/consult_section_standards.md";
+  private const string StorageKey = "consultologist.consultSectionStandards.v1";
+
   [CascadingParameter]
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
-  private JsonDocument? graphApiResponse = null;
-  private readonly SchemaOption[] schemaOptions = new[]
-  {
-    new SchemaOption("Mortigen Render Context", "schemas/mortigen_render_context.schema.json")
-  };
-  private string selectedSchemaPath = "schemas/mortigen_render_context.schema.json";
+  private JsonDocument? graphApiResponse;
   private string consultDraft = string.Empty;
-  private string? renderedSchemaContent;
-  private bool isSchemaLoading;
-  private string? schemaLoadError;
+  private List<SectionStandard> sectionStandards = new();
+  private Dictionary<string, string> generatedSections = new();
+  private bool isStandardsLoading;
+  private string? standardsLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
-  private string? aiResponse;
-  private string? renderedTemplateContent;
-  private bool isTemplateLoading;
-  private string? templateLoadError;
-  private TemplateRenderResult? renderResult;
-  private bool isRenderLoading;
-  private string? renderError;
+  private string activeSectionName = "consult sections";
 
   protected override async Task OnInitializedAsync()
+  {
+    await LoadUserProfileAsync();
+    await LoadSectionStandardsAsync();
+  }
+
+  private async Task LoadUserProfileAsync()
   {
     var authState = await AuthenticationStateTask!;
     var user = authState.User;
 
-    if (user.Identity?.IsAuthenticated == true)
+    if (user.Identity?.IsAuthenticated != true)
     {
-      try
-      {
-        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
-        response.EnsureSuccessStatusCode();
-        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
-      }
-      catch (AccessTokenNotAvailableException exception)
-      {
-        exception.Redirect();
-      }
-    }
-  }
-
-  private async Task LoadConsultTemplateAsync()
-  {
-    templateLoadError = null;
-    renderedTemplateContent = null;
-
-    try
-    {
-      isTemplateLoading = true;
-      var templateUri = new Uri(new Uri(Navigation.BaseUri), "templates/consult_template.scriban");
-      renderedTemplateContent = await Http.GetStringAsync(templateUri);
-    }
-    catch (Exception ex)
-    {
-      templateLoadError = $"Unable to load template: {ex.Message}";
-    }
-    finally
-    {
-      isTemplateLoading = false;
-    }
-  }
-
-  private async Task LoadSchemaAsync()
-  {
-    schemaLoadError = null;
-    renderedSchemaContent = null;
-
-    try
-    {
-      isSchemaLoading = true;
-      var schemaUri = new Uri(new Uri(Navigation.BaseUri), selectedSchemaPath);
-      renderedSchemaContent = await Http.GetStringAsync(schemaUri);
-    }
-    catch (Exception ex)
-    {
-      schemaLoadError = $"Unable to load schema: {ex.Message}";
-    }
-    finally
-    {
-      isSchemaLoading = false;
-    }
-  }
-
-  private async Task CreateAIRequestAsync()
-  {
-    aiRequestError = null;
-    aiResponse = null;
-    renderResult = null; // Clear previous render
-
-    if (!string.IsNullOrEmpty(consultDraft) && !string.IsNullOrEmpty(renderedSchemaContent))
-    {
-      try
-      {
-        isAiRequestLoading = true;
-        aiResponse = await AIService.InvokeAgentAsync(consultDraft, renderedSchemaContent);
-
-        // Log AI response to browser console
-        if (!string.IsNullOrEmpty(aiResponse))
-        {
-          await JSRuntime.InvokeVoidAsync("console.log", "AI Response JSON:\n", aiResponse);
-
-          // AUTO-RENDER: Load template and render after getting AI response
-          await LoadConsultTemplateAsync();
-          await RenderConsultTemplateAsync();
-        }
-      }
-      catch (Exception ex)
-      {
-        aiRequestError = $"Error calling agent: {ex.Message}";
-      }
-      finally
-      {
-        isAiRequestLoading = false;
-      }
-    }
-    else
-    {
-      aiRequestError = "Require both Consult Draft and loaded Schema";
-    }
-  }
-
-  private async Task RenderConsultTemplateAsync()
-  {
-    renderError = null;
-    renderResult = null;
-
-    if (string.IsNullOrEmpty(aiResponse) || string.IsNullOrEmpty(renderedTemplateContent))
-    {
-      renderError = "Template and AI response required for rendering";
       return;
     }
 
     try
     {
-      isRenderLoading = true;
-      renderResult = await TemplateRenderService.RenderAsync(
-        renderedTemplateContent,
-        aiResponse);
+      using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
+      response.EnsureSuccessStatusCode();
+      graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
     }
-    catch (Exception ex)
+    catch (AccessTokenNotAvailableException exception)
     {
-      renderError = $"Error rendering template: {ex.Message}";
-    }
-    finally
-    {
-      isRenderLoading = false;
+      exception.Redirect();
     }
   }
 
-  private sealed record SchemaOption(string Label, string Path);
+  private async Task LoadSectionStandardsAsync()
+  {
+    isStandardsLoading = true;
+    standardsLoadError = null;
+
+    try
+    {
+      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+      var markdown = string.IsNullOrWhiteSpace(storedMarkdown)
+        ? await LoadBundledStandardsAsync()
+        : storedMarkdown;
+
+      sectionStandards = ParseStandards(markdown);
+    }
+    catch (Exception ex)
+    {
+      sectionStandards = new();
+      standardsLoadError = $"Unable to load section standards: {ex.Message}";
+    }
+    finally
+    {
+      isStandardsLoading = false;
+    }
+  }
+
+  private async Task CreateConsultAsync()
+  {
+    aiRequestError = null;
+    generatedSections = new();
+
+    if (string.IsNullOrWhiteSpace(consultDraft))
+    {
+      aiRequestError = "Consult draft is required.";
+      return;
+    }
+
+    if (sectionStandards.Count == 0)
+    {
+      aiRequestError = "No section standards are available.";
+      return;
+    }
+
+    try
+    {
+      isAiRequestLoading = true;
+
+      foreach (var section in sectionStandards)
+      {
+        activeSectionName = section.Name;
+        StateHasChanged();
+
+        var prose = await AIService.InvokeAgentAsync(consultDraft, section.Name, section.Standard);
+        generatedSections[section.Id] = prose?.Trim() ?? string.Empty;
+      }
+    }
+    catch (Exception ex)
+    {
+      aiRequestError = $"Error calling agent: {ex.Message}";
+    }
+    finally
+    {
+      activeSectionName = "consult sections";
+      isAiRequestLoading = false;
+    }
+  }
+
+  private async Task<string> LoadBundledStandardsAsync()
+  {
+    var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
+    return await Http.GetStringAsync(standardsUri);
+  }
+
+  private static List<SectionStandard> ParseStandards(string markdown)
+  {
+    var sections = new List<SectionStandard>();
+    SectionStandard? current = null;
+    var content = new StringBuilder();
+
+    foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
+    {
+      if (line.StartsWith("## ", StringComparison.Ordinal))
+      {
+        if (current != null)
+        {
+          current.Standard = content.ToString().Trim();
+          sections.Add(current);
+          content.Clear();
+        }
+
+        var heading = line[3..].Trim();
+        var separatorIndex = heading.IndexOf(':');
+        var id = separatorIndex >= 0 ? heading[..separatorIndex].Trim() : CreateId(heading);
+        var name = separatorIndex >= 0 ? heading[(separatorIndex + 1)..].Trim() : heading;
+        current = new SectionStandard(id, name, string.Empty);
+        continue;
+      }
+
+      if (current != null)
+      {
+        content.AppendLine(line);
+      }
+    }
+
+    if (current != null)
+    {
+      current.Standard = content.ToString().Trim();
+      sections.Add(current);
+    }
+
+    return sections;
+  }
+
+  private static string CreateId(string value)
+  {
+    return value.Trim().ToLowerInvariant().Replace(' ', '_');
+  }
+
+  private sealed class SectionStandard
+  {
+    public SectionStandard(string id, string name, string standard)
+    {
+      Id = id;
+      Name = name;
+      Standard = standard;
+    }
+
+    public string Id { get; }
+    public string Name { get; }
+    public string Standard { get; set; }
+  }
 }

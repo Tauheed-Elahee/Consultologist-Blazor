@@ -64,16 +64,19 @@ public class AgentProxy
 
             _logger.LogInformation("Received request body: {Body}", requestBody);
 
-            var agentRequest = JsonSerializer.Deserialize<AgentRequest>(requestBody, new JsonSerializerOptions
+            var agentRequest = JsonSerializer.Deserialize<AgentSectionRequest>(requestBody, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });
 
-            if (agentRequest == null || string.IsNullOrEmpty(agentRequest.ConsultDraft) || string.IsNullOrEmpty(agentRequest.JsonSchema))
+            if (agentRequest == null
+                || string.IsNullOrWhiteSpace(agentRequest.ConsultDraft)
+                || string.IsNullOrWhiteSpace(agentRequest.SectionName)
+                || string.IsNullOrWhiteSpace(agentRequest.SectionStandard))
             {
-                _logger.LogWarning("Invalid request: agentRequest={AgentRequest}, ConsultDraft={ConsultDraft}, JsonSchema={JsonSchema}",
-                    agentRequest, agentRequest?.ConsultDraft, agentRequest?.JsonSchema);
-                return new BadRequestObjectResult(new AgentResponse(null, "Invalid request: ConsultDraft and JsonSchema are required", false));
+                _logger.LogWarning("Invalid request: agentRequest={AgentRequest}, ConsultDraft={ConsultDraft}, SectionName={SectionName}, SectionStandard={SectionStandard}",
+                    agentRequest, agentRequest?.ConsultDraft, agentRequest?.SectionName, agentRequest?.SectionStandard);
+                return new BadRequestObjectResult(new AgentResponse(null, "Invalid request: ConsultDraft, SectionName, and SectionStandard are required", false));
             }
 
             // Get configuration from environment variables
@@ -130,7 +133,32 @@ public class AgentProxy
             }
 
             // Step 2: Add message to thread
-            var userMessage = $"ConsultDraft:\n{agentRequest.ConsultDraft}\n\nJSON Schema:\n{agentRequest.JsonSchema}";
+            var userMessage = $"""
+                You are writing one section of an oncology consult note.
+
+                Source of truth:
+                Use only the clinical facts contained in the draft consult note below.
+
+                Section standard:
+                The following standard shows the desired organization, tone, level of detail, and clinical writing style.
+                It is not patient data. Do not copy diagnoses, staging, receptor values, dates, pathology details, treatments, scores, symptoms, or outcomes from the standard unless they are also present in the draft consult note.
+
+                Missing information rule:
+                Do not invent missing pathology, dates, staging, receptor status, genomic scores, medications, allergies, physical exam findings, or treatment decisions.
+                If a detail is not present in the draft, omit it unless the section would be misleading without it, in which case write "not documented."
+
+                Output rule:
+                Return only the final prose for the requested section. Do not include a heading, JSON, markdown, bullets, or commentary.
+
+                Requested section:
+                {agentRequest.SectionName}
+
+                Section standard:
+                {agentRequest.SectionStandard}
+
+                Draft consult note:
+                {agentRequest.ConsultDraft}
+                """;
             var messagePayload = new
             {
                 role = "user",
@@ -151,7 +179,8 @@ public class AgentProxy
             // Step 3: Create run
             var runPayload = new
             {
-                assistant_id = agentId
+                assistant_id = agentId,
+                temperature = 0
             };
 
             var runUrl = $"{endpoint}/threads/{threadId}/runs?api-version={apiVersion}";

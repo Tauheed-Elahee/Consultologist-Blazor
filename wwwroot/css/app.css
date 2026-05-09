@@ -410,6 +410,83 @@ header.header.app-header {
 	padding: clamp(1rem, 2vw, 1.5rem);
 }
 
+.template-section {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+	min-width: 0;
+	padding: 1rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-md);
+	background: var(--consultologist-surface);
+}
+
+.template-section__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	min-width: 0;
+}
+
+.template-editor-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 1rem;
+	align-items: stretch;
+}
+
+.markdown-preview {
+	min-height: 9rem;
+	max-height: 18rem;
+	overflow: auto;
+	padding: 0.875rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm);
+	background: var(--consultologist-surface-muted);
+	color: var(--consultologist-text);
+	line-height: 1.55;
+}
+
+.markdown-preview p,
+.markdown-preview ul {
+	margin: 0 0 0.75rem;
+}
+
+.markdown-preview > :last-child {
+	margin-bottom: 0;
+}
+
+.generated-note {
+	display: flex;
+	flex-direction: column;
+	gap: 1.25rem;
+	color: var(--consultologist-text);
+	line-height: 1.6;
+	white-space: normal;
+}
+
+.note-section {
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+	min-width: 0;
+}
+
+.note-section h3 {
+	margin: 0;
+	color: var(--consultologist-text);
+	font-size: 1rem;
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.note-section p {
+	margin: 0;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
 .app-footer a {
 	color: var(--consultologist-text-muted);
 	text-decoration: none;
@@ -524,6 +601,10 @@ header.header.app-header {
 	}
 
 	.workflow-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.template-editor-grid {
 		grid-template-columns: 1fr;
 	}
 
