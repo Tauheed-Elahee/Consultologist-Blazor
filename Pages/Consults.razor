@@ -27,30 +27,8 @@
 <AuthorizeView>
     <Authorized>
         <div class="consult-builder">
-            <section class="workflow-grid">
-                <div class="workflow-panel">
-                    <div class="form-stack">
-                        <h2 class="panel-title">Section standards</h2>
-                        <p class="panel-description">
-                            The active standards are loaded from browser storage, with bundled defaults as the fallback.
-                        </p>
-
-                        <div class="state-panel">
-                            <span class="muted-text">Sections loaded</span>
-                            <strong>@sectionStandards.Count</strong>
-                        </div>
-
-                        @if (generatedSections.Count > 0)
-                        {
-                            <div class="state-panel">
-                                <span class="muted-text">Generated sections</span>
-                                <strong>@generatedSections.Count of @sectionStandards.Count</strong>
-                            </div>
-                        }
-                    </div>
-                </div>
-
-                <div class="workflow-panel">
+            <div class="consult-builder__input">
+                <section class="workflow-panel">
                     <div class="form-stack">
                         <h2 class="panel-title">Consult details</h2>
                         <p class="panel-description">
@@ -61,7 +39,7 @@
                             <span>Consult draft</span>
                             <FluentTextArea @bind-Value="consultDraft"
                                             Placeholder="Enter referral details, clinical context, and the consult question..."
-                                            Rows="10" />
+                                            Rows="16" />
                         </label>
 
                         <div class="action-row">
@@ -72,63 +50,88 @@
                             </FluentButton>
                         </div>
                     </div>
-                </div>
-            </section>
+                </section>
+            </div>
 
-            <section class="result-panel">
-                <div class="consult-status">
-                    @if (isStandardsLoading)
-                    {
-                        <div class="loading-state">
-                            <FluentProgressRing />
-                            <span>Loading section standards...</span>
+            <div class="consult-builder__output">
+                <section class="workflow-panel">
+                    <div class="form-stack">
+                        <h2 class="panel-title">Section standards</h2>
+                        <p class="panel-description">
+                            The active standards are loaded from browser storage, with bundled defaults as the fallback.
+                        </p>
+
+                        <div class="state-panel">
+                            <span class="muted-text">Sections loaded</span>
+                            <strong>@generatedSections.Count/@sectionStandards.Count</strong>
                         </div>
-                    }
+                    </div>
+                </section>
 
-                    @if (isAiRequestLoading)
-                    {
-                        <div class="loading-state">
-                            <FluentProgressRing />
-                            <span>Generating @activeSectionName...</span>
-                        </div>
-                    }
-
-                    @if (!string.IsNullOrEmpty(standardsLoadError))
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
-                    }
-
-                    @if (!string.IsNullOrEmpty(aiRequestError))
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
-                    }
-
-                    @if (generatedSections.Count > 0)
-                    {
-                        <div>
-                            <div class="result-header">
-                                <h2 class="panel-title">Consultation note</h2>
-                                <FluentBadge Appearance="Appearance.Accent">
-                                    @generatedSections.Count sections
-                                </FluentBadge>
+                <section class="result-panel consult-builder__result">
+                    <div class="consult-status">
+                        @if (isStandardsLoading)
+                        {
+                            <div class="loading-state">
+                                <FluentProgressRing />
+                                <span>Loading section standards...</span>
                             </div>
+                        }
 
-                            <article class="note-preview generated-note">
-                                @foreach (var standard in sectionStandards)
-                                {
-                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                        @if (isAiRequestLoading)
+                        {
+                            <div class="loading-state">
+                                <FluentProgressRing />
+                                <span>Generating @activeSectionName...</span>
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(standardsLoadError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                        }
+
+                        @if (!string.IsNullOrEmpty(aiRequestError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
+                        }
+
+                        @if (generatedSections.Count > 0)
+                        {
+                            <div>
+                                <div class="result-header">
+                                    <h2 class="panel-title">Consultation note</h2>
+                                    <FluentBadge Appearance="Appearance.Accent">
+                                        @generatedSections.Count sections
+                                    </FluentBadge>
+                                </div>
+
+                                <article class="note-preview generated-note">
+                                    @foreach (var standard in sectionStandards)
                                     {
-                                        <section class="note-section">
-                                            <h3>@standard.Name</h3>
-                                            <p>@prose</p>
-                                        </section>
+                                        if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                        {
+                                            <section class="note-section">
+                                                <h3>@standard.Name</h3>
+                                                <p>@prose</p>
+                                            </section>
+                                        }
                                     }
-                                }
-                            </article>
-                        </div>
-                    }
-                </div>
-            </section>
+                                </article>
+                            </div>
+                        }
+                        else if (!isStandardsLoading && !isAiRequestLoading && string.IsNullOrEmpty(standardsLoadError) && string.IsNullOrEmpty(aiRequestError))
+                        {
+                            <div class="empty-note-state">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <p class="panel-description">
+                                    Generated consult sections will appear here after you enter a draft and create the consult.
+                                </p>
+                            </div>
+                        }
+                    </div>
+                </section>
+            </div>
         </div>
     </Authorized>
 </AuthorizeView>
