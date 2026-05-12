@@ -81,12 +81,13 @@ public class AgentProxy
 
             // Get configuration from environment variables
             var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
-            var agentId = Environment.GetEnvironmentVariable("AzureAI__AgentId");
-            var apiVersion = Environment.GetEnvironmentVariable("AzureAI__ApiVersion") ?? "2025-05-01";
+            var agentName = Environment.GetEnvironmentVariable("AzureAI__AgentName");
+            var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
+            var apiVersion = Environment.GetEnvironmentVariable("AzureAI__ApiVersion") ?? "v1";
 
-            if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentId))
+            if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentName) || string.IsNullOrEmpty(agentVersion))
             {
-                return new ObjectResult(new AgentResponse(null, "Azure AI configuration missing", false)) { StatusCode = 500 };
+                return new ObjectResult(new AgentResponse(null, "Azure AI configuration missing: AzureAI__Endpoint, AzureAI__AgentName, and AzureAI__AgentVersion are required", false)) { StatusCode = 500 };
             }
 
             // Get Azure AD token for Azure AI Foundry
@@ -112,27 +113,6 @@ public class AgentProxy
             // Configure HTTP client with bearer token
             _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
-            // Step 1: Create thread
-            var threadUrl = $"{endpoint}/threads?api-version={apiVersion}";
-            var threadResponse = await _httpClient.PostAsync(threadUrl, new StringContent("{}", Encoding.UTF8, "application/json"));
-
-            if (!threadResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await threadResponse.Content.ReadAsStringAsync();
-                _logger.LogError($"Failed to create thread: {errorContent}");
-                return new ObjectResult(new AgentResponse(null, $"Failed to create thread: {threadResponse.StatusCode}", false)) { StatusCode = 500 };
-            }
-
-            var threadData = await threadResponse.Content.ReadAsStringAsync();
-            var threadJson = JsonNode.Parse(threadData);
-            var threadId = threadJson?["id"]?.GetValue<string>();
-
-            if (string.IsNullOrEmpty(threadId))
-            {
-                return new ObjectResult(new AgentResponse(null, "Failed to get thread ID", false)) { StatusCode = 500 };
-            }
-
-            // Step 2: Add message to thread
             var userMessage = $"""
                 You are writing one section of an oncology consult note.
 
@@ -159,121 +139,34 @@ public class AgentProxy
                 Draft consult note:
                 {agentRequest.ConsultDraft}
                 """;
-            var messagePayload = new
+
+            var responsePayload = new
             {
-                role = "user",
-                content = userMessage
+                input = userMessage,
+                store = false,
+                agent_reference = new
+                {
+                    name = agentName,
+                    version = agentVersion,
+                    type = "agent_reference"
+                }
             };
 
-            var messageUrl = $"{endpoint}/threads/{threadId}/messages?api-version={apiVersion}";
-            var messageResponse = await _httpClient.PostAsync(messageUrl,
-                new StringContent(JsonSerializer.Serialize(messagePayload), Encoding.UTF8, "application/json"));
+            var responsesUrl = $"{endpoint.TrimEnd('/')}/openai/v1/responses?api-version={apiVersion}";
+            var foundryResponse = await _httpClient.PostAsync(responsesUrl,
+                new StringContent(JsonSerializer.Serialize(responsePayload), Encoding.UTF8, "application/json"));
 
-            if (!messageResponse.IsSuccessStatusCode)
+            var responseData = await foundryResponse.Content.ReadAsStringAsync();
+            if (!foundryResponse.IsSuccessStatusCode)
             {
-                var errorContent = await messageResponse.Content.ReadAsStringAsync();
-                _logger.LogError($"Failed to add message: {errorContent}");
-                return new ObjectResult(new AgentResponse(null, $"Failed to add message: {messageResponse.StatusCode}", false)) { StatusCode = 500 };
+                _logger.LogError("Foundry responses API failed with status {StatusCode}: {Body}", foundryResponse.StatusCode, responseData);
+                return new ObjectResult(new AgentResponse(null, $"Azure AI request failed: {foundryResponse.StatusCode}", false)) { StatusCode = 500 };
             }
 
-            // Step 3: Create run
-            var runPayload = new
+            var assistantText = ExtractResponseText(responseData);
+            if (!string.IsNullOrWhiteSpace(assistantText))
             {
-                assistant_id = agentId,
-                temperature = 0
-            };
-
-            var runUrl = $"{endpoint}/threads/{threadId}/runs?api-version={apiVersion}";
-            var runResponse = await _httpClient.PostAsync(runUrl,
-                new StringContent(JsonSerializer.Serialize(runPayload), Encoding.UTF8, "application/json"));
-
-            if (!runResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await runResponse.Content.ReadAsStringAsync();
-                _logger.LogError($"Failed to create run: {errorContent}");
-                return new ObjectResult(new AgentResponse(null, $"Failed to create run: {runResponse.StatusCode}", false)) { StatusCode = 500 };
-            }
-
-            var runData = await runResponse.Content.ReadAsStringAsync();
-            var runJson = JsonNode.Parse(runData);
-            var runId = runJson?["id"]?.GetValue<string>();
-
-            if (string.IsNullOrEmpty(runId))
-            {
-                return new ObjectResult(new AgentResponse(null, "Failed to get run ID", false)) { StatusCode = 500 };
-            }
-
-            // Step 4: Poll run status
-            var statusUrl = $"{endpoint}/threads/{threadId}/runs/{runId}?api-version={apiVersion}";
-            string? status = null;
-            int maxAttempts = 60; // 60 attempts * 1 second = 1 minute timeout
-            int attempts = 0;
-
-            while (attempts < maxAttempts)
-            {
-                var statusResponse = await _httpClient.GetAsync(statusUrl);
-
-                if (!statusResponse.IsSuccessStatusCode)
-                {
-                    var errorContent = await statusResponse.Content.ReadAsStringAsync();
-                    _logger.LogError($"Failed to check run status: {errorContent}");
-                    return new ObjectResult(new AgentResponse(null, $"Failed to check run status: {statusResponse.StatusCode}", false)) { StatusCode = 500 };
-                }
-
-                var statusData = await statusResponse.Content.ReadAsStringAsync();
-                var statusJson = JsonNode.Parse(statusData);
-                status = statusJson?["status"]?.GetValue<string>();
-
-                if (status == "completed")
-                {
-                    break;
-                }
-                else if (status == "failed" || status == "cancelled" || status == "expired")
-                {
-                    return new ObjectResult(new AgentResponse(null, $"Run ended with status: {status}", false)) { StatusCode = 500 };
-                }
-
-                await Task.Delay(1000);
-                attempts++;
-            }
-
-            if (status != "completed")
-            {
-                return new ObjectResult(new AgentResponse(null, "Run timed out", false)) { StatusCode = 500 };
-            }
-
-            // Step 5: Get messages
-            var messagesUrl = $"{endpoint}/threads/{threadId}/messages?api-version={apiVersion}";
-            var messagesResponse = await _httpClient.GetAsync(messagesUrl);
-
-            if (!messagesResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await messagesResponse.Content.ReadAsStringAsync();
-                _logger.LogError($"Failed to get messages: {errorContent}");
-                return new ObjectResult(new AgentResponse(null, $"Failed to get messages: {messagesResponse.StatusCode}", false)) { StatusCode = 500 };
-            }
-
-            var messagesData = await messagesResponse.Content.ReadAsStringAsync();
-            var messagesJson = JsonNode.Parse(messagesData);
-            var dataArray = messagesJson?["data"]?.AsArray();
-
-            if (dataArray == null || dataArray.Count == 0)
-            {
-                return new ObjectResult(new AgentResponse(null, "No messages received", false)) { StatusCode = 500 };
-            }
-
-            // Get the first assistant message (most recent)
-            foreach (var message in dataArray)
-            {
-                var role = message?["role"]?.GetValue<string>();
-                if (role == "assistant")
-                {
-                    var content = message?["content"]?.AsArray()?[0]?["text"]?["value"]?.GetValue<string>();
-                    if (!string.IsNullOrEmpty(content))
-                    {
-                        return new OkObjectResult(new AgentResponse(content, null, true));
-                    }
-                }
+                return new OkObjectResult(new AgentResponse(assistantText, null, true));
             }
 
             return new ObjectResult(new AgentResponse(null, "No assistant response found", false)) { StatusCode = 500 };
@@ -283,5 +176,48 @@ public class AgentProxy
             _logger.LogError(ex, "Error in AgentProxy function");
             return new ObjectResult(new AgentResponse(null, $"Internal error: {ex.Message}", false)) { StatusCode = 500 };
         }
+    }
+
+    private static string? ExtractResponseText(string responseData)
+    {
+        var responseJson = JsonNode.Parse(responseData);
+        var outputText = responseJson?["output_text"]?.GetValue<string>();
+
+        if (!string.IsNullOrWhiteSpace(outputText))
+        {
+            return outputText;
+        }
+
+        var output = responseJson?["output"]?.AsArray();
+        if (output == null)
+        {
+            return null;
+        }
+
+        foreach (var outputItem in output)
+        {
+            var type = outputItem?["type"]?.GetValue<string>();
+            if (type != "message" && type != "output_message")
+            {
+                continue;
+            }
+
+            var content = outputItem?["content"]?.AsArray();
+            if (content == null)
+            {
+                continue;
+            }
+
+            foreach (var contentItem in content)
+            {
+                var text = contentItem?["text"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+        }
+
+        return null;
     }
 }

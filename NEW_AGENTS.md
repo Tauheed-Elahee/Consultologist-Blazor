@@ -10,35 +10,25 @@ AzureFunction:AgentProxyUrl
 
 The function is implemented in `Api/AgentProxy.cs`.
 
-The current function uses the older Assistants-style API flow:
+The function uses the Azure AI Foundry project Responses API:
 
 ```text
-POST /threads
-POST /threads/{threadId}/messages
-POST /threads/{threadId}/runs
-GET  /threads/{threadId}/runs/{runId}
-GET  /threads/{threadId}/messages
+POST /openai/v1/responses
 ```
 
 It selects the agent with:
 
 ```json
 {
-  "assistant_id": "<AzureAI__AgentId>"
+  "agent_reference": {
+    "name": "<AzureAI__AgentName>",
+    "version": "<AzureAI__AgentVersion>",
+    "type": "agent_reference"
+  }
 }
 ```
 
-That means the current app expects an OpenAI-compatible assistant ID such as:
-
-```text
-asst_...
-```
-
-It should not use the Foundry portal/internal versioned ID, such as:
-
-```text
-consultologist-canada-east-ai:7
-```
+The app no longer uses an OpenAI-compatible `asst_...` assistant ID.
 
 ## New Foundry Agent Model
 
@@ -105,15 +95,11 @@ Then pass the conversation ID to the responses call:
 }
 ```
 
-The exact version field name and whether it is required can vary by API surface and release. Treat the `version` property above as the intended configuration shape to validate against the current Foundry REST or SDK reference before implementing.
-
 For this consult app, `store: false` is likely preferable unless cross-section memory is intentionally needed. Each generated consult section should generally be independent, using only the submitted consult draft and the selected section standard.
 
-## Required App Changes
+## Function Configuration
 
-Most changes are in `Api/AgentProxy.cs`. The Blazor page can stay largely unchanged because it already sends the consult draft, section name, and section standard to the proxy.
-
-Recommended configuration change:
+Required Function App settings:
 
 ```text
 AzureAI__Endpoint=https://<resource>.services.ai.azure.com/api/projects/<project>
@@ -122,55 +108,43 @@ AzureAI__AgentVersion=<foundry-agent-version>
 AzureAI__ApiVersion=v1
 ```
 
-Replace:
+`AzureAI__ApiVersion` defaults to `v1` when omitted.
+
+The function still uses `DefaultAzureCredential` and requests a token for:
 
 ```text
-AzureAI__AgentId
+https://ai.azure.com/.default
 ```
 
-with:
+The Function App managed identity must have access to the target Foundry/Azure AI resource or project.
 
-```text
-AzureAI__AgentName
+## Request Shape
+
+`Api/AgentProxy.cs` builds the same consult-section prompt used by the previous implementation and sends it as `input`:
+
+```json
+{
+  "input": "<consult section prompt>",
+  "agent_reference": {
+    "name": "<AzureAI__AgentName>",
+    "version": "<AzureAI__AgentVersion>",
+    "type": "agent_reference"
+  },
+  "store": false
+}
 ```
 
-Then update `Api/AgentProxy.cs` to:
+The proxy returns the existing Blazor contract:
 
-1. Read `AzureAI__AgentName` instead of `AzureAI__AgentId`.
-2. Read `AzureAI__AgentVersion` as the target Foundry agent version.
-3. Keep using `DefaultAzureCredential`.
-4. Keep requesting a token for:
+```json
+{
+  "response": "<generated section text>",
+  "error": null,
+  "success": true
+}
+```
 
-   ```text
-   https://ai.azure.com/.default
-   ```
-
-5. Build the same consult-section prompt currently sent as a thread message.
-6. Replace the current `/threads`, `/messages`, `/runs`, polling, and message-listing calls with one call to:
-
-   ```text
-   POST {endpoint}/openai/v1/responses
-   ```
-
-7. Send a body shaped like:
-
-   ```json
-   {
-     "input": "<consult section prompt>",
-     "agent_reference": {
-       "name": "<AzureAI__AgentName>",
-       "version": "<AzureAI__AgentVersion>",
-       "type": "agent_reference"
-     },
-     "store": false
-   }
-   ```
-
-8. Parse the generated text from the response output message content.
-
-If the deployed API surface accepts only the agent name and automatically resolves the active/default version, keep `AzureAI__AgentVersion` in configuration for clarity but omit it from the payload. The important design change is to stop treating the agent as an `asst_...` assistant ID and instead configure the Foundry agent name plus intended version.
-
-The current managed identity/RBAC pattern still applies. The Function App identity must have access to the target Foundry/Azure AI resource or project.
+Response parsing first checks top-level `output_text`, then falls back to the first text content item in `output[]` entries with type `message` or `output_message`.
 
 ## REST Versus C# SDK
 
