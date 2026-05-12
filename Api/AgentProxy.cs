@@ -1,14 +1,13 @@
-using System.Net.Http.Headers;
-using System.Net;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Azure.Core;
-using Azure.Identity;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using OpenAI.Responses;
+using System.ClientModel;
 using Api.Models;
 
 namespace Api;
@@ -16,13 +15,11 @@ namespace Api;
 public class AgentProxy
 {
     private readonly ILogger<AgentProxy> _logger;
-    private readonly HttpClient _httpClient;
     private readonly TokenCredential _credential;
 
-    public AgentProxy(ILogger<AgentProxy> logger, IHttpClientFactory httpClientFactory, TokenCredential credential)
+    public AgentProxy(ILogger<AgentProxy> logger, TokenCredential credential)
     {
         _logger = logger;
-        _httpClient = httpClientFactory.CreateClient();
         _credential = credential;
     }
 
@@ -90,29 +87,6 @@ public class AgentProxy
                 return new ObjectResult(new AgentResponse(null, "Azure AI configuration missing: AzureAI__Endpoint, AzureAI__AgentName, and AzureAI__AgentVersion are required", false)) { StatusCode = 500 };
             }
 
-            // Get Azure AD token for Azure AI Foundry
-            var tokenRequestContext = new TokenRequestContext(new[] { "https://ai.azure.com/.default" });
-
-            AccessToken token;
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                token = await _credential.GetTokenAsync(tokenRequestContext, cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogError("Token acquisition timed out");
-                return new ObjectResult(new AgentResponse(null, "Authentication timeout", false)) { StatusCode = 500 };
-            }
-            catch (AuthenticationFailedException ex)
-            {
-                _logger.LogError(ex, "Authentication failed");
-                return new ObjectResult(new AgentResponse(null, "Authentication failed", false)) { StatusCode = 500 };
-            }
-
-            // Configure HTTP client with bearer token
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
-
             var userMessage = $"""
                 You are writing one section of an oncology consult note.
 
@@ -140,27 +114,52 @@ public class AgentProxy
                 {agentRequest.ConsultDraft}
                 """;
 
-            var responsesUrl = $"{endpoint.TrimEnd('/')}/openai/v1/responses";
-            var foundryResponse = await _httpClient.PostAsync(responsesUrl,
-                new StringContent(CreateResponsePayload(userMessage, agentName, agentVersion, includeAgentVersion: true), Encoding.UTF8, "application/json"));
-
-            var responseData = await foundryResponse.Content.ReadAsStringAsync();
-            if (foundryResponse.StatusCode == HttpStatusCode.BadRequest)
+            ResponseResult sdkResponse;
+            try
             {
-                _logger.LogWarning("Foundry responses API rejected agent version payload. Retrying without agent_reference.version. Original response: {Body}", responseData);
+                var projectClient = new AIProjectClient(new Uri(endpoint), _credential);
+                sdkResponse = await CreateAgentResponseAsync(
+                    projectClient.ProjectOpenAIClient,
+                    new AgentReference(agentName, agentVersion),
+                    userMessage,
+                    req.HttpContext.RequestAborted);
+            }
+            catch (ClientResultException ex) when (ex.Status == 400)
+            {
+                _logger.LogWarning(ex, "Foundry SDK rejected agent version payload. Retrying without agent_reference.version.");
 
-                foundryResponse = await _httpClient.PostAsync(responsesUrl,
-                    new StringContent(CreateResponsePayload(userMessage, agentName, agentVersion, includeAgentVersion: false), Encoding.UTF8, "application/json"));
-                responseData = await foundryResponse.Content.ReadAsStringAsync();
+                try
+                {
+                    var projectClient = new AIProjectClient(new Uri(endpoint), _credential);
+                    sdkResponse = await CreateAgentResponseAsync(
+                        projectClient.ProjectOpenAIClient,
+                        new AgentReference(agentName),
+                        userMessage,
+                        req.HttpContext.RequestAborted);
+                }
+                catch (ClientResultException retryEx)
+                {
+                    _logger.LogError(retryEx, "Foundry SDK request failed after name-only retry with status {StatusCode}", retryEx.Status);
+                    return new ObjectResult(new AgentResponse(null, $"Azure AI request failed: {retryEx.Status}", false)) { StatusCode = 500 };
+                }
+            }
+            catch (OperationCanceledException) when (!req.HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogError("Azure AI SDK request timed out");
+                return new ObjectResult(new AgentResponse(null, "Azure AI request timeout", false)) { StatusCode = 500 };
+            }
+            catch (Exception ex) when (ex.GetType().FullName == "Azure.Identity.AuthenticationFailedException")
+            {
+                _logger.LogError(ex, "Authentication failed");
+                return new ObjectResult(new AgentResponse(null, "Authentication failed", false)) { StatusCode = 500 };
+            }
+            catch (ClientResultException ex)
+            {
+                _logger.LogError(ex, "Foundry SDK request failed with status {StatusCode}", ex.Status);
+                return new ObjectResult(new AgentResponse(null, $"Azure AI request failed: {ex.Status}", false)) { StatusCode = 500 };
             }
 
-            if (!foundryResponse.IsSuccessStatusCode)
-            {
-                _logger.LogError("Foundry responses API failed with status {StatusCode}: {Body}", foundryResponse.StatusCode, responseData);
-                return new ObjectResult(new AgentResponse(null, $"Azure AI request failed: {foundryResponse.StatusCode}", false)) { StatusCode = 500 };
-            }
-
-            var assistantText = ExtractResponseText(responseData);
+            var assistantText = sdkResponse.GetOutputText();
             if (!string.IsNullOrWhiteSpace(assistantText))
             {
                 return new OkObjectResult(new AgentResponse(assistantText, null, true));
@@ -175,69 +174,21 @@ public class AgentProxy
         }
     }
 
-    private static string CreateResponsePayload(string input, string agentName, string agentVersion, bool includeAgentVersion)
+    private static async Task<ResponseResult> CreateAgentResponseAsync(
+        ProjectOpenAIClient projectOpenAIClient,
+        AgentReference agentReference,
+        string userMessage,
+        CancellationToken cancellationToken)
     {
-        var agentReference = new JsonObject
+        var responsesClient = projectOpenAIClient.GetProjectResponsesClientForAgent(agentReference);
+        var options = new CreateResponseOptions
         {
-            ["name"] = agentName,
-            ["type"] = "agent_reference"
+            StoredOutputEnabled = false
         };
 
-        if (includeAgentVersion)
-        {
-            agentReference["version"] = agentVersion;
-        }
+        options.InputItems.Add(ResponseItem.CreateUserMessageItem(userMessage));
 
-        var payload = new JsonObject
-        {
-            ["input"] = input,
-            ["store"] = false,
-            ["agent_reference"] = agentReference
-        };
-
-        return payload.ToJsonString();
-    }
-
-    private static string? ExtractResponseText(string responseData)
-    {
-        var responseJson = JsonNode.Parse(responseData);
-        var outputText = responseJson?["output_text"]?.GetValue<string>();
-
-        if (!string.IsNullOrWhiteSpace(outputText))
-        {
-            return outputText;
-        }
-
-        var output = responseJson?["output"]?.AsArray();
-        if (output == null)
-        {
-            return null;
-        }
-
-        foreach (var outputItem in output)
-        {
-            var type = outputItem?["type"]?.GetValue<string>();
-            if (type != "message" && type != "output_message")
-            {
-                continue;
-            }
-
-            var content = outputItem?["content"]?.AsArray();
-            if (content == null)
-            {
-                continue;
-            }
-
-            foreach (var contentItem in content)
-            {
-                var text = contentItem?["text"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    return text;
-                }
-            }
-        }
-
-        return null;
+        var response = await responsesClient.CreateResponseAsync(options, cancellationToken);
+        return response.Value;
     }
 }
