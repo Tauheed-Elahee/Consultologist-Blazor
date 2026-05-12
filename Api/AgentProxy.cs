@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using OpenAI.Responses;
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using Api.Models;
 
 namespace Api;
@@ -99,6 +100,8 @@ public class AgentProxy
             var agentName = Environment.GetEnvironmentVariable("AzureAI__AgentName");
             var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
             var azureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+            var networkTimeoutSeconds = GetEnvironmentInt("AzureAI__NetworkTimeoutSeconds", 270);
+            var maxRetries = GetEnvironmentInt("AzureAI__MaxRetries", 0);
 
             if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentName) || string.IsNullOrEmpty(agentVersion))
             {
@@ -119,6 +122,17 @@ public class AgentProxy
                 agentName,
                 agentVersion,
                 !string.IsNullOrWhiteSpace(azureClientId));
+
+            var projectClientOptions = new AIProjectClientOptions
+            {
+                NetworkTimeout = TimeSpan.FromSeconds(networkTimeoutSeconds),
+                RetryPolicy = new ClientRetryPolicy(maxRetries)
+            };
+
+            _logger.LogInformation(
+                "Azure AI SDK client options configured. NetworkTimeoutSeconds={NetworkTimeoutSeconds}, MaxRetries={MaxRetries}",
+                networkTimeoutSeconds,
+                maxRetries);
 
             stage = "build-user-message";
 
@@ -153,7 +167,7 @@ public class AgentProxy
             try
             {
                 stage = "create-project-client";
-                var projectClient = new AIProjectClient(endpointUri, _credential);
+                var projectClient = new AIProjectClient(endpointUri, _credential, projectClientOptions);
 
                 stage = "send-foundry-request-with-version";
                 _logger.LogInformation(
@@ -182,7 +196,7 @@ public class AgentProxy
                 try
                 {
                     stage = "create-project-client-retry-name-only";
-                    var projectClient = new AIProjectClient(endpointUri, _credential);
+                    var projectClient = new AIProjectClient(endpointUri, _credential, projectClientOptions);
 
                     stage = "send-foundry-request-name-only";
                     _logger.LogInformation(
@@ -297,5 +311,17 @@ public class AgentProxy
 
         var response = await responsesClient.CreateResponseAsync(options, cancellationToken);
         return response.Value;
+    }
+
+    private static int GetEnvironmentInt(string name, int defaultValue)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+
+        if (int.TryParse(value, out var parsed) && parsed >= 0)
+        {
+            return parsed;
+        }
+
+        return defaultValue;
     }
 }
