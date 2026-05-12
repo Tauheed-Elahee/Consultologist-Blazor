@@ -31,6 +31,10 @@ builder.Services.AddScoped(sp =>
 });
 
 // Register AI Endpoint Service with separate HttpClient (no Graph auth handler)
-builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>();
+var agentProxyTimeoutSeconds = builder.Configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240;
+builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(agentProxyTimeoutSeconds);
+});
 
 await builder.Build().RunAsync();

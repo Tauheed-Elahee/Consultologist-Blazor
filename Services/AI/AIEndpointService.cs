@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 
 namespace BlazorWasm.Services.AI;
@@ -22,9 +23,12 @@ public class AIEndpointService : IAIEndpointService
 
     public async Task<string?> InvokeAgentAsync(string consultDraft, string sectionName, string sectionStandard)
     {
+        var stopwatch = Stopwatch.StartNew();
+
         try
         {
             var functionUrl = _configuration["AzureFunction:AgentProxyUrl"];
+            var timeoutSeconds = _configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240;
 
             if (string.IsNullOrEmpty(functionUrl))
             {
@@ -34,7 +38,13 @@ public class AIEndpointService : IAIEndpointService
 
             var request = new AgentSectionRequest(consultDraft, sectionName, sectionStandard);
 
-            _logger.LogInformation("Calling Azure Function at {Url}", functionUrl);
+            _logger.LogInformation(
+                "Calling Azure Function at {Url}. SectionName={SectionName}, TimeoutSeconds={TimeoutSeconds}, ConsultDraftLength={ConsultDraftLength}, SectionStandardLength={SectionStandardLength}",
+                functionUrl,
+                sectionName,
+                timeoutSeconds,
+                consultDraft.Length,
+                sectionStandard.Length);
 
             var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
 
@@ -60,11 +70,35 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException(result.Error ?? "Unknown error from Azure Function");
             }
 
+            _logger.LogInformation(
+                "AI agent completed. SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                sectionName,
+                result.Response?.Length ?? 0,
+                stopwatch.ElapsedMilliseconds);
+
             return result.Response;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(
+                ex,
+                "AI agent request timed out or was canceled. SectionName={SectionName}, ConfiguredTimeoutSeconds={ConfiguredTimeoutSeconds}, ElapsedMs={ElapsedMs}",
+                sectionName,
+                _configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error invoking AI agent");
+            _logger.LogError(
+                ex,
+                "Error invoking AI agent. SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                sectionName,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
             throw;
         }
     }
