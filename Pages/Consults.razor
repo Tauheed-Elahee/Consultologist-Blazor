@@ -82,7 +82,7 @@
                         {
                             <div class="loading-state">
                                 <FluentProgressRing />
-                                <span>Generating @activeSectionName...</span>
+                                <span>Generating @completedSectionCount/@totalSectionCount sections...</span>
                             </div>
                         }
 
@@ -147,11 +147,14 @@
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private Dictionary<string, string> generatedSections = new();
+  private Dictionary<string, SectionGenerationStatus> sectionGenerationStatuses = new();
+  private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
   private string? standardsLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
-  private string activeSectionName = "consult sections";
+  private int completedSectionCount;
+  private int totalSectionCount;
 
   protected override async Task OnInitializedAsync()
   {
@@ -210,6 +213,10 @@
   {
     aiRequestError = null;
     generatedSections = new();
+    sectionGenerationStatuses = new();
+    failedSectionErrors = new();
+    completedSectionCount = 0;
+    totalSectionCount = 0;
 
     if (string.IsNullOrWhiteSpace(consultDraft))
     {
@@ -226,14 +233,23 @@
     try
     {
       isAiRequestLoading = true;
+      var draftSnapshot = consultDraft;
+      var sectionSnapshots = sectionStandards.ToList();
+      totalSectionCount = sectionSnapshots.Count;
+      sectionGenerationStatuses = sectionSnapshots.ToDictionary(
+        section => section.Id,
+        _ => SectionGenerationStatus.Pending);
 
-      foreach (var section in sectionStandards)
+      var tasks = sectionSnapshots.Select(section => GenerateSectionAsync(section, draftSnapshot));
+      await Task.WhenAll(tasks);
+
+      if (failedSectionErrors.Count > 0)
       {
-        activeSectionName = section.Name;
-        StateHasChanged();
+        var failedSectionNames = sectionSnapshots
+          .Where(section => failedSectionErrors.ContainsKey(section.Id))
+          .Select(section => section.Name);
 
-        var prose = await AIService.InvokeAgentAsync(consultDraft, section.Name, section.Standard);
-        generatedSections[section.Id] = prose?.Trim() ?? string.Empty;
+        aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
       }
     }
     catch (Exception ex)
@@ -242,8 +258,30 @@
     }
     finally
     {
-      activeSectionName = "consult sections";
       isAiRequestLoading = false;
+    }
+  }
+
+  private async Task GenerateSectionAsync(SectionStandard section, string draftSnapshot)
+  {
+    sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Running;
+    await InvokeAsync(StateHasChanged);
+
+    try
+    {
+      var prose = await AIService.InvokeAgentAsync(draftSnapshot, section.Name, section.Standard);
+      generatedSections[section.Id] = prose?.Trim() ?? string.Empty;
+      sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Completed;
+    }
+    catch (Exception ex)
+    {
+      failedSectionErrors[section.Id] = ex.Message;
+      sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Failed;
+    }
+    finally
+    {
+      completedSectionCount++;
+      await InvokeAsync(StateHasChanged);
     }
   }
 
@@ -296,6 +334,14 @@
   private static string CreateId(string value)
   {
     return value.Trim().ToLowerInvariant().Replace(' ', '_');
+  }
+
+  private enum SectionGenerationStatus
+  {
+    Pending,
+    Running,
+    Completed,
+    Failed
   }
 
   private sealed class SectionStandard
