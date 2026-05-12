@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -140,23 +141,20 @@ public class AgentProxy
                 {agentRequest.ConsultDraft}
                 """;
 
-            var responsePayload = new
-            {
-                input = userMessage,
-                store = false,
-                agent_reference = new
-                {
-                    name = agentName,
-                    version = agentVersion,
-                    type = "agent_reference"
-                }
-            };
-
             var responsesUrl = $"{endpoint.TrimEnd('/')}/openai/v1/responses?api-version={apiVersion}";
             var foundryResponse = await _httpClient.PostAsync(responsesUrl,
-                new StringContent(JsonSerializer.Serialize(responsePayload), Encoding.UTF8, "application/json"));
+                new StringContent(CreateResponsePayload(userMessage, agentName, agentVersion, includeAgentVersion: true), Encoding.UTF8, "application/json"));
 
             var responseData = await foundryResponse.Content.ReadAsStringAsync();
+            if (foundryResponse.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.LogWarning("Foundry responses API rejected agent version payload. Retrying without agent_reference.version. Original response: {Body}", responseData);
+
+                foundryResponse = await _httpClient.PostAsync(responsesUrl,
+                    new StringContent(CreateResponsePayload(userMessage, agentName, agentVersion, includeAgentVersion: false), Encoding.UTF8, "application/json"));
+                responseData = await foundryResponse.Content.ReadAsStringAsync();
+            }
+
             if (!foundryResponse.IsSuccessStatusCode)
             {
                 _logger.LogError("Foundry responses API failed with status {StatusCode}: {Body}", foundryResponse.StatusCode, responseData);
@@ -176,6 +174,29 @@ public class AgentProxy
             _logger.LogError(ex, "Error in AgentProxy function");
             return new ObjectResult(new AgentResponse(null, $"Internal error: {ex.Message}", false)) { StatusCode = 500 };
         }
+    }
+
+    private static string CreateResponsePayload(string input, string agentName, string agentVersion, bool includeAgentVersion)
+    {
+        var agentReference = new JsonObject
+        {
+            ["name"] = agentName,
+            ["type"] = "agent_reference"
+        };
+
+        if (includeAgentVersion)
+        {
+            agentReference["version"] = agentVersion;
+        }
+
+        var payload = new JsonObject
+        {
+            ["input"] = input,
+            ["store"] = false,
+            ["agent_reference"] = agentReference
+        };
+
+        return payload.ToJsonString();
     }
 
     private static string? ExtractResponseText(string responseData)

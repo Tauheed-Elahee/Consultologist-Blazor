@@ -146,6 +146,8 @@ The proxy returns the existing Blazor contract:
 
 Response parsing first checks top-level `output_text`, then falls back to the first text content item in `output[]` entries with type `message` or `output_message`.
 
+The proxy requires `AzureAI__AgentVersion` so deployments are explicit. Because the current Foundry runtime examples show `agent_reference` with only `name` and `type`, the proxy retries once without `agent_reference.version` if the versioned request returns `400 BadRequest`.
+
 ## REST Versus C# SDK
 
 REST and the C# SDK call the same underlying Foundry service. The difference is how much plumbing the app owns.
