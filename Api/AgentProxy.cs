@@ -84,7 +84,6 @@ public class AgentProxy
             var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
             var agentName = Environment.GetEnvironmentVariable("AzureAI__AgentName");
             var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
-            var apiVersion = Environment.GetEnvironmentVariable("AzureAI__ApiVersion") ?? "v1";
 
             if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentName) || string.IsNullOrEmpty(agentVersion))
             {
@@ -141,7 +140,7 @@ public class AgentProxy
                 {agentRequest.ConsultDraft}
                 """;
 
-            var responsesUrl = $"{endpoint.TrimEnd('/')}/openai/v1/responses?api-version={apiVersion}";
+            var responsesUrl = $"{endpoint.TrimEnd('/')}/openai/v1/responses";
             var foundryResponse = await _httpClient.PostAsync(responsesUrl,
                 new StringContent(CreateResponsePayload(userMessage, agentName, agentVersion, includeAgentVersion: true), Encoding.UTF8, "application/json"));
 

@@ -105,10 +105,9 @@ Required Function App settings:
 AzureAI__Endpoint=https://<resource>.services.ai.azure.com/api/projects/<project>
 AzureAI__AgentName=<foundry-agent-name>
 AzureAI__AgentVersion=<foundry-agent-version>
-AzureAI__ApiVersion=v1
 ```
 
-`AzureAI__ApiVersion` defaults to `v1` when omitted.
+The proxy calls `/openai/v1/responses` directly. Do not append an `api-version` query parameter to the v1 path.
 
 The function still uses `DefaultAzureCredential` and requests a token for:
 
