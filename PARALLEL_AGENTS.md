@@ -1,10 +1,10 @@
-# Parallel Section Calls Now, Async Jobs Later
+# Parallel Section Calls, Backend Parallelism, Async Jobs
 
 ## Summary
 
 This document captures the planned performance path for consult section generation.
 
-The first improvement is to keep the current single-section Azure Function contract and run all section calls concurrently from the Blazor app. The later architecture, if needed, is an async job-based generation flow that moves long-running work out of browser-held HTTP requests.
+The first improvement is to keep the current single-section Azure Function contract and run all section calls concurrently from the Blazor app. The next step is backend parallelism: the Blazor app sends one consult-generation request, and the backend fans out section calls concurrently before returning one combined response. The later architecture, if needed, is an async job-based generation flow that moves long-running work out of browser-held HTTP requests.
 
 ## Current State
 
@@ -32,7 +32,22 @@ Implement this first.
 - Continue calling Foundry for every section. Do not add rule-based empty-section skips in this phase.
 - Do not add backend parallelism in this phase. The browser launches all section requests concurrently.
 
-## Phase 2: Async Job-Based Generation
+## Phase 2: Backend Parallelism
+
+Implement this after Phase 1 if the browser-side fan-out works but the app should use one frontend request per consult.
+
+- Add a backend API that accepts the consult draft plus all section standards in a single request.
+- Keep the existing single-section `Api/AgentProxy` contract available for compatibility while adding the aggregate backend endpoint.
+- The backend endpoint should start one Foundry call per section concurrently and await them with `Task.WhenAll`.
+- Return one combined response containing completed sections and failed sections keyed by section ID.
+- Preserve partial results: one failed section should not discard successful sections.
+- Preserve rendered note order in the Blazor page by continuing to render using template order and section IDs.
+- Move per-section progress and failure tracking to the response shape returned by the backend endpoint.
+- The Blazor page should call the aggregate backend endpoint once per consult instead of launching one browser request per section.
+- Do not add durable job storage, polling, cancellation endpoints, or background workers in this phase. The frontend still waits on one HTTP request.
+- This phase reduces browser request fan-out and centralizes concurrency control, logging, and retry behavior. It does not solve long-running HTTP timeout risk.
+
+## Phase 3: Async Job-Based Generation
 
 Implement this later only if direct parallel calls still hit timeout or reliability limits.
 
@@ -51,7 +66,7 @@ Implement this later only if direct parallel calls still hit timeout or reliabil
   - `failed`
   - `canceled`
 - Section state should remain keyed by section ID so the UI can keep using the same rendering model.
-- The job worker may internally generate all sections concurrently, matching the Phase 1 browser behavior.
+- The job worker may internally generate all sections concurrently, matching the Phase 2 backend fan-out behavior.
 - The Blazor page should eventually switch from direct `InvokeAgentAsync(...)` calls to:
   - start job
   - poll status
@@ -81,4 +96,5 @@ dotnet build BlazorWasm.csproj --no-restore
 - Phase 1 should launch all configured sections concurrently.
 - Partial results should be preserved if one section fails.
 - Rule-based section skipping is out of scope for the first implementation.
-- Async/job-based generation is a future roadmap item, not part of the first parallel-calls implementation.
+- Backend parallelism is Phase 2 and should keep a synchronous request/response flow.
+- Async/job-based generation is Phase 3 and should be reserved for timeout resilience, refresh recovery, cancellation, and retry needs.
