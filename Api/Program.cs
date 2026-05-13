@@ -49,7 +49,10 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
     return new DefaultAzureCredential(credentialOptions);
 });
 
-// Register AgentProxy in DI container
+builder.Services.AddScoped<AgentSectionGenerator>();
+
+// Register Functions in DI container
 builder.Services.AddScoped<AgentProxy>();
+builder.Services.AddScoped<ConsultGeneration>();
 
 builder.Build().Run();

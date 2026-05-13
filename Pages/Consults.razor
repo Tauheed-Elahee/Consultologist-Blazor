@@ -147,7 +147,6 @@
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private Dictionary<string, string> generatedSections = new();
-  private Dictionary<string, SectionGenerationStatus> sectionGenerationStatuses = new();
   private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
   private string? standardsLoadError;
@@ -213,7 +212,6 @@
   {
     aiRequestError = null;
     generatedSections = new();
-    sectionGenerationStatuses = new();
     failedSectionErrors = new();
     completedSectionCount = 0;
     totalSectionCount = 0;
@@ -236,12 +234,17 @@
       var draftSnapshot = consultDraft;
       var sectionSnapshots = sectionStandards.ToList();
       totalSectionCount = sectionSnapshots.Count;
-      sectionGenerationStatuses = sectionSnapshots.ToDictionary(
-        section => section.Id,
-        _ => SectionGenerationStatus.Pending);
+      await InvokeAsync(StateHasChanged);
 
-      var tasks = sectionSnapshots.Select(section => GenerateSectionAsync(section, draftSnapshot));
-      await Task.WhenAll(tasks);
+      var requestSections = sectionSnapshots
+        .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
+        .ToList();
+
+      var response = await AIService.GenerateConsultAsync(draftSnapshot, requestSections);
+
+      generatedSections = response.GeneratedSections;
+      failedSectionErrors = response.FailedSections;
+      completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
 
       if (failedSectionErrors.Count > 0)
       {
@@ -259,29 +262,6 @@
     finally
     {
       isAiRequestLoading = false;
-    }
-  }
-
-  private async Task GenerateSectionAsync(SectionStandard section, string draftSnapshot)
-  {
-    sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Running;
-    await InvokeAsync(StateHasChanged);
-
-    try
-    {
-      var prose = await AIService.InvokeAgentAsync(draftSnapshot, section.Name, section.Standard);
-      generatedSections[section.Id] = prose?.Trim() ?? string.Empty;
-      sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Completed;
-    }
-    catch (Exception ex)
-    {
-      failedSectionErrors[section.Id] = ex.Message;
-      sectionGenerationStatuses[section.Id] = SectionGenerationStatus.Failed;
-    }
-    finally
-    {
-      completedSectionCount++;
-      await InvokeAsync(StateHasChanged);
     }
   }
 
@@ -334,14 +314,6 @@
   private static string CreateId(string value)
   {
     return value.Trim().ToLowerInvariant().Replace(' ', '_');
-  }
-
-  private enum SectionGenerationStatus
-  {
-    Pending,
-    Running,
-    Completed,
-    Failed
   }
 
   private sealed class SectionStandard

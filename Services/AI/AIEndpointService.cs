@@ -6,6 +6,10 @@ namespace BlazorWasm.Services.AI;
 public interface IAIEndpointService
 {
     Task<string?> InvokeAgentAsync(string consultDraft, string sectionName, string sectionStandard);
+
+    Task<ConsultGenerationResponse> GenerateConsultAsync(
+        string consultDraft,
+        IReadOnlyList<ConsultGenerationSectionRequest> sections);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -102,7 +106,92 @@ public class AIEndpointService : IAIEndpointService
             throw;
         }
     }
+
+    public async Task<ConsultGenerationResponse> GenerateConsultAsync(
+        string consultDraft,
+        IReadOnlyList<ConsultGenerationSectionRequest> sections)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var functionUrl = _configuration["AzureFunction:ConsultGenerationUrl"];
+            var timeoutSeconds = _configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240;
+
+            if (string.IsNullOrEmpty(functionUrl))
+            {
+                _logger.LogError("AzureFunction:ConsultGenerationUrl is not configured");
+                throw new InvalidOperationException("Azure Function consult generation URL is not configured");
+            }
+
+            var request = new ConsultGenerationRequest(consultDraft, sections);
+
+            _logger.LogInformation(
+                "Calling consult generation Azure Function at {Url}. SectionCount={SectionCount}, TimeoutSeconds={TimeoutSeconds}, ConsultDraftLength={ConsultDraftLength}",
+                functionUrl,
+                sections.Count,
+                timeoutSeconds,
+                consultDraft.Length);
+
+            var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
+            var result = await response.Content.ReadFromJsonAsync<ConsultGenerationResponse>();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = result == null
+                    ? await response.Content.ReadAsStringAsync()
+                    : string.Join("; ", result.FailedSections.Select(pair => $"{pair.Key}: {pair.Value}"));
+
+                _logger.LogError(
+                    "Consult generation Azure Function call failed with status {StatusCode}: {Error}",
+                    response.StatusCode,
+                    errorContent);
+
+                throw new HttpRequestException($"Azure Function call failed: {response.StatusCode}");
+            }
+
+            if (result == null)
+            {
+                _logger.LogError("Failed to deserialize consult generation Azure Function response");
+                throw new InvalidOperationException("Failed to deserialize response");
+            }
+
+            _logger.LogInformation(
+                "Consult generation completed. GeneratedCount={GeneratedCount}, FailedCount={FailedCount}, ElapsedMs={ElapsedMs}",
+                result.GeneratedSections.Count,
+                result.FailedSections.Count,
+                stopwatch.ElapsedMilliseconds);
+
+            return result;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Consult generation request timed out or was canceled. SectionCount={SectionCount}, ConfiguredTimeoutSeconds={ConfiguredTimeoutSeconds}, ElapsedMs={ElapsedMs}",
+                sections.Count,
+                _configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error generating consult. SectionCount={SectionCount}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                sections.Count,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+    }
 }
 
 public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
 public record AgentResponse(string? Response, string? Error, bool Success);
+public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<ConsultGenerationSectionRequest> Sections);
+public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
+public record ConsultGenerationResponse(Dictionary<string, string> GeneratedSections, Dictionary<string, string> FailedSections, bool Success);
