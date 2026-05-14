@@ -92,7 +92,13 @@ path, expression, description = sys.argv[1:]
 with open(path, "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-if not eval(expression, {"__builtins__": {}}, {"payload": payload}):
+allowed_builtins = {
+    "isinstance": isinstance,
+    "len": len,
+    "str": str,
+}
+
+if not eval(expression, {"__builtins__": allowed_builtins}, {"payload": payload}):
     raise SystemExit(f"{description}; payload={payload!r}")
 PY
 }
@@ -164,6 +170,35 @@ assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Con
 assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Authorization"
 pass "ConsultGeneration CORS preflight returns expected platform CORS headers"
 
+request consult_generation_jobs_cors \
+  -X OPTIONS \
+  -H "Origin: $ALLOWED_ORIGIN" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: Content-Type, Authorization" \
+  "$BASE_URL/api/ConsultGenerationJobs"
+assert_status consult_generation_jobs_cors 204
+assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Origin "$ALLOWED_ORIGIN"
+assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Methods "POST"
+assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Content-Type"
+assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Authorization"
+pass "ConsultGenerationJobs CORS preflight returns expected platform CORS headers"
+
+request consult_generation_jobs_invalid \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  "$BASE_URL/api/ConsultGenerationJobs"
+assert_status consult_generation_jobs_invalid 400
+assert_header_contains consult_generation_jobs_invalid Content-Type "application/json"
+assert_json consult_generation_jobs_invalid 'payload.get("error") == "ConsultDraft is required."' "ConsultGenerationJobs invalid response should include exact validation error"
+pass "ConsultGenerationJobs invalid POST returns exact 400 validation JSON"
+
+request consult_generation_jobs_not_found "$BASE_URL/api/ConsultGenerationJobs/not-found"
+assert_status consult_generation_jobs_not_found 404
+assert_header_contains consult_generation_jobs_not_found Content-Type "application/json"
+assert_json consult_generation_jobs_not_found 'payload.get("error") == "Consult generation job was not found."' "ConsultGenerationJobs not-found response should include exact error"
+pass "ConsultGenerationJobs not-found lookup returns exact 404 JSON"
+
 if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
   request agent_proxy_valid \
     -X POST \
@@ -177,4 +212,50 @@ if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
   pass "AgentProxy valid POST returns successful generation JSON"
 else
   echo "SKIP: AgentProxy valid Foundry call. Set RUN_VALID_AGENT_PROXY=1 to enable."
+fi
+
+if [[ "${RUN_VALID_DURABLE_JOB:-0}" == "1" ]]; then
+  request durable_job_valid \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"ConsultDraft":"Patient has fatigue.","Sections":[{"Id":"history","Name":"History","Standard":"Write one concise clinical sentence."}]}' \
+    "$BASE_URL/api/ConsultGenerationJobs"
+  assert_status durable_job_valid 202
+  assert_header_contains durable_job_valid Content-Type "application/json"
+  assert_json durable_job_valid 'isinstance(payload.get("JobId"), str) and len(payload.get("JobId")) > 0' "Durable job start should return JobId"
+  assert_json durable_job_valid 'isinstance(payload.get("StatusUrl"), str) and payload.get("StatusUrl").endswith(payload.get("JobId"))' "Durable job start should return matching StatusUrl"
+
+  status_url="$(python3 - "$tmp_dir/durable_job_valid.body" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print(json.load(handle)["StatusUrl"])
+PY
+)"
+
+  terminal_status=""
+  for _ in $(seq 1 24); do
+    request durable_job_status "$status_url"
+    assert_status durable_job_status 200
+    terminal_status="$(python3 - "$tmp_dir/durable_job_status.body" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+print(payload.get("Status", ""))
+PY
+)"
+
+    if [[ "$terminal_status" == "Completed" || "$terminal_status" == "Failed" ]]; then
+      break
+    fi
+
+    sleep 5
+  done
+
+  [[ "$terminal_status" == "Completed" || "$terminal_status" == "Failed" ]] || fail "Durable job did not reach a terminal state; last body=$(body_of durable_job_status)"
+  assert_json durable_job_status 'payload.get("TotalSectionCount") == 1' "Durable job status should track one section"
+  pass "ConsultGenerationJobs valid POST reaches terminal status: $terminal_status"
+else
+  echo "SKIP: Durable valid job. Set RUN_VALID_DURABLE_JOB=1 to enable."
 fi
