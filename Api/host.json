@@ -9,6 +9,11 @@
 			"enableLiveMetricsFilters": true
 		}
 	},
+	"extensions": {
+		"durableTask": {
+			"hubName": "ConsultologistJobs"
+		}
+	},
 	"functionHttpApi": {
 		"enableCors": true,
 		"corsPolicy": {
