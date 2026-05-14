@@ -97,6 +97,11 @@
                             <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
                         }
 
+                        @if (!string.IsNullOrEmpty(aiProgressNotice))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Info">@aiProgressNotice</FluentMessageBar>
+                        }
+
                         @if (generatedSections.Count > 0)
                         {
                             <div>
@@ -157,6 +162,7 @@
   private string? standardsLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
+  private string? aiProgressNotice;
   private int completedSectionCount;
   private int totalSectionCount;
   private TaskCompletionSource<bool>? eventStreamCompletionSource;
@@ -220,6 +226,7 @@
   private async Task CreateConsultAsync()
   {
     aiRequestError = null;
+    aiProgressNotice = null;
     generatedSections = new();
     failedSectionErrors = new();
     completedSectionCount = 0;
@@ -250,7 +257,14 @@
         .ToList();
 
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
-      await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+
+      if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
+      {
+        aiProgressNotice = "Live updates paused; checking status periodically.";
+        await InvokeAsync(StateHasChanged);
+        await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      }
     }
     catch (Exception ex)
     {
@@ -262,7 +276,9 @@
     }
   }
 
-  private async Task StreamConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  private async Task<ConsultGenerationStreamResult> StreamConsultGenerationJobAsync(
+    string jobId,
+    IReadOnlyList<SectionStandard> sectionSnapshots)
   {
     eventStreamCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     eventStreamReference = DotNetObjectReference.Create(this);
@@ -278,8 +294,7 @@
 
       if (string.IsNullOrWhiteSpace(activeEventStreamId))
       {
-        aiRequestError = "EventSource is not supported by this browser.";
-        return;
+        return ConsultGenerationStreamResult.FallbackToPolling;
       }
 
       var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
@@ -287,18 +302,16 @@
 
       if (completedTask != eventStreamCompletionSource.Task)
       {
-        aiRequestError = "Consult generation event stream timed out before completion.";
-        return;
+        return ConsultGenerationStreamResult.FallbackToPolling;
       }
 
-      if (!await eventStreamCompletionSource.Task && string.IsNullOrWhiteSpace(aiRequestError))
-      {
-        aiRequestError = "Consult generation event stream failed.";
-      }
+      return await eventStreamCompletionSource.Task
+        ? ConsultGenerationStreamResult.Completed
+        : ConsultGenerationStreamResult.FallbackToPolling;
     }
-    catch (Exception ex)
+    catch
     {
-      aiRequestError = $"Consult generation event stream failed: {ex.Message}";
+      return ConsultGenerationStreamResult.FallbackToPolling;
     }
     finally
     {
@@ -319,6 +332,33 @@
       eventStreamReference?.Dispose();
       eventStreamReference = null;
       eventStreamCompletionSource = null;
+    }
+  }
+
+  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    try
+    {
+      while (isAiRequestLoading)
+      {
+        var response = await AIService.GetConsultGenerationJobAsync(jobId);
+
+        ApplyConsultGenerationJobResponse(response, sectionSnapshots);
+        await InvokeAsync(StateHasChanged);
+
+        if (response.Status is "Completed" or "Failed")
+        {
+          aiProgressNotice = null;
+          return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+      }
+    }
+    catch (Exception ex)
+    {
+      aiProgressNotice = null;
+      aiRequestError = $"Error checking consult generation status: {ex.Message}";
     }
   }
 
@@ -379,12 +419,6 @@
           break;
 
         case "error":
-          var streamError = JsonSerializer.Deserialize<ConsultGenerationStreamErrorEvent>(json, SseJsonOptions);
-          if (!string.IsNullOrWhiteSpace(streamError?.Error))
-          {
-            aiRequestError = streamError.Error;
-          }
-
           eventStreamCompletionSource?.TrySetResult(false);
           break;
       }
@@ -400,10 +434,6 @@
   [JSInvokable]
   public Task OnConsultGenerationJobStreamError(string message)
   {
-    aiRequestError = string.IsNullOrWhiteSpace(message)
-      ? "Consult generation event stream failed."
-      : message;
-
     eventStreamCompletionSource?.TrySetResult(false);
     return Task.CompletedTask;
   }
@@ -521,9 +551,11 @@
     string SectionId,
     string Error);
 
-  private sealed record ConsultGenerationStreamErrorEvent(
-    string JobId,
-    string Error);
+  private enum ConsultGenerationStreamResult
+  {
+    Completed,
+    FallbackToPolling
+  }
 
   public async ValueTask DisposeAsync()
   {
