@@ -57,5 +57,7 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
 builder.Services.AddScoped<AgentSectionGenerator>();
 builder.Services.AddScoped<AgentProxy>();
 builder.Services.AddScoped<ConsultGeneration>();
+builder.Services.AddScoped<ConsultGenerationJobs>();
+builder.Services.AddScoped<GenerateConsultSectionActivity>();
 
 builder.Build().Run();
