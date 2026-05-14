@@ -11,7 +11,7 @@
 	},
 	"extensions": {
 		"durableTask": {
-			"hubName": "ConsultologistJobs"
+			"hubName": "consultologistjobs"
 		}
 	},
 	"functionHttpApi": {
