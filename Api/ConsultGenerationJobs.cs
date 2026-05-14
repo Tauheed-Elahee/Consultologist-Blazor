@@ -17,6 +17,8 @@ public sealed class ConsultGenerationJobs
     private static readonly TimeSpan SsePollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan SseEntityInitializationPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan SseEntityInitializationTimeout = TimeSpan.FromSeconds(10);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -215,9 +217,7 @@ public sealed class ConsultGenerationJobs
             return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "JobId is required." }, cancellationToken);
         }
 
-        var initialResponse = await GetJobResponseAsync(client, jobId, cancellationToken);
-
-        if (initialResponse == null)
+        if (!await JobExistsAsync(client, jobId, cancellationToken))
         {
             return await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken);
         }
@@ -229,6 +229,19 @@ public sealed class ConsultGenerationJobs
 
         try
         {
+            var initialResponse = await WaitForEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+
+            if (initialResponse == null)
+            {
+                await WriteSseEventAsync(
+                    response,
+                    "error",
+                    new ConsultGenerationJobStreamError(jobId, "Consult generation job state was not ready before the event stream timeout."),
+                    cancellationToken);
+
+                return response;
+            }
+
             await WriteSseEventAsync(response, "snapshot", initialResponse, cancellationToken);
 
             var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
@@ -382,17 +395,13 @@ public sealed class ConsultGenerationJobs
         string jobId,
         CancellationToken cancellationToken)
     {
-        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
-        var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
-            entityId,
-            cancellation: cancellationToken);
-
+        var entityBackedResponse = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
         var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken);
 
-        if (entity?.State != null)
+        if (entityBackedResponse != null)
         {
             return MergeEntityAndRuntimeStatus(
-                entity.State.ToResponse(),
+                entityBackedResponse,
                 instance?.RuntimeStatus);
         }
 
@@ -407,6 +416,54 @@ public sealed class ConsultGenerationJobs
                 new Dictionary<string, string>(),
                 new Dictionary<string, string>(),
                 false);
+    }
+
+    private static async Task<bool> JobExistsAsync(
+        DurableTaskClient client,
+        string jobId,
+        CancellationToken cancellationToken)
+    {
+        if (await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken) != null)
+        {
+            return true;
+        }
+
+        return await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken) != null;
+    }
+
+    private static async Task<ConsultGenerationJobResponse?> WaitForEntityBackedJobResponseAsync(
+        DurableTaskClient client,
+        string jobId,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        while (stopwatch.Elapsed < SseEntityInitializationTimeout)
+        {
+            var response = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+
+            if (response != null)
+            {
+                return response;
+            }
+
+            await Task.Delay(SseEntityInitializationPollInterval, cancellationToken);
+        }
+
+        return await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+    }
+
+    private static async Task<ConsultGenerationJobResponse?> GetEntityBackedJobResponseAsync(
+        DurableTaskClient client,
+        string jobId,
+        CancellationToken cancellationToken)
+    {
+        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
+        var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
+            entityId,
+            cancellation: cancellationToken);
+
+        return entity?.State?.ToResponse();
     }
 
     private static ConsultGenerationJobResponse MergeEntityAndRuntimeStatus(
