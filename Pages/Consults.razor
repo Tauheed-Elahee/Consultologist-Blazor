@@ -240,11 +240,29 @@
         .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
         .ToList();
 
-      var response = await AIService.GenerateConsultAsync(draftSnapshot, requestSections);
+      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
+      await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+    }
+    catch (Exception ex)
+    {
+      aiRequestError = $"Error calling agent: {ex.Message}";
+    }
+    finally
+    {
+      isAiRequestLoading = false;
+    }
+  }
+
+  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    while (isAiRequestLoading)
+    {
+      var response = await AIService.GetConsultGenerationJobAsync(jobId);
 
       generatedSections = response.GeneratedSections;
       failedSectionErrors = response.FailedSections;
-      completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+      totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
+      completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
 
       if (failedSectionErrors.Count > 0)
       {
@@ -254,14 +272,15 @@
 
         aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
       }
-    }
-    catch (Exception ex)
-    {
-      aiRequestError = $"Error calling agent: {ex.Message}";
-    }
-    finally
-    {
-      isAiRequestLoading = false;
+
+      await InvokeAsync(StateHasChanged);
+
+      if (response.Status is "Completed" or "Failed")
+      {
+        return;
+      }
+
+      await Task.Delay(TimeSpan.FromSeconds(2));
     }
   }
 

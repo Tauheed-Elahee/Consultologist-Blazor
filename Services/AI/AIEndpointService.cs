@@ -10,6 +10,12 @@ public interface IAIEndpointService
     Task<ConsultGenerationResponse> GenerateConsultAsync(
         string consultDraft,
         IReadOnlyList<ConsultGenerationSectionRequest> sections);
+
+    Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
+        string consultDraft,
+        IReadOnlyList<ConsultGenerationSectionRequest> sections);
+
+    Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -188,6 +194,135 @@ public class AIEndpointService : IAIEndpointService
             throw;
         }
     }
+
+    public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
+        string consultDraft,
+        IReadOnlyList<ConsultGenerationSectionRequest> sections)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var functionUrl = _configuration["AzureFunction:ConsultGenerationJobsUrl"];
+
+            if (string.IsNullOrEmpty(functionUrl))
+            {
+                _logger.LogError("AzureFunction:ConsultGenerationJobsUrl is not configured");
+                throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
+            }
+
+            var request = new ConsultGenerationRequest(consultDraft, sections);
+
+            _logger.LogInformation(
+                "Starting consult generation job at {Url}. SectionCount={SectionCount}, ConsultDraftLength={ConsultDraftLength}",
+                functionUrl,
+                sections.Count,
+                consultDraft.Length);
+
+            var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError(
+                    "Consult generation job start failed with status {StatusCode}: {Error}",
+                    response.StatusCode,
+                    errorContent);
+
+                throw new HttpRequestException($"Azure Function call failed: {response.StatusCode}");
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<ConsultGenerationJobStartResponse>();
+
+            if (result == null)
+            {
+                _logger.LogError("Failed to deserialize consult generation job start response");
+                throw new InvalidOperationException("Failed to deserialize response");
+            }
+
+            _logger.LogInformation(
+                "Consult generation job started. JobId={JobId}, ElapsedMs={ElapsedMs}",
+                result.JobId,
+                stopwatch.ElapsedMilliseconds);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error starting consult generation job. SectionCount={SectionCount}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                sections.Count,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+    }
+
+    public async Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var functionUrl = _configuration["AzureFunction:ConsultGenerationJobsUrl"];
+
+            if (string.IsNullOrEmpty(functionUrl))
+            {
+                _logger.LogError("AzureFunction:ConsultGenerationJobsUrl is not configured");
+                throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
+            }
+
+            var statusUrl = $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}";
+
+            _logger.LogDebug("Polling consult generation job at {Url}. JobId={JobId}", statusUrl, jobId);
+
+            var response = await _httpClient.GetAsync(statusUrl);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError(
+                    "Consult generation job poll failed with status {StatusCode}: {Error}",
+                    response.StatusCode,
+                    errorContent);
+
+                throw new HttpRequestException($"Azure Function call failed: {response.StatusCode}");
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<ConsultGenerationJobResponse>();
+
+            if (result == null)
+            {
+                _logger.LogError("Failed to deserialize consult generation job response");
+                throw new InvalidOperationException("Failed to deserialize response");
+            }
+
+            _logger.LogDebug(
+                "Consult generation job polled. JobId={JobId}, Status={Status}, Completed={CompletedCount}, Failed={FailedCount}, ElapsedMs={ElapsedMs}",
+                result.JobId,
+                result.Status,
+                result.CompletedSectionCount,
+                result.FailedSectionCount,
+                stopwatch.ElapsedMilliseconds);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error polling consult generation job. JobId={JobId}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                jobId,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+    }
 }
 
 public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
@@ -195,3 +330,13 @@ public record AgentResponse(string? Response, string? Error, bool Success);
 public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<ConsultGenerationSectionRequest> Sections);
 public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
 public record ConsultGenerationResponse(Dictionary<string, string> GeneratedSections, Dictionary<string, string> FailedSections, bool Success);
+public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
+public record ConsultGenerationJobResponse(
+    string JobId,
+    string Status,
+    int TotalSectionCount,
+    int CompletedSectionCount,
+    int FailedSectionCount,
+    Dictionary<string, string> GeneratedSections,
+    Dictionary<string, string> FailedSections,
+    bool Success);

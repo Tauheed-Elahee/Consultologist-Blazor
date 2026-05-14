@@ -1,0 +1,608 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Api.Models;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.DurableTask;
+using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Entities;
+using Microsoft.Extensions.Logging;
+
+namespace Api;
+
+public sealed class ConsultGenerationJobs
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private readonly ILogger<ConsultGenerationJobs> _logger;
+
+    public ConsultGenerationJobs(ILogger<ConsultGenerationJobs> logger)
+    {
+        _logger = logger;
+    }
+
+    [Function("StartConsultGenerationJob")]
+    public async Task<IActionResult> StartAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "ConsultGenerationJobs")] HttpRequest req,
+        [DurableClient] DurableTaskClient client)
+    {
+        FunctionCors.Apply(req);
+
+        if (req.Method == "OPTIONS")
+        {
+            req.HttpContext.Response.StatusCode = 200;
+            return new OkResult();
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            ConsultGenerationRequest? generationRequest = null;
+
+            if (!string.IsNullOrWhiteSpace(requestBody))
+            {
+                try
+                {
+                    generationRequest = JsonSerializer.Deserialize<ConsultGenerationRequest>(requestBody, JsonOptions);
+                }
+                catch (JsonException ex)
+                {
+                    const string malformedJsonError = "Malformed JSON request body.";
+
+                    _logger.LogWarning(
+                        ex,
+                        "Invalid ConsultGenerationJobs request: {ValidationError}",
+                        malformedJsonError);
+
+                    return new BadRequestObjectResult(new { error = malformedJsonError });
+                }
+            }
+
+            var validationError = ValidateRequest(generationRequest);
+
+            if (validationError != null)
+            {
+                _logger.LogWarning("Invalid ConsultGenerationJobs request: {ValidationError}", validationError);
+                return new BadRequestObjectResult(new { error = validationError });
+            }
+
+            var request = generationRequest!;
+            var jobId = Guid.NewGuid().ToString("N");
+            var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
+
+            await client.Entities.SignalEntityAsync(
+                entityId,
+                nameof(ConsultGenerationJobEntity.Initialize),
+                new ConsultGenerationJobInitialize(jobId, request.Sections));
+
+            var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
+                nameof(ConsultGenerationOrchestrator),
+                request,
+                new StartOrchestrationOptions { InstanceId = jobId },
+                req.HttpContext.RequestAborted);
+
+            var statusUrl = BuildStatusUrl(req, instanceId);
+
+            _logger.LogInformation(
+                "Consult generation job started. JobId={JobId}, SectionCount={SectionCount}, ElapsedMs={ElapsedMs}",
+                instanceId,
+                request.Sections.Count,
+                stopwatch.ElapsedMilliseconds);
+
+            return new ObjectResult(new ConsultGenerationJobStartResponse(instanceId, statusUrl))
+            {
+                StatusCode = StatusCodes.Status202Accepted
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error starting consult generation job. ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            return new ObjectResult(new { error = $"Internal error: {ex.Message}" })
+            {
+                StatusCode = StatusCodes.Status500InternalServerError
+            };
+        }
+    }
+
+    [Function("GetConsultGenerationJob")]
+    public async Task<IActionResult> GetAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "ConsultGenerationJobs/{jobId}")] HttpRequest req,
+        [DurableClient] DurableTaskClient client,
+        string jobId)
+    {
+        FunctionCors.Apply(req);
+
+        if (req.Method == "OPTIONS")
+        {
+            req.HttpContext.Response.StatusCode = 200;
+            return new OkResult();
+        }
+
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return new BadRequestObjectResult(new { error = "JobId is required." });
+        }
+
+        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
+        var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
+            entityId,
+            cancellation: req.HttpContext.RequestAborted);
+
+        var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, req.HttpContext.RequestAborted);
+
+        if (entity?.State != null)
+        {
+            var response = MergeEntityAndRuntimeStatus(
+                entity.State.ToResponse(),
+                instance?.RuntimeStatus);
+
+            return new OkObjectResult(response);
+        }
+
+        return instance == null
+            ? new NotFoundObjectResult(new { error = "Consult generation job was not found." })
+            : new OkObjectResult(new ConsultGenerationJobResponse(
+                jobId,
+                MapRuntimeStatus(instance.RuntimeStatus),
+                0,
+                0,
+                0,
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                false));
+    }
+
+    private static string BuildStatusUrl(HttpRequest req, string jobId)
+    {
+        var pathBase = req.PathBase.HasValue ? req.PathBase.Value : string.Empty;
+        return $"{req.Scheme}://{req.Host}{pathBase}/api/ConsultGenerationJobs/{jobId}";
+    }
+
+    private static string? ValidateRequest(ConsultGenerationRequest? request)
+    {
+        if (request == null)
+        {
+            return "Request body is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ConsultDraft))
+        {
+            return "ConsultDraft is required.";
+        }
+
+        if (request.Sections == null || request.Sections.Count == 0)
+        {
+            return "At least one section is required.";
+        }
+
+        foreach (var section in request.Sections)
+        {
+            if (string.IsNullOrWhiteSpace(section.Id)
+                || string.IsNullOrWhiteSpace(section.Name)
+                || string.IsNullOrWhiteSpace(section.Standard))
+            {
+                return "Each section requires Id, Name, and Standard.";
+            }
+        }
+
+        if (request.Sections
+            .GroupBy(section => section.Id, StringComparer.Ordinal)
+            .Any(group => group.Count() > 1))
+        {
+            return "Duplicate section IDs are not allowed.";
+        }
+
+        return null;
+    }
+
+    private static ConsultGenerationJobResponse MergeEntityAndRuntimeStatus(
+        ConsultGenerationJobResponse response,
+        OrchestrationRuntimeStatus? runtimeStatus)
+    {
+        if (runtimeStatus == null
+            || IsTerminalJobStatus(response.Status)
+            || !IsTerminalRuntimeStatus(runtimeStatus.Value))
+        {
+            return response;
+        }
+
+        return response with
+        {
+            Status = MapRuntimeStatus(runtimeStatus.Value)
+        };
+    }
+
+    private static bool IsTerminalJobStatus(string status)
+    {
+        return status is ConsultGenerationJobStatuses.Completed or ConsultGenerationJobStatuses.Failed;
+    }
+
+    private static bool IsTerminalRuntimeStatus(OrchestrationRuntimeStatus status)
+    {
+        if (status.ToString().Equals("Canceled", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return status is OrchestrationRuntimeStatus.Completed
+            or OrchestrationRuntimeStatus.Failed
+            or OrchestrationRuntimeStatus.Terminated;
+    }
+
+    private static string MapRuntimeStatus(OrchestrationRuntimeStatus runtimeStatus)
+    {
+        if (runtimeStatus.ToString().Equals("Canceled", StringComparison.Ordinal))
+        {
+            return ConsultGenerationJobStatuses.Failed;
+        }
+
+        return runtimeStatus switch
+        {
+            OrchestrationRuntimeStatus.Completed => ConsultGenerationJobStatuses.Completed,
+            OrchestrationRuntimeStatus.Failed => ConsultGenerationJobStatuses.Failed,
+            OrchestrationRuntimeStatus.Terminated => ConsultGenerationJobStatuses.Failed,
+            OrchestrationRuntimeStatus.Pending => ConsultGenerationJobStatuses.Queued,
+            _ => ConsultGenerationJobStatuses.Running
+        };
+    }
+}
+
+public sealed class ConsultGenerationOrchestrator
+{
+    [Function(nameof(ConsultGenerationOrchestrator))]
+    public async Task RunAsync([OrchestrationTrigger] TaskOrchestrationContext context)
+    {
+        var request = context.GetInput<ConsultGenerationRequest>()
+            ?? throw new InvalidOperationException("Consult generation request input is required.");
+
+        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), context.InstanceId);
+        await context.Entities.CallEntityAsync(
+            entityId,
+            nameof(ConsultGenerationJobEntity.Initialize),
+            new ConsultGenerationJobInitialize(context.InstanceId, request.Sections));
+
+        await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
+
+        var totalSectionCount = request.Sections.Count;
+        var completedSectionCount = 0;
+        var failedSectionCount = 0;
+
+        context.SetCustomStatus(new
+        {
+            status = ConsultGenerationJobStatuses.Running,
+            totalSectionCount,
+            completedSectionCount,
+            failedSectionCount
+        });
+
+        var pendingTasks = new List<Task<SectionGenerationResult>>();
+        var taskSections = new Dictionary<Task<SectionGenerationResult>, ConsultGenerationSectionRequest>();
+
+        foreach (var section in request.Sections)
+        {
+            var activityInput = new ConsultGenerationActivityInput(request.ConsultDraft, section);
+            var task = context.CallActivityAsync<SectionGenerationResult>(
+                nameof(GenerateConsultSectionActivity),
+                activityInput);
+
+            pendingTasks.Add(task);
+            taskSections[task] = section;
+        }
+
+        while (pendingTasks.Count > 0)
+        {
+            var completedTask = await Task.WhenAny(pendingTasks);
+            pendingTasks.Remove(completedTask);
+            var section = taskSections[completedTask];
+
+            SectionGenerationResult result;
+
+            try
+            {
+                result = await completedTask;
+            }
+            catch (Exception ex)
+            {
+                result = new SectionGenerationResult(section.Id, section.Name, false, null, ex.Message);
+            }
+
+            if (result.Success)
+            {
+                completedSectionCount++;
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.CompleteSection),
+                    result);
+            }
+            else
+            {
+                failedSectionCount++;
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.FailSection),
+                    result);
+            }
+
+            context.SetCustomStatus(new
+            {
+                status = ConsultGenerationJobStatuses.Running,
+                totalSectionCount,
+                completedSectionCount,
+                failedSectionCount
+            });
+        }
+
+        var finalStatus = completedSectionCount > 0
+            ? ConsultGenerationJobStatuses.Completed
+            : ConsultGenerationJobStatuses.Failed;
+
+        await context.Entities.CallEntityAsync(
+            entityId,
+            nameof(ConsultGenerationJobEntity.FinalizeJob),
+            new ConsultGenerationJobFinalize(finalStatus));
+
+        context.SetCustomStatus(new
+        {
+            status = finalStatus,
+            totalSectionCount,
+            completedSectionCount,
+            failedSectionCount
+        });
+    }
+}
+
+public sealed class GenerateConsultSectionActivity
+{
+    private readonly ILogger<GenerateConsultSectionActivity> _logger;
+    private readonly AgentSectionGenerator _sectionGenerator;
+
+    public GenerateConsultSectionActivity(
+        ILogger<GenerateConsultSectionActivity> logger,
+        AgentSectionGenerator sectionGenerator)
+    {
+        _logger = logger;
+        _sectionGenerator = sectionGenerator;
+    }
+
+    [Function(nameof(GenerateConsultSectionActivity))]
+    public async Task<SectionGenerationResult> RunAsync(
+        [ActivityTrigger] ConsultGenerationActivityInput input,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var section = input.Section;
+
+        try
+        {
+            _logger.LogInformation(
+                "Starting durable section generation. SectionId={SectionId}, SectionName={SectionName}",
+                section.Id,
+                section.Name);
+
+            var prose = await _sectionGenerator.GenerateSectionAsync(
+                input.ConsultDraft,
+                section.Name,
+                section.Standard,
+                cancellationToken);
+
+            var trimmedProse = prose.Trim();
+
+            _logger.LogInformation(
+                "Durable section generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                trimmedProse.Length,
+                stopwatch.ElapsedMilliseconds);
+
+            return new SectionGenerationResult(section.Id, section.Name, true, trimmedProse, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Durable section generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            return new SectionGenerationResult(section.Id, section.Name, false, null, ex.Message);
+        }
+    }
+}
+
+public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJobState>
+{
+    public void Initialize(ConsultGenerationJobInitialize input)
+    {
+        if (State == null || State.Sections.Count == 0)
+        {
+            State = ConsultGenerationJobState.Create(input.JobId, input.Sections);
+            return;
+        }
+
+        State.JobId = string.IsNullOrWhiteSpace(State.JobId) ? input.JobId : State.JobId;
+
+        if (State.CreatedAtUtc == default)
+        {
+            State.CreatedAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        foreach (var section in input.Sections)
+        {
+            State.GetOrAddSection(section.Id, section.Name);
+        }
+    }
+
+    public void MarkRunning()
+    {
+        var state = EnsureState();
+        state.Status = ConsultGenerationJobStatuses.Running;
+        state.StartedAtUtc ??= DateTimeOffset.UtcNow;
+
+        foreach (var section in state.Sections.Values.Where(section => section.Status == ConsultGenerationSectionStatuses.Pending))
+        {
+            section.Status = ConsultGenerationSectionStatuses.Running;
+        }
+
+        State = state;
+    }
+
+    public void CompleteSection(SectionGenerationResult result)
+    {
+        var state = EnsureState();
+        var section = state.GetOrAddSection(result.SectionId, result.SectionName);
+        section.Status = ConsultGenerationSectionStatuses.Completed;
+        section.GeneratedText = result.GeneratedText ?? string.Empty;
+        section.Error = null;
+        section.CompletedAtUtc = DateTimeOffset.UtcNow;
+        State = state;
+    }
+
+    public void FailSection(SectionGenerationResult result)
+    {
+        var state = EnsureState();
+        var section = state.GetOrAddSection(result.SectionId, result.SectionName);
+        section.Status = ConsultGenerationSectionStatuses.Failed;
+        section.GeneratedText = null;
+        section.Error = string.IsNullOrWhiteSpace(result.Error) ? "Section generation failed." : result.Error;
+        section.CompletedAtUtc = DateTimeOffset.UtcNow;
+        State = state;
+    }
+
+    public void FinalizeJob(ConsultGenerationJobFinalize input)
+    {
+        var state = EnsureState();
+        state.Status = input.Status;
+        state.CompletedAtUtc = DateTimeOffset.UtcNow;
+        State = state;
+    }
+
+    [Function(nameof(ConsultGenerationJobEntity))]
+    public static Task RunEntityAsync([EntityTrigger] TaskEntityDispatcher dispatcher)
+    {
+        return dispatcher.DispatchAsync<ConsultGenerationJobEntity>();
+    }
+
+    private ConsultGenerationJobState EnsureState()
+    {
+        return State ?? ConsultGenerationJobState.Create(string.Empty, Array.Empty<ConsultGenerationSectionRequest>());
+    }
+}
+
+public sealed record ConsultGenerationActivityInput(
+    string ConsultDraft,
+    ConsultGenerationSectionRequest Section);
+
+public sealed record ConsultGenerationJobInitialize(
+    string JobId,
+    IReadOnlyList<ConsultGenerationSectionRequest> Sections);
+
+public sealed record ConsultGenerationJobFinalize(string Status);
+
+public sealed class ConsultGenerationJobState
+{
+    public string JobId { get; set; } = string.Empty;
+    public string Status { get; set; } = ConsultGenerationJobStatuses.Queued;
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public DateTimeOffset? StartedAtUtc { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+    public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
+
+    public static ConsultGenerationJobState Create(
+        string jobId,
+        IReadOnlyList<ConsultGenerationSectionRequest> sections)
+    {
+        return new ConsultGenerationJobState
+        {
+            JobId = jobId,
+            Status = ConsultGenerationJobStatuses.Queued,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            Sections = sections.ToDictionary(
+                section => section.Id,
+                section => new ConsultGenerationSectionState
+                {
+                    Id = section.Id,
+                    Name = section.Name,
+                    Status = ConsultGenerationSectionStatuses.Pending
+                })
+        };
+    }
+
+    public ConsultGenerationSectionState GetOrAddSection(string sectionId, string sectionName)
+    {
+        if (!Sections.TryGetValue(sectionId, out var section))
+        {
+            section = new ConsultGenerationSectionState
+            {
+                Id = sectionId,
+                Name = sectionName,
+                Status = ConsultGenerationSectionStatuses.Pending
+            };
+
+            Sections[sectionId] = section;
+        }
+
+        return section;
+    }
+
+    public ConsultGenerationJobResponse ToResponse()
+    {
+        var completedSections = Sections.Values
+            .Where(section => section.Status == ConsultGenerationSectionStatuses.Completed)
+            .ToDictionary(section => section.Id, section => section.GeneratedText ?? string.Empty);
+
+        var failedSections = Sections.Values
+            .Where(section => section.Status == ConsultGenerationSectionStatuses.Failed)
+            .ToDictionary(section => section.Id, section => section.Error ?? "Section generation failed.");
+
+        return new ConsultGenerationJobResponse(
+            JobId,
+            Status,
+            Sections.Count,
+            completedSections.Count,
+            failedSections.Count,
+            completedSections,
+            failedSections,
+            completedSections.Count > 0);
+    }
+}
+
+public sealed class ConsultGenerationSectionState
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Status { get; set; } = ConsultGenerationSectionStatuses.Pending;
+    public string? GeneratedText { get; set; }
+    public string? Error { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+}
+
+public static class ConsultGenerationJobStatuses
+{
+    public const string Queued = "Queued";
+    public const string Running = "Running";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+}
+
+public static class ConsultGenerationSectionStatuses
+{
+    public const string Pending = "Pending";
+    public const string Running = "Running";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+}

@@ -36,10 +36,29 @@ public sealed class ConsultGeneration
         try
         {
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var generationRequest = JsonSerializer.Deserialize<ConsultGenerationRequest>(requestBody, new JsonSerializerOptions
+            ConsultGenerationRequest? generationRequest = null;
+
+            if (!string.IsNullOrWhiteSpace(requestBody))
             {
-                PropertyNameCaseInsensitive = true
-            });
+                try
+                {
+                    generationRequest = JsonSerializer.Deserialize<ConsultGenerationRequest>(requestBody, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                }
+                catch (JsonException ex)
+                {
+                    const string malformedJsonError = "Malformed JSON request body.";
+
+                    _logger.LogWarning(
+                        ex,
+                        "Invalid ConsultGeneration request: {ValidationError}",
+                        malformedJsonError);
+
+                    return new BadRequestObjectResult(new ConsultGenerationResponse(new(), new() { ["request"] = malformedJsonError }, false));
+                }
+            }
 
             var validationError = ValidateRequest(generationRequest);
             if (validationError != null)
@@ -166,6 +185,13 @@ public sealed class ConsultGeneration
             {
                 return "Each section requires Id, Name, and Standard.";
             }
+        }
+
+        if (request.Sections
+            .GroupBy(section => section.Id, StringComparer.Ordinal)
+            .Any(group => group.Count() > 1))
+        {
+            return "Duplicate section IDs are not allowed.";
         }
 
         return null;
