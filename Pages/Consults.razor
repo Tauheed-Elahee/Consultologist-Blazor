@@ -250,12 +250,7 @@
         .ToList();
 
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
-      var completedWithEvents = await TryStreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
-
-      if (!completedWithEvents && isAiRequestLoading)
-      {
-        await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
-      }
+      await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
     }
     catch (Exception ex)
     {
@@ -267,7 +262,7 @@
     }
   }
 
-  private async Task<bool> TryStreamConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  private async Task StreamConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
   {
     eventStreamCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     eventStreamReference = DotNetObjectReference.Create(this);
@@ -283,18 +278,27 @@
 
       if (string.IsNullOrWhiteSpace(activeEventStreamId))
       {
-        return false;
+        aiRequestError = "EventSource is not supported by this browser.";
+        return;
       }
 
       var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
       var completedTask = await Task.WhenAny(eventStreamCompletionSource.Task, timeoutTask);
 
-      return completedTask == eventStreamCompletionSource.Task
-        && await eventStreamCompletionSource.Task;
+      if (completedTask != eventStreamCompletionSource.Task)
+      {
+        aiRequestError = "Consult generation event stream timed out before completion.";
+        return;
+      }
+
+      if (!await eventStreamCompletionSource.Task && string.IsNullOrWhiteSpace(aiRequestError))
+      {
+        aiRequestError = "Consult generation event stream failed.";
+      }
     }
-    catch
+    catch (Exception ex)
     {
-      return false;
+      aiRequestError = $"Consult generation event stream failed: {ex.Message}";
     }
     finally
     {
@@ -315,24 +319,6 @@
       eventStreamReference?.Dispose();
       eventStreamReference = null;
       eventStreamCompletionSource = null;
-    }
-  }
-
-  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
-  {
-    while (isAiRequestLoading)
-    {
-      var response = await AIService.GetConsultGenerationJobAsync(jobId);
-
-      ApplyConsultGenerationJobResponse(response, sectionSnapshots);
-      await InvokeAsync(StateHasChanged);
-
-      if (response.Status is "Completed" or "Failed")
-      {
-        return;
-      }
-
-      await Task.Delay(TimeSpan.FromSeconds(2));
     }
   }
 
@@ -393,6 +379,12 @@
           break;
 
         case "error":
+          var streamError = JsonSerializer.Deserialize<ConsultGenerationStreamErrorEvent>(json, SseJsonOptions);
+          if (!string.IsNullOrWhiteSpace(streamError?.Error))
+          {
+            aiRequestError = streamError.Error;
+          }
+
           eventStreamCompletionSource?.TrySetResult(false);
           break;
       }
@@ -408,6 +400,10 @@
   [JSInvokable]
   public Task OnConsultGenerationJobStreamError(string message)
   {
+    aiRequestError = string.IsNullOrWhiteSpace(message)
+      ? "Consult generation event stream failed."
+      : message;
+
     eventStreamCompletionSource?.TrySetResult(false);
     return Task.CompletedTask;
   }
@@ -523,6 +519,10 @@
   private sealed record ConsultGenerationSectionFailedEvent(
     string JobId,
     string SectionId,
+    string Error);
+
+  private sealed record ConsultGenerationStreamErrorEvent(
+    string JobId,
     string Error);
 
   public async ValueTask DisposeAsync()
