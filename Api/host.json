@@ -7,8 +7,11 @@
 			"Host.Results": "Information",
 			"Worker": "Debug",
 			"Microsoft.Azure.Functions.Worker": "Debug",
-			"Microsoft.Azure.WebJobs.Extensions.DurableTask": "Debug",
-			"Host.Triggers.DurableTask": "Debug",
+			"Microsoft.Azure.WebJobs.Extensions.DurableTask": "Error",
+			"Host.Triggers.DurableTask": "Error",
+			"Azure.Core": "Warning",
+			"Azure.Storage": "Warning",
+			"Azure.Data.Tables": "Warning",
 			"Api.InvocationDiagnostics": "Information"
 		},
 		"applicationInsights": {
