@@ -18,6 +18,9 @@ public sealed class ConsultGeneration
     {
         _logger = logger;
         _sectionGenerator = sectionGenerator;
+
+        Console.Error.WriteLine($"[Api.StartupDiagnostics] ConsultGeneration constructed. Utc={DateTimeOffset.UtcNow:O}");
+        _logger.LogInformation("ConsultGeneration constructed.");
     }
 
     [Function("ConsultGeneration")]

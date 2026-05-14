@@ -18,6 +18,9 @@ public sealed class AgentSectionGenerator
     {
         _logger = logger;
         _credential = credential;
+
+        Console.Error.WriteLine($"[Api.StartupDiagnostics] AgentSectionGenerator constructed. Utc={DateTimeOffset.UtcNow:O}");
+        _logger.LogInformation("AgentSectionGenerator constructed.");
     }
 
     public async Task<string> GenerateSectionAsync(

@@ -10,7 +10,11 @@ using Azure.Core;
 using Api;
 
 // Deployment: 2025-12-01 22:40 UTC - Fixed TokenCredential DI registration
+Console.Error.WriteLine($"[Api.StartupDiagnostics] Program starting. Utc={DateTimeOffset.UtcNow:O}");
+
 var builder = FunctionsApplication.CreateBuilder(args);
+
+builder.Logging.AddConsole();
 
 builder.Use(next => async context =>
 {
@@ -53,7 +57,17 @@ builder.Services
 // Register TokenCredential explicitly for DI
 builder.Services.AddSingleton<TokenCredential>(sp =>
 {
+    var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("Api.StartupDiagnostics");
     var azureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+    var isRunningInAzure = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID"));
+
+    Console.Error.WriteLine(
+        $"[Api.StartupDiagnostics] Creating TokenCredential. Utc={DateTimeOffset.UtcNow:O}; IsRunningInAzure={isRunningInAzure}; HasAzureClientId={!string.IsNullOrWhiteSpace(azureClientId)}");
+
+    logger.LogInformation(
+        "Creating TokenCredential. IsRunningInAzure={IsRunningInAzure}, HasAzureClientId={HasAzureClientId}",
+        isRunningInAzure,
+        !string.IsNullOrWhiteSpace(azureClientId));
 
     var credentialOptions = new DefaultAzureCredentialOptions
     {
@@ -72,7 +86,12 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
         credentialOptions.ManagedIdentityClientId = azureClientId;
     }
 
-    return new DefaultAzureCredential(credentialOptions);
+    var credential = new DefaultAzureCredential(credentialOptions);
+
+    Console.Error.WriteLine($"[Api.StartupDiagnostics] TokenCredential created. Utc={DateTimeOffset.UtcNow:O}");
+    logger.LogInformation("TokenCredential created.");
+
+    return credential;
 });
 
 builder.Services.AddScoped<AgentSectionGenerator>();
@@ -80,5 +99,7 @@ builder.Services.AddScoped<AgentSectionGenerator>();
 // Register Functions in DI container
 builder.Services.AddScoped<AgentProxy>();
 builder.Services.AddScoped<ConsultGeneration>();
+
+Console.Error.WriteLine($"[Api.StartupDiagnostics] Program configured. Building host. Utc={DateTimeOffset.UtcNow:O}");
 
 builder.Build().Run();
