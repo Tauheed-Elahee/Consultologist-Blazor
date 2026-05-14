@@ -4,12 +4,47 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using AzureIdentity::Azure.Identity;
 using Azure.Core;
 using Api;
 
 // Deployment: 2025-12-01 22:40 UTC - Fixed TokenCredential DI registration
 var builder = FunctionsApplication.CreateBuilder(args);
+
+builder.Use(next => async context =>
+{
+    var logger = context.InstanceServices
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Api.InvocationDiagnostics");
+
+    logger.LogInformation(
+        "Worker invocation starting. FunctionName={FunctionName}, InvocationId={InvocationId}",
+        context.FunctionDefinition.Name,
+        context.InvocationId);
+
+    try
+    {
+        await next(context);
+
+        logger.LogInformation(
+            "Worker invocation completed. FunctionName={FunctionName}, InvocationId={InvocationId}",
+            context.FunctionDefinition.Name,
+            context.InvocationId);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(
+            ex,
+            "Worker invocation failed before a function response was returned. FunctionName={FunctionName}, InvocationId={InvocationId}, ExceptionType={ExceptionType}, Message={Message}",
+            context.FunctionDefinition.Name,
+            context.InvocationId,
+            ex.GetType().FullName,
+            ex.Message);
+
+        throw;
+    }
+});
 
 builder.Services
     .AddApplicationInsightsTelemetryWorkerService()

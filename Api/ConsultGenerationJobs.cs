@@ -32,8 +32,18 @@ public sealed class ConsultGenerationJobs
     {
         var cancellationToken = req.FunctionContext.CancellationToken;
 
+        _logger.LogInformation(
+            "StartConsultGenerationJob entered. InvocationId={InvocationId}, Method={Method}, Url={Url}",
+            req.FunctionContext.InvocationId,
+            req.Method,
+            req.Url);
+
         if (IsOptions(req))
         {
+            _logger.LogInformation(
+                "StartConsultGenerationJob returning OPTIONS response. InvocationId={InvocationId}",
+                req.FunctionContext.InvocationId);
+
             return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
@@ -41,13 +51,27 @@ public sealed class ConsultGenerationJobs
 
         try
         {
+            _logger.LogInformation(
+                "StartConsultGenerationJob reading request body. InvocationId={InvocationId}",
+                req.FunctionContext.InvocationId);
+
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "StartConsultGenerationJob request body read. InvocationId={InvocationId}, BodyLength={BodyLength}",
+                req.FunctionContext.InvocationId,
+                requestBody.Length);
+
             ConsultGenerationRequest? generationRequest = null;
 
             if (!string.IsNullOrWhiteSpace(requestBody))
             {
                 try
                 {
+                    _logger.LogInformation(
+                        "StartConsultGenerationJob deserializing request body. InvocationId={InvocationId}",
+                        req.FunctionContext.InvocationId);
+
                     generationRequest = JsonSerializer.Deserialize<ConsultGenerationRequest>(requestBody, JsonOptions);
                 }
                 catch (JsonException ex)
@@ -75,10 +99,20 @@ public sealed class ConsultGenerationJobs
             var jobId = Guid.NewGuid().ToString("N");
             var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
 
+            _logger.LogInformation(
+                "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
+
             await client.Entities.SignalEntityAsync(
                 entityId,
                 nameof(ConsultGenerationJobEntity.Initialize),
                 new ConsultGenerationJobInitialize(jobId, request.Sections));
+
+            _logger.LogInformation(
+                "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
 
             var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
                 nameof(ConsultGenerationOrchestrator),
@@ -117,8 +151,20 @@ public sealed class ConsultGenerationJobs
     {
         var cancellationToken = req.FunctionContext.CancellationToken;
 
+        _logger.LogInformation(
+            "GetConsultGenerationJob entered. InvocationId={InvocationId}, Method={Method}, Url={Url}, JobId={JobId}",
+            req.FunctionContext.InvocationId,
+            req.Method,
+            req.Url,
+            jobId);
+
         if (IsOptions(req))
         {
+            _logger.LogInformation(
+                "GetConsultGenerationJob returning OPTIONS response. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
+
             return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
