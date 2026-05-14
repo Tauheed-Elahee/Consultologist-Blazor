@@ -23,11 +23,11 @@ public class AgentProxy
     // NOTE: AuthorizationLevel.Anonymous is for development purposes only
     [Function("AgentProxy")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req,
-        CancellationToken cancellationToken)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req)
     {
         var requestStopwatch = Stopwatch.StartNew();
         var stage = "start";
+        var cancellationToken = req.FunctionContext.CancellationToken;
 
         if (IsOptions(req))
         {

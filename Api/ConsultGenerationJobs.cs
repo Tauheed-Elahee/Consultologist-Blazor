@@ -28,9 +28,10 @@ public sealed class ConsultGenerationJobs
     [Function("StartConsultGenerationJob")]
     public async Task<HttpResponseData> StartAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "ConsultGenerationJobs")] HttpRequestData req,
-        [DurableClient] DurableTaskClient client,
-        CancellationToken cancellationToken)
+        [DurableClient] DurableTaskClient client)
     {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
         if (IsOptions(req))
         {
             return CreateEmptyResponse(req, HttpStatusCode.OK);
@@ -112,9 +113,10 @@ public sealed class ConsultGenerationJobs
     public async Task<HttpResponseData> GetAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "ConsultGenerationJobs/{jobId}")] HttpRequestData req,
         [DurableClient] DurableTaskClient client,
-        string jobId,
-        CancellationToken cancellationToken)
+        string jobId)
     {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
         if (IsOptions(req))
         {
             return CreateEmptyResponse(req, HttpStatusCode.OK);

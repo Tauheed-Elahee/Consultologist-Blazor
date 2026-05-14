@@ -22,10 +22,10 @@ public sealed class ConsultGeneration
 
     [Function("ConsultGeneration")]
     public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req,
-        CancellationToken cancellationToken)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req)
     {
         var requestStopwatch = Stopwatch.StartNew();
+        var cancellationToken = req.FunctionContext.CancellationToken;
 
         if (IsOptions(req))
         {
