@@ -293,6 +293,39 @@ PY
 
   sse_body="$(body_of durable_job_sse_stream)"
   [[ "$sse_body" == *"event: snapshot"* ]] || fail "Durable SSE stream did not include snapshot; body=$sse_body"
+  python3 - "$tmp_dir/durable_job_sse_stream.body" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+events = []
+current_event = None
+current_data = []
+
+with open(path, "r", encoding="utf-8") as handle:
+    for raw_line in handle:
+        line = raw_line.rstrip("\n")
+        if line == "":
+            if current_event is not None:
+                events.append((current_event, "\n".join(current_data)))
+            current_event = None
+            current_data = []
+            continue
+
+        if line.startswith("event: "):
+            current_event = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            current_data.append(line.removeprefix("data: "))
+
+for event_name, data in events:
+    if event_name == "snapshot":
+        payload = json.loads(data)
+        if payload.get("TotalSectionCount") != 1:
+            raise SystemExit(f"Durable SSE snapshot should be entity-backed with TotalSectionCount=1; payload={payload!r}")
+        break
+else:
+    raise SystemExit("Durable SSE stream did not include a parseable snapshot event")
+PY
   [[ "$sse_body" == *"event: section-completed"* || "$sse_body" == *"event: section-failed"* ]] || fail "Durable SSE stream did not include a section event; body=$sse_body"
   [[ "$sse_body" == *"event: done"* ]] || fail "Durable SSE stream did not include done; body=$sse_body"
   pass "ConsultGenerationJobs valid SSE stream emits snapshot, section progress, and done"
