@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using Api.Models;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 
 namespace Api;
@@ -21,21 +21,20 @@ public sealed class ConsultGeneration
     }
 
     [Function("ConsultGeneration")]
-    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequest req)
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req,
+        CancellationToken cancellationToken)
     {
         var requestStopwatch = Stopwatch.StartNew();
 
-        FunctionCors.Apply(req);
-
-        if (req.Method == "OPTIONS")
+        if (IsOptions(req))
         {
-            req.HttpContext.Response.StatusCode = 200;
-            return new OkResult();
+            return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
         try
         {
-            var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var requestBody = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
             ConsultGenerationRequest? generationRequest = null;
 
             if (!string.IsNullOrWhiteSpace(requestBody))
@@ -56,7 +55,7 @@ public sealed class ConsultGeneration
                         "Invalid ConsultGeneration request: {ValidationError}",
                         malformedJsonError);
 
-                    return new BadRequestObjectResult(new ConsultGenerationResponse(new(), new() { ["request"] = malformedJsonError }, false));
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ConsultGenerationResponse(new(), new() { ["request"] = malformedJsonError }, false), cancellationToken);
                 }
             }
 
@@ -64,7 +63,7 @@ public sealed class ConsultGeneration
             if (validationError != null)
             {
                 _logger.LogWarning("Invalid ConsultGeneration request: {ValidationError}", validationError);
-                return new BadRequestObjectResult(new ConsultGenerationResponse(new(), new() { ["request"] = validationError }, false));
+                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new ConsultGenerationResponse(new(), new() { ["request"] = validationError }, false), cancellationToken);
             }
 
             var request = generationRequest!;
@@ -75,14 +74,14 @@ public sealed class ConsultGeneration
                 "ConsultGeneration request validated. SectionCount={SectionCount}, ConsultDraftLength={ConsultDraftLength}, TraceIdentifier={TraceIdentifier}",
                 request.Sections.Count,
                 request.ConsultDraft.Length,
-                req.HttpContext.TraceIdentifier);
+                req.FunctionContext.InvocationId);
 
             var tasks = request.Sections.Select(section => GenerateSectionAsync(
                 request.ConsultDraft,
                 section,
                 generatedSections,
                 failedSections,
-                req.HttpContext.RequestAborted));
+                cancellationToken));
 
             await Task.WhenAll(tasks);
 
@@ -98,10 +97,10 @@ public sealed class ConsultGeneration
 
             if (generated.Count == 0)
             {
-                return new ObjectResult(response) { StatusCode = 500 };
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, response, cancellationToken);
             }
 
-            return new OkObjectResult(response);
+            return await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -112,7 +111,7 @@ public sealed class ConsultGeneration
                 ex.Message,
                 requestStopwatch.ElapsedMilliseconds);
 
-            return new ObjectResult(new ConsultGenerationResponse(new(), new() { ["request"] = $"Internal error: {ex.Message}" }, false)) { StatusCode = 500 };
+            return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new ConsultGenerationResponse(new(), new() { ["request"] = $"Internal error: {ex.Message}" }, false), cancellationToken);
         }
     }
 
@@ -195,5 +194,29 @@ public sealed class ConsultGeneration
         }
 
         return null;
+    }
+
+    private static bool IsOptions(HttpRequestData req)
+    {
+        return string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HttpResponseData CreateEmptyResponse(HttpRequestData req, HttpStatusCode statusCode)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private static async Task<HttpResponseData> CreateJsonResponseAsync<T>(
+        HttpRequestData req,
+        HttpStatusCode statusCode,
+        T payload,
+        CancellationToken cancellationToken)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(payload, cancellationToken);
+        return response;
     }
 }

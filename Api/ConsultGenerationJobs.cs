@@ -1,9 +1,9 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using Api.Models;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Entities;
@@ -26,23 +26,21 @@ public sealed class ConsultGenerationJobs
     }
 
     [Function("StartConsultGenerationJob")]
-    public async Task<IActionResult> StartAsync(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "ConsultGenerationJobs")] HttpRequest req,
-        [DurableClient] DurableTaskClient client)
+    public async Task<HttpResponseData> StartAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "ConsultGenerationJobs")] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        CancellationToken cancellationToken)
     {
-        FunctionCors.Apply(req);
-
-        if (req.Method == "OPTIONS")
+        if (IsOptions(req))
         {
-            req.HttpContext.Response.StatusCode = 200;
-            return new OkResult();
+            return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
-            var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var requestBody = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
             ConsultGenerationRequest? generationRequest = null;
 
             if (!string.IsNullOrWhiteSpace(requestBody))
@@ -60,7 +58,7 @@ public sealed class ConsultGenerationJobs
                         "Invalid ConsultGenerationJobs request: {ValidationError}",
                         malformedJsonError);
 
-                    return new BadRequestObjectResult(new { error = malformedJsonError });
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = malformedJsonError }, cancellationToken);
                 }
             }
 
@@ -69,7 +67,7 @@ public sealed class ConsultGenerationJobs
             if (validationError != null)
             {
                 _logger.LogWarning("Invalid ConsultGenerationJobs request: {ValidationError}", validationError);
-                return new BadRequestObjectResult(new { error = validationError });
+                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = validationError }, cancellationToken);
             }
 
             var request = generationRequest!;
@@ -85,7 +83,7 @@ public sealed class ConsultGenerationJobs
                 nameof(ConsultGenerationOrchestrator),
                 request,
                 new StartOrchestrationOptions { InstanceId = jobId },
-                req.HttpContext.RequestAborted);
+                cancellationToken);
 
             var statusUrl = BuildStatusUrl(req, instanceId);
 
@@ -95,10 +93,7 @@ public sealed class ConsultGenerationJobs
                 request.Sections.Count,
                 stopwatch.ElapsedMilliseconds);
 
-            return new ObjectResult(new ConsultGenerationJobStartResponse(instanceId, statusUrl))
-            {
-                StatusCode = StatusCodes.Status202Accepted
-            };
+            return await CreateJsonResponseAsync(req, HttpStatusCode.Accepted, new ConsultGenerationJobStartResponse(instanceId, statusUrl), cancellationToken);
         }
         catch (Exception ex)
         {
@@ -109,38 +104,33 @@ public sealed class ConsultGenerationJobs
                 ex.Message,
                 stopwatch.ElapsedMilliseconds);
 
-            return new ObjectResult(new { error = $"Internal error: {ex.Message}" })
-            {
-                StatusCode = StatusCodes.Status500InternalServerError
-            };
+            return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new { error = $"Internal error: {ex.Message}" }, cancellationToken);
         }
     }
 
     [Function("GetConsultGenerationJob")]
-    public async Task<IActionResult> GetAsync(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "ConsultGenerationJobs/{jobId}")] HttpRequest req,
+    public async Task<HttpResponseData> GetAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "ConsultGenerationJobs/{jobId}")] HttpRequestData req,
         [DurableClient] DurableTaskClient client,
-        string jobId)
+        string jobId,
+        CancellationToken cancellationToken)
     {
-        FunctionCors.Apply(req);
-
-        if (req.Method == "OPTIONS")
+        if (IsOptions(req))
         {
-            req.HttpContext.Response.StatusCode = 200;
-            return new OkResult();
+            return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
         if (string.IsNullOrWhiteSpace(jobId))
         {
-            return new BadRequestObjectResult(new { error = "JobId is required." });
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "JobId is required." }, cancellationToken);
         }
 
         var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
         var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
             entityId,
-            cancellation: req.HttpContext.RequestAborted);
+            cancellation: cancellationToken);
 
-        var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, req.HttpContext.RequestAborted);
+        var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken);
 
         if (entity?.State != null)
         {
@@ -148,12 +138,12 @@ public sealed class ConsultGenerationJobs
                 entity.State.ToResponse(),
                 instance?.RuntimeStatus);
 
-            return new OkObjectResult(response);
+            return await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
         }
 
         return instance == null
-            ? new NotFoundObjectResult(new { error = "Consult generation job was not found." })
-            : new OkObjectResult(new ConsultGenerationJobResponse(
+            ? await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken)
+            : await CreateJsonResponseAsync(req, HttpStatusCode.OK, new ConsultGenerationJobResponse(
                 jobId,
                 MapRuntimeStatus(instance.RuntimeStatus),
                 0,
@@ -161,13 +151,13 @@ public sealed class ConsultGenerationJobs
                 0,
                 new Dictionary<string, string>(),
                 new Dictionary<string, string>(),
-                false));
+                false), cancellationToken);
     }
 
-    private static string BuildStatusUrl(HttpRequest req, string jobId)
+    private static string BuildStatusUrl(HttpRequestData req, string jobId)
     {
-        var pathBase = req.PathBase.HasValue ? req.PathBase.Value : string.Empty;
-        return $"{req.Scheme}://{req.Host}{pathBase}/api/ConsultGenerationJobs/{jobId}";
+        var authority = req.Url.GetLeftPart(UriPartial.Authority);
+        return $"{authority}/api/ConsultGenerationJobs/{jobId}";
     }
 
     private static string? ValidateRequest(ConsultGenerationRequest? request)
@@ -256,6 +246,30 @@ public sealed class ConsultGenerationJobs
             OrchestrationRuntimeStatus.Pending => ConsultGenerationJobStatuses.Queued,
             _ => ConsultGenerationJobStatuses.Running
         };
+    }
+
+    private static bool IsOptions(HttpRequestData req)
+    {
+        return string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HttpResponseData CreateEmptyResponse(HttpRequestData req, HttpStatusCode statusCode)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private static async Task<HttpResponseData> CreateJsonResponseAsync<T>(
+        HttpRequestData req,
+        HttpStatusCode statusCode,
+        T payload,
+        CancellationToken cancellationToken)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(payload, cancellationToken);
+        return response;
     }
 }
 

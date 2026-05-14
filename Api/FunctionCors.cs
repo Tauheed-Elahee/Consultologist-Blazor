@@ -1,12 +1,17 @@
-using Microsoft.AspNetCore.Http;
+using Microsoft.Azure.Functions.Worker.Http;
 
 namespace Api;
 
 internal static class FunctionCors
 {
-    public static void Apply(HttpRequest req)
+    public static void Apply(HttpRequestData req, HttpResponseData response)
     {
-        var origin = req.Headers["Origin"].ToString();
+        if (!req.Headers.TryGetValues("Origin", out var originValues))
+        {
+            return;
+        }
+
+        var origin = originValues.FirstOrDefault();
         var allowedOrigins = new[]
         {
             "https://app.consultologist.ai",
@@ -18,13 +23,13 @@ internal static class FunctionCors
             "http://localhost:7071"
         };
 
-        if (!allowedOrigins.Contains(origin))
+        if (string.IsNullOrWhiteSpace(origin) || !allowedOrigins.Contains(origin))
         {
             return;
         }
 
-        req.HttpContext.Response.Headers.Append("Access-Control-Allow-Origin", origin);
-        req.HttpContext.Response.Headers.Append("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        req.HttpContext.Response.Headers.Append("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        response.Headers.Add("Access-Control-Allow-Origin", origin);
+        response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }

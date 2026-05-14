@@ -1,9 +1,9 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Api.Models;
 
 namespace Api;
@@ -22,18 +22,16 @@ public class AgentProxy
     // TODO: Change AuthorizationLevel.Anonymous to AuthorizationLevel.Function for production
     // NOTE: AuthorizationLevel.Anonymous is for development purposes only
     [Function("AgentProxy")]
-    public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequest req)
+    public async Task<HttpResponseData> Run(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options")] HttpRequestData req,
+        CancellationToken cancellationToken)
     {
         var requestStopwatch = Stopwatch.StartNew();
         var stage = "start";
 
-        FunctionCors.Apply(req);
-
-        // Handle CORS preflight
-        if (req.Method == "OPTIONS")
+        if (IsOptions(req))
         {
-            req.HttpContext.Response.StatusCode = 200;
-            return new OkResult();
+            return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
         try
@@ -41,7 +39,7 @@ public class AgentProxy
             stage = "read-request-body";
 
             // Read and parse request body
-            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
 
             _logger.LogInformation("Received request body: {Body}", requestBody);
 
@@ -59,7 +57,7 @@ public class AgentProxy
             {
                 _logger.LogWarning("Invalid request: agentRequest={AgentRequest}, ConsultDraft={ConsultDraft}, SectionName={SectionName}, SectionStandard={SectionStandard}",
                     agentRequest, agentRequest?.ConsultDraft, agentRequest?.SectionName, agentRequest?.SectionStandard);
-                return new BadRequestObjectResult(new AgentResponse(null, "Invalid request: ConsultDraft, SectionName, and SectionStandard are required", false));
+                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new AgentResponse(null, "Invalid request: ConsultDraft, SectionName, and SectionStandard are required", false), cancellationToken);
             }
 
             _logger.LogInformation(
@@ -67,7 +65,7 @@ public class AgentProxy
                 agentRequest.SectionName,
                 agentRequest.ConsultDraft.Length,
                 agentRequest.SectionStandard.Length,
-                req.HttpContext.TraceIdentifier);
+                req.FunctionContext.InvocationId);
 
             try
             {
@@ -77,7 +75,7 @@ public class AgentProxy
                     agentRequest.ConsultDraft,
                     agentRequest.SectionName,
                     agentRequest.SectionStandard,
-                    req.HttpContext.RequestAborted);
+                    cancellationToken);
 
                 _logger.LogInformation(
                     "AgentProxy completed successfully. SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
@@ -85,9 +83,9 @@ public class AgentProxy
                     assistantText.Length,
                     sdkStopwatch.ElapsedMilliseconds);
 
-                return new OkObjectResult(new AgentResponse(assistantText, null, true));
+                return await CreateJsonResponseAsync(req, HttpStatusCode.OK, new AgentResponse(assistantText, null, true), cancellationToken);
             }
-            catch (OperationCanceledException ex) when (!req.HttpContext.RequestAborted.IsCancellationRequested)
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
                 _logger.LogError(
                     ex,
@@ -97,7 +95,7 @@ public class AgentProxy
                     ex.Message,
                     requestStopwatch.ElapsedMilliseconds);
 
-                return new ObjectResult(new AgentResponse(null, "Azure AI request timeout", false)) { StatusCode = 500 };
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new AgentResponse(null, "Azure AI request timeout", false), cancellationToken);
             }
             catch (Exception ex) when (ex.GetType().FullName == "Azure.Identity.AuthenticationFailedException")
             {
@@ -109,7 +107,7 @@ public class AgentProxy
                     ex.Message,
                     requestStopwatch.ElapsedMilliseconds);
 
-                return new ObjectResult(new AgentResponse(null, "Authentication failed", false)) { StatusCode = 500 };
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new AgentResponse(null, "Authentication failed", false), cancellationToken);
             }
             catch (System.ClientModel.ClientResultException ex)
             {
@@ -122,7 +120,7 @@ public class AgentProxy
                     ex.Message,
                     requestStopwatch.ElapsedMilliseconds);
 
-                return new ObjectResult(new AgentResponse(null, $"Azure AI request failed: {ex.Status}", false)) { StatusCode = 500 };
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new AgentResponse(null, $"Azure AI request failed: {ex.Status}", false), cancellationToken);
             }
             catch (InvalidOperationException ex)
             {
@@ -134,8 +132,18 @@ public class AgentProxy
                     ex.Message,
                     requestStopwatch.ElapsedMilliseconds);
 
-                return new ObjectResult(new AgentResponse(null, ex.Message, false)) { StatusCode = 500 };
+                return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new AgentResponse(null, ex.Message, false), cancellationToken);
             }
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Malformed AgentProxy request JSON. Stage={Stage}, ElapsedMs={ElapsedMs}",
+                stage,
+                requestStopwatch.ElapsedMilliseconds);
+
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new AgentResponse(null, "Malformed JSON request body.", false), cancellationToken);
         }
         catch (Exception ex)
         {
@@ -147,7 +155,31 @@ public class AgentProxy
                 ex.Message,
                 requestStopwatch.ElapsedMilliseconds);
 
-            return new ObjectResult(new AgentResponse(null, $"Internal error: {ex.Message}", false)) { StatusCode = 500 };
+            return await CreateJsonResponseAsync(req, HttpStatusCode.InternalServerError, new AgentResponse(null, $"Internal error: {ex.Message}", false), cancellationToken);
         }
+    }
+
+    private static bool IsOptions(HttpRequestData req)
+    {
+        return string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HttpResponseData CreateEmptyResponse(HttpRequestData req, HttpStatusCode statusCode)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private static async Task<HttpResponseData> CreateJsonResponseAsync<T>(
+        HttpRequestData req,
+        HttpStatusCode statusCode,
+        T payload,
+        CancellationToken cancellationToken)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(payload, cancellationToken);
+        return response;
     }
 }

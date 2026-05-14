@@ -11,8 +11,6 @@ using Api;
 // Deployment: 2025-12-01 22:40 UTC - Fixed TokenCredential DI registration
 var builder = FunctionsApplication.CreateBuilder(args);
 
-builder.ConfigureFunctionsWebApplication();
-
 builder.Services
     .AddApplicationInsightsTelemetryWorkerService()
     .ConfigureFunctionsApplicationInsights();
