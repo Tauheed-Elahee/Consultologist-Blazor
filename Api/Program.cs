@@ -16,40 +16,6 @@ var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.Logging.AddConsole();
 
-builder.Use(next => async context =>
-{
-    var logger = context.InstanceServices
-        .GetRequiredService<ILoggerFactory>()
-        .CreateLogger("Api.InvocationDiagnostics");
-
-    logger.LogInformation(
-        "Worker invocation starting. FunctionName={FunctionName}, InvocationId={InvocationId}",
-        context.FunctionDefinition.Name,
-        context.InvocationId);
-
-    try
-    {
-        await next(context);
-
-        logger.LogInformation(
-            "Worker invocation completed. FunctionName={FunctionName}, InvocationId={InvocationId}",
-            context.FunctionDefinition.Name,
-            context.InvocationId);
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(
-            ex,
-            "Worker invocation failed before a function response was returned. FunctionName={FunctionName}, InvocationId={InvocationId}, ExceptionType={ExceptionType}, Message={Message}",
-            context.FunctionDefinition.Name,
-            context.InvocationId,
-            ex.GetType().FullName,
-            ex.Message);
-
-        throw;
-    }
-});
-
 builder.Services
     .AddApplicationInsightsTelemetryWorkerService()
     .ConfigureFunctionsApplicationInsights();
