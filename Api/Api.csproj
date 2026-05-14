@@ -14,19 +14,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.17.1" Aliases="AzureIdentity" />
+    <PackageReference Include="Azure.AI.Extensions.OpenAI" Version="2.0.0" />
+    <PackageReference Include="Azure.AI.Projects" Version="2.0.1" />
+    <PackageReference Include="Azure.AI.Projects.Agents" Version="2.0.0" />
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.23.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.0.2" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.6" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="AgentProxy.cs" />
-    <Compile Remove="AgentSectionGenerator.cs" />
-    <Compile Remove="ConsultGeneration.cs" />
     <Compile Remove="ConsultGenerationJobs.cs" />
-    <Compile Remove="FunctionCors.cs" />
-    <Compile Remove="Models\**\*.cs" />
   </ItemGroup>
 
 </Project>
