@@ -54,13 +54,6 @@ builder.Services
 builder.Services.AddSingleton<TokenCredential>(sp =>
 {
     var azureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
-    var isRunningInAzure = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID"));
-
-    if (isRunningInAzure && string.IsNullOrWhiteSpace(azureClientId))
-    {
-        throw new InvalidOperationException(
-            "AZURE_CLIENT_ID must be set when running in Azure so DefaultAzureCredential uses the attached user-assigned managed identity.");
-    }
 
     var credentialOptions = new DefaultAzureCredentialOptions
     {

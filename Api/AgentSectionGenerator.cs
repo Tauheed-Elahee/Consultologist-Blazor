@@ -30,8 +30,18 @@ public sealed class AgentSectionGenerator
         var agentName = Environment.GetEnvironmentVariable("AzureAI__AgentName");
         var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
         var azureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        var isRunningInAzure = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID"));
         var networkTimeoutSeconds = GetEnvironmentInt("AzureAI__NetworkTimeoutSeconds", 270);
         var maxRetries = GetEnvironmentInt("AzureAI__MaxRetries", 0);
+
+        if (isRunningInAzure && string.IsNullOrWhiteSpace(azureClientId))
+        {
+            _logger.LogError(
+                "AZURE_CLIENT_ID is missing while running in Azure. Configure it so DefaultAzureCredential uses the attached user-assigned managed identity.");
+
+            throw new InvalidOperationException(
+                "AZURE_CLIENT_ID must be set when running in Azure so DefaultAzureCredential uses the attached user-assigned managed identity.");
+        }
 
         if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentName) || string.IsNullOrEmpty(agentVersion))
         {
