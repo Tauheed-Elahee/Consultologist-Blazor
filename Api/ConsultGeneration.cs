@@ -27,8 +27,18 @@ public sealed class ConsultGeneration
         var requestStopwatch = Stopwatch.StartNew();
         var cancellationToken = req.FunctionContext.CancellationToken;
 
+        _logger.LogInformation(
+            "ConsultGeneration entered. InvocationId={InvocationId}, Method={Method}, Url={Url}",
+            req.FunctionContext.InvocationId,
+            req.Method,
+            req.Url);
+
         if (IsOptions(req))
         {
+            _logger.LogInformation(
+                "ConsultGeneration returning OPTIONS response. InvocationId={InvocationId}",
+                req.FunctionContext.InvocationId);
+
             return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 

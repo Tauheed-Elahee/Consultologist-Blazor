@@ -26,16 +26,5 @@
 		"durableTask": {
 			"hubName": "consultologistjobs"
 		}
-	},
-	"functionHttpApi": {
-		"enableCors": true,
-		"corsPolicy": {
-			"allowedOrigins": [
-				"https://app.consultologist.ai",
-				"https://gentle-desert-09697700f.3.azurestaticapps.net"
-			],
-			"allowedMethods": ["GET", "POST", "OPTIONS"],
-			"allowedHeaders": ["Content-Type", "Authorization"]
-		}
 	}
 }

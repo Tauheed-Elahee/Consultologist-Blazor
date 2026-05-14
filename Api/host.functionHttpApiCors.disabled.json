@@ -1,0 +1,21 @@
+{
+  "note": "This host-level CORS block was removed so native isolated worker HTTP functions handle OPTIONS and CORS responses in code via FunctionCors.",
+  "functionHttpApi": {
+    "enableCors": true,
+    "corsPolicy": {
+      "allowedOrigins": [
+        "https://app.consultologist.ai",
+        "https://gentle-desert-09697700f.3.azurestaticapps.net"
+      ],
+      "allowedMethods": [
+        "GET",
+        "POST",
+        "OPTIONS"
+      ],
+      "allowedHeaders": [
+        "Content-Type",
+        "Authorization"
+      ]
+    }
+  }
+}
