@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Api.Models;
 using Microsoft.Azure.Functions.Worker;
@@ -13,6 +14,10 @@ namespace Api;
 
 public sealed class ConsultGenerationJobs
 {
+    private static readonly TimeSpan SsePollInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(5);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -173,33 +178,160 @@ public sealed class ConsultGenerationJobs
             return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "JobId is required." }, cancellationToken);
         }
 
-        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
-        var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
-            entityId,
-            cancellation: cancellationToken);
+        var response = await GetJobResponseAsync(client, jobId, cancellationToken);
 
-        var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken);
+        return response == null
+            ? await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken)
+            : await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
+    }
 
-        if (entity?.State != null)
+    [Function("GetConsultGenerationJobEvents")]
+    public async Task<HttpResponseData> GetEventsAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "ConsultGenerationJobs/{jobId}/events")] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        string jobId)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        _logger.LogInformation(
+            "GetConsultGenerationJobEvents entered. InvocationId={InvocationId}, Method={Method}, Url={Url}, JobId={JobId}",
+            req.FunctionContext.InvocationId,
+            req.Method,
+            req.Url,
+            jobId);
+
+        if (IsOptions(req))
         {
-            var response = MergeEntityAndRuntimeStatus(
-                entity.State.ToResponse(),
-                instance?.RuntimeStatus);
+            _logger.LogInformation(
+                "GetConsultGenerationJobEvents returning OPTIONS response. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
 
-            return await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
+            return CreateEmptyResponse(req, HttpStatusCode.OK);
         }
 
-        return instance == null
-            ? await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken)
-            : await CreateJsonResponseAsync(req, HttpStatusCode.OK, new ConsultGenerationJobResponse(
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "JobId is required." }, cancellationToken);
+        }
+
+        var initialResponse = await GetJobResponseAsync(client, jobId, cancellationToken);
+
+        if (initialResponse == null)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken);
+        }
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        FunctionCors.Apply(req, response);
+        response.Headers.Add("Content-Type", "text/event-stream; charset=utf-8");
+        response.Headers.Add("Cache-Control", "no-cache");
+
+        try
+        {
+            await WriteSseEventAsync(response, "snapshot", initialResponse, cancellationToken);
+
+            var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
+            var seenFailedSections = initialResponse.FailedSections.Keys.ToHashSet(StringComparer.Ordinal);
+
+            if (IsTerminalJobStatus(initialResponse.Status))
+            {
+                await WriteSseEventAsync(response, "done", initialResponse, cancellationToken);
+                return response;
+            }
+
+            var streamStartedAt = DateTimeOffset.UtcNow;
+            var nextHeartbeatAt = streamStartedAt + SseHeartbeatInterval;
+
+            while (!cancellationToken.IsCancellationRequested
+                && DateTimeOffset.UtcNow - streamStartedAt < SseStreamTimeout)
+            {
+                await Task.Delay(SsePollInterval, cancellationToken);
+
+                var latestResponse = await GetJobResponseAsync(client, jobId, cancellationToken);
+
+                if (latestResponse == null)
+                {
+                    await WriteSseEventAsync(response, "error", new ConsultGenerationJobStreamError(jobId, "Consult generation job was not found."), cancellationToken);
+                    return response;
+                }
+
+                foreach (var generatedSection in latestResponse.GeneratedSections)
+                {
+                    if (seenCompletedSections.Add(generatedSection.Key))
+                    {
+                        await WriteSseEventAsync(
+                            response,
+                            "section-completed",
+                            new ConsultGenerationJobSectionCompletedEvent(jobId, generatedSection.Key, generatedSection.Value),
+                            cancellationToken);
+                    }
+                }
+
+                foreach (var failedSection in latestResponse.FailedSections)
+                {
+                    if (seenFailedSections.Add(failedSection.Key))
+                    {
+                        await WriteSseEventAsync(
+                            response,
+                            "section-failed",
+                            new ConsultGenerationJobSectionFailedEvent(jobId, failedSection.Key, failedSection.Value),
+                            cancellationToken);
+                    }
+                }
+
+                if (IsTerminalJobStatus(latestResponse.Status))
+                {
+                    await WriteSseEventAsync(response, "done", latestResponse, cancellationToken);
+                    return response;
+                }
+
+                if (DateTimeOffset.UtcNow >= nextHeartbeatAt)
+                {
+                    await WriteSseEventAsync(
+                        response,
+                        "heartbeat",
+                        new ConsultGenerationJobHeartbeatEvent(jobId, latestResponse.Status),
+                        cancellationToken);
+
+                    nextHeartbeatAt = DateTimeOffset.UtcNow + SseHeartbeatInterval;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation(
+                "Consult generation SSE stream canceled. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Consult generation SSE stream failed. InvocationId={InvocationId}, JobId={JobId}, ExceptionType={ExceptionType}, Message={Message}",
+                req.FunctionContext.InvocationId,
                 jobId,
-                MapRuntimeStatus(instance.RuntimeStatus),
-                0,
-                0,
-                0,
-                new Dictionary<string, string>(),
-                new Dictionary<string, string>(),
-                false), cancellationToken);
+                ex.GetType().FullName,
+                ex.Message);
+
+            try
+            {
+                await WriteSseEventAsync(response, "error", new ConsultGenerationJobStreamError(jobId, ex.Message), cancellationToken);
+            }
+            catch (Exception writeException)
+            {
+                _logger.LogInformation(
+                    writeException,
+                    "Unable to write consult generation SSE error event. InvocationId={InvocationId}, JobId={JobId}",
+                    req.FunctionContext.InvocationId,
+                    jobId);
+            }
+        }
+
+        return response;
     }
 
     private static string BuildStatusUrl(HttpRequestData req, string jobId)
@@ -243,6 +375,38 @@ public sealed class ConsultGenerationJobs
         }
 
         return null;
+    }
+
+    private static async Task<ConsultGenerationJobResponse?> GetJobResponseAsync(
+        DurableTaskClient client,
+        string jobId,
+        CancellationToken cancellationToken)
+    {
+        var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
+        var entity = await client.Entities.GetEntityAsync<ConsultGenerationJobState>(
+            entityId,
+            cancellation: cancellationToken);
+
+        var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken);
+
+        if (entity?.State != null)
+        {
+            return MergeEntityAndRuntimeStatus(
+                entity.State.ToResponse(),
+                instance?.RuntimeStatus);
+        }
+
+        return instance == null
+            ? null
+            : new ConsultGenerationJobResponse(
+                jobId,
+                MapRuntimeStatus(instance.RuntimeStatus),
+                0,
+                0,
+                0,
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                false);
     }
 
     private static ConsultGenerationJobResponse MergeEntityAndRuntimeStatus(
@@ -319,7 +483,38 @@ public sealed class ConsultGenerationJobs
         await response.WriteAsJsonAsync(payload, cancellationToken);
         return response;
     }
+
+    private static async Task WriteSseEventAsync<T>(
+        HttpResponseData response,
+        string eventName,
+        T payload,
+        CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        var message = $"event: {eventName}\ndata: {json}\n\n";
+        var bytes = Encoding.UTF8.GetBytes(message);
+        await response.Body.WriteAsync(bytes, cancellationToken);
+        await response.Body.FlushAsync(cancellationToken);
+    }
 }
+
+public sealed record ConsultGenerationJobSectionCompletedEvent(
+    string JobId,
+    string SectionId,
+    string Text);
+
+public sealed record ConsultGenerationJobSectionFailedEvent(
+    string JobId,
+    string SectionId,
+    string Error);
+
+public sealed record ConsultGenerationJobHeartbeatEvent(
+    string JobId,
+    string Status);
+
+public sealed record ConsultGenerationJobStreamError(
+    string JobId,
+    string Error);
 
 public sealed class ConsultGenerationOrchestrator
 {

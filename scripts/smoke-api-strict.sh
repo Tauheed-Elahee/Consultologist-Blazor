@@ -199,6 +199,12 @@ assert_header_contains consult_generation_jobs_not_found Content-Type "applicati
 assert_json consult_generation_jobs_not_found 'payload.get("error") == "Consult generation job was not found."' "ConsultGenerationJobs not-found response should include exact error"
 pass "ConsultGenerationJobs not-found lookup returns exact 404 JSON"
 
+request consult_generation_job_events_not_found "$BASE_URL/api/ConsultGenerationJobs/not-found/events"
+assert_status consult_generation_job_events_not_found 404
+assert_header_contains consult_generation_job_events_not_found Content-Type "application/json"
+assert_json consult_generation_job_events_not_found 'payload.get("error") == "Consult generation job was not found."' "ConsultGenerationJobs events not-found response should include exact error"
+pass "ConsultGenerationJobs events not-found lookup returns exact 404 JSON"
+
 if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
   request agent_proxy_valid \
     -X POST \
@@ -258,4 +264,38 @@ PY
   pass "ConsultGenerationJobs valid POST reaches terminal status: $terminal_status"
 else
   echo "SKIP: Durable valid job. Set RUN_VALID_DURABLE_JOB=1 to enable."
+fi
+
+if [[ "${RUN_VALID_DURABLE_JOB_SSE:-0}" == "1" ]]; then
+  request durable_job_sse_start \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"ConsultDraft":"Patient has fatigue.","Sections":[{"Id":"history","Name":"History","Standard":"Write one concise clinical sentence."}]}' \
+    "$BASE_URL/api/ConsultGenerationJobs"
+  assert_status durable_job_sse_start 202
+  assert_json durable_job_sse_start 'isinstance(payload.get("JobId"), str) and len(payload.get("JobId")) > 0' "Durable SSE job start should return JobId"
+
+  events_url="$(python3 - "$tmp_dir/durable_job_sse_start.body" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+print(f'{payload["StatusUrl"]}/events')
+PY
+)"
+
+  request durable_job_sse_stream \
+    --max-time 120 \
+    -N \
+    "$events_url"
+  assert_status durable_job_sse_stream 200
+  assert_header_contains durable_job_sse_stream Content-Type "text/event-stream"
+
+  sse_body="$(body_of durable_job_sse_stream)"
+  [[ "$sse_body" == *"event: snapshot"* ]] || fail "Durable SSE stream did not include snapshot; body=$sse_body"
+  [[ "$sse_body" == *"event: section-completed"* || "$sse_body" == *"event: section-failed"* ]] || fail "Durable SSE stream did not include a section event; body=$sse_body"
+  [[ "$sse_body" == *"event: done"* ]] || fail "Durable SSE stream did not include done; body=$sse_body"
+  pass "ConsultGenerationJobs valid SSE stream emits snapshot, section progress, and done"
+else
+  echo "SKIP: Durable valid SSE stream. Set RUN_VALID_DURABLE_JOB_SSE=1 to enable."
 fi

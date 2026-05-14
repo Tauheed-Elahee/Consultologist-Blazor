@@ -9,6 +9,7 @@
 @inject IAIEndpointService AIService
 @inject IJSRuntime JSRuntime
 @attribute [Authorize]
+@implements IAsyncDisposable
 
 @page "/consults"
 
@@ -139,6 +140,10 @@
 @code {
   private const string StandardsPath = "templates/consult_section_standards.md";
   private const string StorageKey = "consultologist.consultSectionStandards.v1";
+  private static readonly JsonSerializerOptions SseJsonOptions = new()
+  {
+    PropertyNameCaseInsensitive = true
+  };
 
   [CascadingParameter]
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
@@ -154,6 +159,10 @@
   private string? aiRequestError;
   private int completedSectionCount;
   private int totalSectionCount;
+  private TaskCompletionSource<bool>? eventStreamCompletionSource;
+  private DotNetObjectReference<Consults>? eventStreamReference;
+  private string? activeEventStreamId;
+  private IReadOnlyList<SectionStandard> activeSectionSnapshots = Array.Empty<SectionStandard>();
 
   protected override async Task OnInitializedAsync()
   {
@@ -241,7 +250,12 @@
         .ToList();
 
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
-      await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      var completedWithEvents = await TryStreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+
+      if (!completedWithEvents && isAiRequestLoading)
+      {
+        await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      }
     }
     catch (Exception ex)
     {
@@ -253,26 +267,64 @@
     }
   }
 
+  private async Task<bool> TryStreamConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    eventStreamCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    eventStreamReference = DotNetObjectReference.Create(this);
+    activeSectionSnapshots = sectionSnapshots;
+
+    try
+    {
+      var eventsUrl = AIService.GetConsultGenerationJobEventsUrl(jobId);
+      activeEventStreamId = await JSRuntime.InvokeAsync<string?>(
+        "consultGenerationJobEvents.start",
+        eventsUrl,
+        eventStreamReference);
+
+      if (string.IsNullOrWhiteSpace(activeEventStreamId))
+      {
+        return false;
+      }
+
+      var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
+      var completedTask = await Task.WhenAny(eventStreamCompletionSource.Task, timeoutTask);
+
+      return completedTask == eventStreamCompletionSource.Task
+        && await eventStreamCompletionSource.Task;
+    }
+    catch
+    {
+      return false;
+    }
+    finally
+    {
+      if (!string.IsNullOrWhiteSpace(activeEventStreamId))
+      {
+        try
+        {
+          await JSRuntime.InvokeVoidAsync("consultGenerationJobEvents.close", activeEventStreamId);
+        }
+        catch
+        {
+          // The stream is best-effort; polling remains the fallback if cleanup fails.
+        }
+      }
+
+      activeEventStreamId = null;
+      activeSectionSnapshots = Array.Empty<SectionStandard>();
+      eventStreamReference?.Dispose();
+      eventStreamReference = null;
+      eventStreamCompletionSource = null;
+    }
+  }
+
   private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
   {
     while (isAiRequestLoading)
     {
       var response = await AIService.GetConsultGenerationJobAsync(jobId);
 
-      generatedSections = response.GeneratedSections;
-      failedSectionErrors = response.FailedSections;
-      totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
-      completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
-
-      if (failedSectionErrors.Count > 0)
-      {
-        var failedSectionNames = sectionSnapshots
-          .Where(section => failedSectionErrors.ContainsKey(section.Id))
-          .Select(section => section.Name);
-
-        aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
-      }
-
+      ApplyConsultGenerationJobResponse(response, sectionSnapshots);
       await InvokeAsync(StateHasChanged);
 
       if (response.Status is "Completed" or "Failed")
@@ -282,6 +334,120 @@
 
       await Task.Delay(TimeSpan.FromSeconds(2));
     }
+  }
+
+  [JSInvokable]
+  public async Task OnConsultGenerationJobEvent(string eventName, string json)
+  {
+    try
+    {
+      switch (eventName)
+      {
+        case "snapshot":
+          var snapshot = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
+          if (snapshot != null)
+          {
+            ApplyConsultGenerationJobResponse(snapshot, GetActiveSectionSnapshots());
+          }
+          break;
+
+        case "section-completed":
+          var completed = JsonSerializer.Deserialize<ConsultGenerationSectionCompletedEvent>(json, SseJsonOptions);
+          if (completed != null)
+          {
+            generatedSections = new Dictionary<string, string>(generatedSections)
+            {
+              [completed.SectionId] = completed.Text
+            };
+            var nextFailedSections = new Dictionary<string, string>(failedSectionErrors);
+            nextFailedSections.Remove(completed.SectionId);
+            failedSectionErrors = nextFailedSections;
+            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+          }
+          break;
+
+        case "section-failed":
+          var failed = JsonSerializer.Deserialize<ConsultGenerationSectionFailedEvent>(json, SseJsonOptions);
+          if (failed != null)
+          {
+            failedSectionErrors = new Dictionary<string, string>(failedSectionErrors)
+            {
+              [failed.SectionId] = failed.Error
+            };
+            var nextGeneratedSections = new Dictionary<string, string>(generatedSections);
+            nextGeneratedSections.Remove(failed.SectionId);
+            generatedSections = nextGeneratedSections;
+            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+            UpdateFailedSectionError(GetActiveSectionSnapshots());
+          }
+          break;
+
+        case "done":
+          var final = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
+          if (final != null)
+          {
+            ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
+          }
+
+          eventStreamCompletionSource?.TrySetResult(true);
+          break;
+
+        case "error":
+          eventStreamCompletionSource?.TrySetResult(false);
+          break;
+      }
+
+      await InvokeAsync(StateHasChanged);
+    }
+    catch
+    {
+      eventStreamCompletionSource?.TrySetResult(false);
+    }
+  }
+
+  [JSInvokable]
+  public Task OnConsultGenerationJobStreamError(string message)
+  {
+    eventStreamCompletionSource?.TrySetResult(false);
+    return Task.CompletedTask;
+  }
+
+  private void ApplyConsultGenerationJobResponse(
+    ConsultGenerationJobResponse response,
+    IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    generatedSections = response.GeneratedSections;
+    failedSectionErrors = response.FailedSections;
+    totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
+    completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
+
+    UpdateFailedSectionError(sectionSnapshots);
+  }
+
+  private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    if (failedSectionErrors.Count == 0)
+    {
+      if (aiRequestError?.StartsWith("Unable to generate:", StringComparison.Ordinal) == true)
+      {
+        aiRequestError = null;
+      }
+
+      return;
+    }
+
+    var failedSectionNames = sectionSnapshots
+      .Where(section => failedSectionErrors.ContainsKey(section.Id))
+      .Select(section => section.Name);
+
+    aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
+  }
+
+  private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
+  {
+    return activeSectionSnapshots.Count > 0
+      ? activeSectionSnapshots
+      : sectionStandards;
   }
 
   private async Task<string> LoadBundledStandardsAsync()
@@ -347,5 +513,31 @@
     public string Id { get; }
     public string Name { get; }
     public string Standard { get; set; }
+  }
+
+  private sealed record ConsultGenerationSectionCompletedEvent(
+    string JobId,
+    string SectionId,
+    string Text);
+
+  private sealed record ConsultGenerationSectionFailedEvent(
+    string JobId,
+    string SectionId,
+    string Error);
+
+  public async ValueTask DisposeAsync()
+  {
+    if (!string.IsNullOrWhiteSpace(activeEventStreamId))
+    {
+      try
+      {
+        await JSRuntime.InvokeVoidAsync("consultGenerationJobEvents.close", activeEventStreamId);
+      }
+      catch
+      {
+      }
+    }
+
+    eventStreamReference?.Dispose();
   }
 }

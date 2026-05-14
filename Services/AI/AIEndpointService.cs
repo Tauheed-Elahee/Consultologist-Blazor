@@ -16,6 +16,8 @@ public interface IAIEndpointService
         IReadOnlyList<ConsultGenerationSectionRequest> sections);
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
+
+    string GetConsultGenerationJobEventsUrl(string jobId);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -322,6 +324,19 @@ public class AIEndpointService : IAIEndpointService
 
             throw;
         }
+    }
+
+    public string GetConsultGenerationJobEventsUrl(string jobId)
+    {
+        var functionUrl = _configuration["AzureFunction:ConsultGenerationJobsUrl"];
+
+        if (string.IsNullOrEmpty(functionUrl))
+        {
+            _logger.LogError("AzureFunction:ConsultGenerationJobsUrl is not configured");
+            throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
+        }
+
+        return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events";
     }
 }
 
