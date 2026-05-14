@@ -7,12 +7,9 @@ namespace Api;
 public static class HttpProbe
 {
     [Function("HttpProbe")]
-    public static async Task<HttpResponseData> Run(
+    public static HttpResponseData Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", "options", Route = "HttpProbe")] HttpRequestData req)
     {
-        var response = req.CreateResponse(HttpStatusCode.OK);
-        response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
-        await response.WriteStringAsync("ok");
-        return response;
+        return req.CreateResponse(HttpStatusCode.NoContent);
     }
 }
