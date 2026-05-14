@@ -12,4 +12,11 @@ public static class HttpProbe
     {
         return req.CreateResponse(HttpStatusCode.NoContent);
     }
+
+    [Function("HttpStringProbe")]
+    public static string RunString(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "HttpStringProbe")] string request)
+    {
+        return "ok";
+    }
 }
