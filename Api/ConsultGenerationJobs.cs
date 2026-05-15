@@ -20,7 +20,7 @@ public sealed class ConsultGenerationJobs
 {
     private static readonly TimeSpan SsePollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan SseEntityInitializationPollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan SseEntityInitializationTimeout = TimeSpan.FromSeconds(10);
 

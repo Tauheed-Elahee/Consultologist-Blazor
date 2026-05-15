@@ -288,7 +288,8 @@
   {
     activeSectionSnapshots = sectionSnapshots;
 
-    using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+    const int streamTimeoutMinutes = 10;
+    using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(streamTimeoutMinutes));
     activeEventStreamCancellationTokenSource = timeoutCancellationTokenSource;
 
     try
@@ -324,7 +325,7 @@
       Logger.LogWarning(
         "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
         jobId,
-        5);
+        streamTimeoutMinutes);
 
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
