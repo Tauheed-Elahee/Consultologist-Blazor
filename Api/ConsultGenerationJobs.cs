@@ -291,13 +291,16 @@ public sealed class ConsultGenerationJobs
 
             var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
             var seenFailedSections = initialResponse.FailedSections.Keys.ToHashSet(StringComparer.Ordinal);
-            string? seenAnalysisStatus = null;
-
-            if (!string.IsNullOrWhiteSpace(initialResponse.AnalysisStatus))
-            {
-                await WriteAnalysisEventAsync(writer, initialResponse, cancellationToken);
-                seenAnalysisStatus = initialResponse.AnalysisStatus;
-            }
+            var highestEmittedAnalysisStageCount = 0;
+            string? seenAnalysisFailureStatus = null;
+            var analysisEmitResult = await WriteAnalysisEventsAsync(
+                writer,
+                initialResponse,
+                highestEmittedAnalysisStageCount,
+                seenAnalysisFailureStatus,
+                cancellationToken);
+            highestEmittedAnalysisStageCount = analysisEmitResult.HighestEmittedStageCount;
+            seenAnalysisFailureStatus = analysisEmitResult.SeenFailureStatus;
 
             if (IsTerminalJobStatus(initialResponse.Status))
             {
@@ -350,12 +353,14 @@ public sealed class ConsultGenerationJobs
                     }
                 }
 
-                if (!string.IsNullOrWhiteSpace(latestResponse.AnalysisStatus)
-                    && !string.Equals(latestResponse.AnalysisStatus, seenAnalysisStatus, StringComparison.Ordinal))
-                {
-                    await WriteAnalysisEventAsync(writer, latestResponse, cancellationToken);
-                    seenAnalysisStatus = latestResponse.AnalysisStatus;
-                }
+                analysisEmitResult = await WriteAnalysisEventsAsync(
+                    writer,
+                    latestResponse,
+                    highestEmittedAnalysisStageCount,
+                    seenAnalysisFailureStatus,
+                    cancellationToken);
+                highestEmittedAnalysisStageCount = analysisEmitResult.HighestEmittedStageCount;
+                seenAnalysisFailureStatus = analysisEmitResult.SeenFailureStatus;
 
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
@@ -624,37 +629,63 @@ public sealed class ConsultGenerationJobs
         return new SseItem<string>(json, eventName);
     }
 
-    private static async Task WriteAnalysisEventAsync(
+    private static async Task<AnalysisEventEmitResult> WriteAnalysisEventsAsync(
         ChannelWriter<SseItem<string>> writer,
         ConsultGenerationJobResponse response,
+        int highestEmittedStageCount,
+        string? seenFailureStatus,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(response.AnalysisStatus))
         {
-            return;
+            return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
         }
 
         if (IsAnalysisFailureStatus(response.AnalysisStatus))
         {
-            await writer.WriteAsync(CreateSseItem(
-                "error",
-                new ConsultGenerationJobStreamError(
-                    response.JobId,
-                    response.AnalysisError ?? "Consult preprocessing failed.",
-                    response.AnalysisStatus)),
-                cancellationToken);
-            return;
+            if (!string.Equals(response.AnalysisStatus, seenFailureStatus, StringComparison.Ordinal))
+            {
+                await writer.WriteAsync(CreateSseItem(
+                    "error",
+                    new ConsultGenerationJobStreamError(
+                        response.JobId,
+                        response.AnalysisError ?? "Consult preprocessing failed.",
+                        response.AnalysisStatus)),
+                    cancellationToken);
+                seenFailureStatus = response.AnalysisStatus;
+            }
+
+            return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
         }
 
-        await writer.WriteAsync(CreateSseItem(
-            response.AnalysisStatus,
-            new ConsultGenerationJobStageEvent(
-                response.JobId,
-                response.AnalysisStatus,
-                GetAnalysisStageMessage(response.AnalysisStatus),
-                response.CompletedStageCount ?? 0,
-                response.TotalStageCount ?? ConsultGenerationAnalysisStatuses.TotalStageCount)),
-            cancellationToken);
+        var completedStageCount = Math.Clamp(
+            response.CompletedStageCount ?? 0,
+            0,
+            ConsultGenerationAnalysisStatuses.TotalStageCount);
+
+        for (var stageCount = highestEmittedStageCount + 1; stageCount <= completedStageCount; stageCount++)
+        {
+            var stage = GetAnalysisStageByCompletedCount(stageCount);
+
+            if (stage == null)
+            {
+                continue;
+            }
+
+            await writer.WriteAsync(CreateSseItem(
+                stage,
+                new ConsultGenerationJobStageEvent(
+                    response.JobId,
+                    stage,
+                    GetAnalysisStageMessage(stage),
+                    stageCount,
+                    response.TotalStageCount ?? ConsultGenerationAnalysisStatuses.TotalStageCount)),
+                cancellationToken);
+
+            highestEmittedStageCount = stageCount;
+        }
+
+        return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
     }
 
     private static bool IsAnalysisFailureStatus(string status)
@@ -673,6 +704,20 @@ public sealed class ConsultGenerationJobs
             ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated => "Patient trajectory created.",
             ConsultGenerationAnalysisStatuses.SectionGenerationStarted => "Section generation started.",
             _ => "Consult generation stage updated."
+        };
+    }
+
+    private static string? GetAnalysisStageByCompletedCount(int completedStageCount)
+    {
+        return completedStageCount switch
+        {
+            1 => ConsultGenerationAnalysisStatuses.AnalysisStarted,
+            2 => ConsultGenerationAnalysisStatuses.ConceptsExtracted,
+            3 => ConsultGenerationAnalysisStatuses.ProblemIdentified,
+            4 => ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated,
+            5 => ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated,
+            6 => ConsultGenerationAnalysisStatuses.SectionGenerationStarted,
+            _ => null
         };
     }
 
@@ -719,6 +764,10 @@ public sealed record ConsultGenerationJobStageEvent(
     string Message,
     int CompletedStageCount,
     int TotalStageCount);
+
+public sealed record AnalysisEventEmitResult(
+    int HighestEmittedStageCount,
+    string? SeenFailureStatus);
 
 public sealed class ConsultGenerationOrchestrator
 {
