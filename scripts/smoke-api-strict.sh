@@ -3,6 +3,8 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net}"
 ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://app.consultologist.ai}"
+VALID_CONSULT_DRAFT="${VALID_CONSULT_DRAFT:-62-year-old woman with newly diagnosed invasive ductal carcinoma of the left breast. Core biopsy shows ER positive, PR positive, HER2 negative breast cancer. She has fatigue but no documented metastatic disease.}"
+VALID_SECTION_STANDARD="${VALID_SECTION_STANDARD:-Write one concise clinical history sentence using only documented patient facts.}"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -209,7 +211,16 @@ if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
   request agent_proxy_valid \
     -X POST \
     -H "Content-Type: application/json" \
-    -d '{"ConsultDraft":"Patient has fatigue.","SectionName":"History","SectionStandard":"Write one concise clinical sentence."}' \
+    -d "$(python3 - "$VALID_CONSULT_DRAFT" "$VALID_SECTION_STANDARD" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "ConsultDraft": sys.argv[1],
+    "SectionName": "History",
+    "SectionStandard": sys.argv[2],
+}))
+PY
+)" \
     "$BASE_URL/api/AgentProxy"
   assert_status agent_proxy_valid 200
   assert_header_contains agent_proxy_valid Content-Type "application/json"
@@ -224,7 +235,21 @@ if [[ "${RUN_VALID_DURABLE_JOB:-0}" == "1" ]]; then
   request durable_job_valid \
     -X POST \
     -H "Content-Type: application/json" \
-    -d '{"ConsultDraft":"Patient has fatigue.","Sections":[{"Id":"history","Name":"History","Standard":"Write one concise clinical sentence."}]}' \
+    -d "$(python3 - "$VALID_CONSULT_DRAFT" "$VALID_SECTION_STANDARD" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "ConsultDraft": sys.argv[1],
+    "Sections": [
+        {
+            "Id": "history",
+            "Name": "History",
+            "Standard": sys.argv[2],
+        }
+    ],
+}))
+PY
+)" \
     "$BASE_URL/api/ConsultGenerationJobs"
   assert_status durable_job_valid 202
   assert_header_contains durable_job_valid Content-Type "application/json"
@@ -261,6 +286,20 @@ PY
 
   [[ "$terminal_status" == "Completed" || "$terminal_status" == "Failed" ]] || fail "Durable job did not reach a terminal state; last body=$(body_of durable_job_status)"
   assert_json durable_job_status 'payload.get("TotalSectionCount") == 1' "Durable job status should track one section"
+  assert_json durable_job_status 'payload.get("SchemaVersion") == 1' "Durable job status should expose analysis schema version"
+  assert_json durable_job_status 'payload.get("TotalStageCount") == 6' "Durable job status should expose total analysis stage count"
+  assert_json durable_job_status 'isinstance(payload.get("AnalysisStatus"), str) and "-" in payload.get("AnalysisStatus")' "Durable job status should expose kebab-case analysis status"
+  assert_json durable_job_status 'payload.get("AnalysisStatus") == "section-generation-started" or payload.get("AnalysisStatus", "").endswith("-failed")' "Durable terminal job should expose final analysis stage or preprocessing failure"
+  assert_json durable_job_status 'payload.get("CompletedStageCount") in (0, 6)' "Durable terminal job should expose completed analysis stage count"
+  if [[ "$terminal_status" == "Completed" ]]; then
+    assert_json durable_job_status 'payload.get("Success") is True' "Durable completed job should have Success=true"
+    assert_json durable_job_status 'isinstance(payload.get("PatientConcepts"), list) and len(payload.get("PatientConcepts")) > 0' "Durable completed job should persist patient concepts"
+    assert_json durable_job_status 'isinstance(payload.get("ProblemContext"), list) and len(payload.get("ProblemContext")) > 0' "Durable completed job should persist problem context"
+    assert_json durable_job_status 'isinstance(payload.get("TypicalTrajectoryConcepts"), list) and len(payload.get("TypicalTrajectoryConcepts")) > 0' "Durable completed job should persist typical trajectory concepts"
+    assert_json durable_job_status 'isinstance(payload.get("PatientTrajectoryConcepts"), list) and len(payload.get("PatientTrajectoryConcepts")) > 0' "Durable completed job should persist patient trajectory concepts"
+  else
+    assert_json durable_job_status 'isinstance(payload.get("AnalysisError"), str) and len(payload.get("AnalysisError")) > 0' "Durable preprocessing failure should expose analysis error"
+  fi
   pass "ConsultGenerationJobs valid POST reaches terminal status: $terminal_status"
 else
   echo "SKIP: Durable valid job. Set RUN_VALID_DURABLE_JOB=1 to enable."
@@ -270,7 +309,21 @@ if [[ "${RUN_VALID_DURABLE_JOB_SSE:-0}" == "1" ]]; then
   request durable_job_sse_start \
     -X POST \
     -H "Content-Type: application/json" \
-    -d '{"ConsultDraft":"Patient has fatigue.","Sections":[{"Id":"history","Name":"History","Standard":"Write one concise clinical sentence."}]}' \
+    -d "$(python3 - "$VALID_CONSULT_DRAFT" "$VALID_SECTION_STANDARD" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "ConsultDraft": sys.argv[1],
+    "Sections": [
+        {
+            "Id": "history",
+            "Name": "History",
+            "Standard": sys.argv[2],
+        }
+    ],
+}))
+PY
+)" \
     "$BASE_URL/api/ConsultGenerationJobs"
   assert_status durable_job_sse_start 202
   assert_json durable_job_sse_start 'isinstance(payload.get("JobId"), str) and len(payload.get("JobId")) > 0' "Durable SSE job start should return JobId"
@@ -296,6 +349,7 @@ PY
   python3 - "$tmp_dir/durable_job_sse_stream.body" <<'PY'
 import json
 import sys
+from collections import Counter
 
 path = sys.argv[1]
 events = []
@@ -325,10 +379,42 @@ for event_name, data in events:
         break
 else:
     raise SystemExit("Durable SSE stream did not include a parseable snapshot event")
+
+stage_names = {
+    "analysis-started",
+    "concepts-extracted",
+    "problem-identified",
+    "typical-trajectory-created",
+    "patient-trajectory-created",
+    "section-generation-started",
+}
+stage_events = [(event_name, json.loads(data)) for event_name, data in events if event_name in stage_names]
+if not stage_events:
+    raise SystemExit(f"Durable SSE stream did not include any preprocessing stage events; events={[name for name, _ in events]!r}")
+
+counts = Counter(event_name for event_name, _ in stage_events)
+duplicates = {name: count for name, count in counts.items() if count > 1}
+if duplicates:
+    raise SystemExit(f"Durable SSE stream emitted duplicate stage events: {duplicates!r}")
+
+for event_name, payload in stage_events:
+    if payload.get("Stage") != event_name:
+        raise SystemExit(f"Durable SSE stage payload should match event name; event={event_name!r}; payload={payload!r}")
+    if payload.get("TotalStageCount") != 6:
+        raise SystemExit(f"Durable SSE stage payload should include TotalStageCount=6; payload={payload!r}")
+    if not isinstance(payload.get("CompletedStageCount"), int):
+        raise SystemExit(f"Durable SSE stage payload should include integer CompletedStageCount; payload={payload!r}")
+
+for event_name, data in events:
+    if event_name == "error":
+        payload = json.loads(data)
+        stage = payload.get("Stage")
+        if stage is not None and not stage.endswith("-failed"):
+            raise SystemExit(f"Durable SSE preprocessing error stage should be a failed kebab-case stage; payload={payload!r}")
 PY
   [[ "$sse_body" == *"event: section-completed"* || "$sse_body" == *"event: section-failed"* ]] || fail "Durable SSE stream did not include a section event; body=$sse_body"
   [[ "$sse_body" == *"event: done"* ]] || fail "Durable SSE stream did not include done; body=$sse_body"
-  pass "ConsultGenerationJobs valid SSE stream emits snapshot, section progress, and done"
+  pass "ConsultGenerationJobs valid SSE stream emits snapshot, preprocessing stage progress, section progress, and done"
 else
   echo "SKIP: Durable valid SSE stream. Set RUN_VALID_DURABLE_JOB_SSE=1 to enable."
 fi

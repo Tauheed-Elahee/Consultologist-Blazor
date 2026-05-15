@@ -1,5 +1,9 @@
 using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.ServerSentEvents;
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
+using System.Runtime.CompilerServices;
 
 namespace BlazorWasm.Services.AI;
 
@@ -18,6 +22,10 @@ public interface IAIEndpointService
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
     string GetConsultGenerationJobEventsUrl(string jobId);
+
+    IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
+        string jobId,
+        CancellationToken cancellationToken);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -338,6 +346,46 @@ public class AIEndpointService : IAIEndpointService
 
         return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events";
     }
+
+    public async IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
+        string jobId,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var eventsUrl = GetConsultGenerationJobEventsUrl(jobId);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, eventsUrl);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        request.SetBrowserResponseStreamingEnabled(true);
+
+        _logger.LogInformation(
+            "Opening consult generation SSE stream at {Url}. JobId={JobId}",
+            eventsUrl,
+            jobId);
+
+        using var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError(
+                "Consult generation SSE stream failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"Azure Function SSE stream failed: {response.StatusCode}");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var parser = SseParser.Create(stream);
+
+        await foreach (var item in parser.EnumerateAsync(cancellationToken))
+        {
+            yield return new ConsultGenerationJobSseEvent(item.EventType, item.Data);
+        }
+    }
 }
 
 public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
@@ -346,6 +394,7 @@ public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<Consul
 public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
 public record ConsultGenerationResponse(Dictionary<string, string> GeneratedSections, Dictionary<string, string> FailedSections, bool Success);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
+public record ConsultGenerationJobSseEvent(string EventName, string Json);
 public record ConsultGenerationJobResponse(
     string JobId,
     string Status,
@@ -354,4 +403,9 @@ public record ConsultGenerationJobResponse(
     int FailedSectionCount,
     Dictionary<string, string> GeneratedSections,
     Dictionary<string, string> FailedSections,
-    bool Success);
+    bool Success,
+    int? SchemaVersion = null,
+    string? AnalysisStatus = null,
+    string? AnalysisError = null,
+    int? CompletedStageCount = null,
+    int? TotalStageCount = null);

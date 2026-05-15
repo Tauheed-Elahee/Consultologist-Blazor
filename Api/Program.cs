@@ -59,5 +59,9 @@ builder.Services.AddScoped<AgentProxy>();
 builder.Services.AddScoped<ConsultGeneration>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
 builder.Services.AddScoped<GenerateConsultSectionActivity>();
+builder.Services.AddScoped<ExtractPatientConceptsActivity>();
+builder.Services.AddScoped<IdentifyProblemActivity>();
+builder.Services.AddScoped<CreateTypicalTrajectoryActivity>();
+builder.Services.AddScoped<CreatePatientTrajectoryActivity>();
 
 builder.Build().Run();

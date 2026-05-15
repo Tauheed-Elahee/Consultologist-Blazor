@@ -26,7 +26,17 @@ public record ConsultGenerationJobResponse(
     int FailedSectionCount,
     Dictionary<string, string> GeneratedSections,
     Dictionary<string, string> FailedSections,
-    bool Success);
+    bool Success,
+    int? SchemaVersion = null,
+    string? AnalysisStatus = null,
+    string? AnalysisError = null,
+    IReadOnlyList<ClinicalConcept>? PatientConcepts = null,
+    IReadOnlyList<ClinicalConcept>? ProblemContext = null,
+    IReadOnlyList<ClinicalConcept>? TypicalTrajectoryConcepts = null,
+    IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts = null,
+    int? CompletedStageCount = null,
+    int? TotalStageCount = null,
+    IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null);
 
 public record SectionGenerationResult(
     string SectionId,
@@ -34,3 +44,17 @@ public record SectionGenerationResult(
     bool Success,
     string? GeneratedText,
     string? Error);
+
+public sealed record ClinicalConcept(
+    string Term,
+    string Type,
+    string Id,
+    bool IsSnomedConcept,
+    bool IsActive,
+    string Source,
+    string? Support = null);
+
+public sealed record ConsultGenerationValidationWarning(
+    string Stage,
+    int DroppedLineCount,
+    string Reason);
