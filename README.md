@@ -4,8 +4,8 @@
 languages:
 - csharp
 page_type: sample
-name: ASP.NET Core 8.0 Blazor WebAssembly that accesses Microsoft Graph
-description: This ASP.NET Core 8.0 Blazor WebAssembly that signs in and contacts Microsoft Graph on behalf of the user. The code in this sample is used by one or more articles on docs.microsoft.com.
+name: ASP.NET Core 10.0 Blazor WebAssembly that accesses Microsoft Graph
+description: This ASP.NET Core 10.0 Blazor WebAssembly app signs in and contacts Microsoft Graph on behalf of the user.
 products:
 - azure
 - entra-id
@@ -13,18 +13,20 @@ products:
 urlFragment: ms-identity-docs-code-spa-blazor-wasm-csharp
 ---
 
-# ASP.NET Core 8.0 Blazor WebAssembly | standalone  app | user sign-in, protected web API access (Microsoft Graph) | Microsoft identity platform
+# ASP.NET Core 10.0 Blazor WebAssembly | standalone app | user sign-in, protected web API access (Microsoft Graph) | Microsoft identity platform
 
-The standalone app in this scenario is created using the ASP.NET Core 8.0 Blazor WebAssembly template and modified to allow sign-in with a Microsoft Entra account. It uses the [Microsoft.Authentication.WebAssembly.MSAL](https://www.nuget.org/packages/Microsoft.Authentication.WebAssembly.Msal) package to authenticate users and obtain tokens for calling protected APIs. In other words, the app adds an authentication layer that allows users to sign in with their Work and school accounts and make web API calls to protected resources on their behalf.
+The standalone app in this scenario targets ASP.NET Core 10.0 Blazor WebAssembly and allows sign-in with a Microsoft Entra account. It uses the [Microsoft.Authentication.WebAssembly.MSAL](https://www.nuget.org/packages/Microsoft.Authentication.WebAssembly.Msal) package to authenticate users and obtain tokens for calling protected APIs. In other words, the app adds an authentication layer that allows users to sign in with their Work and school accounts and make web API calls to protected resources on their behalf.
+
+The API project targets .NET 10 isolated Azure Functions on Azure Functions v4. The production Function App should remain on a Linux Flex Consumption-compatible runtime, not Linux Consumption.
 
 > Note: This code sample uses the Microsoft.Authentication.WebAssembly.MSAL package, which is a modified version of the Microsoft.Identity.Client library.
 
-![A screenshot of an ASP.NET Core 8.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
+![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
 
 ## Prerequisites
 
 - An Azure account with an active subscription. If you don't already have one, [Create an account for free](https://azure.microsoft.com/free/?WT.mc_id=A261C142F).
-- [.NET SDK](https://dotnet.microsoft.com/download)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 
 ## Setup
 
@@ -63,7 +65,7 @@ Use the following settings for your app registration:
    dotnet workload install wasm-tools
    ```
 
-For more information, please refer to [.NET WebAssembly build tools](https://learn.microsoft.com/en-us/aspnet/core/blazor/tooling?view=aspnetcore-8.0&pivots=linux#net-webassembly-build-tools)
+For more information, please refer to [.NET WebAssembly build tools](https://learn.microsoft.com/en-us/aspnet/core/blazor/tooling?view=aspnetcore-10.0&pivots=linux#net-webassembly-build-tools)
 
 ## Run the application
 
@@ -79,11 +81,11 @@ For more information, please refer to [.NET WebAssembly build tools](https://lea
 
 1. Once the web app is listening, navigate to `https://localhost:5001` and enter your credentials. We recommend using a private browser window to avoid conflicts with your current session.
 
-![A screenshot of an ASP.NET Core 8.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
+![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
 
 1. Select Logout to sign-out. Once signed out, you can close the browser.
 
-![A screenshot of an ASP.NET Core 8.0 Blazor WebAssembly application indicating the user signed-out and allowing click "Login" to signin again.](./media/app-signedout.png)
+![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application indicating the user signed-out and allowing click "Login" to signin again.](./media/app-signedout.png)
 
 ## About the code
 

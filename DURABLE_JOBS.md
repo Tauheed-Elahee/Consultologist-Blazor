@@ -284,54 +284,38 @@ GET Status Function
   -> returns current durable state as fallback for polling/reconnect
 ```
 
-## .NET 8 vs .NET 10
+## .NET 10 Runtime
 
-The current API project targets `net8.0`, and the repository pins the SDK to `8.0.417` in `global.json`. Moving to .NET 10 would be an intentional project and deployment change, not just a code change.
+The current API project targets `net10.0`, and the repository pins the SDK to `10.0.102` in `global.json`. The Blazor WebAssembly app also targets `net10.0`.
 
-Version comparison:
+Runtime baseline:
 
-| Topic | .NET 8 | .NET 10 |
-|---|---|---|
-| Support track | LTS | LTS |
-| Azure Functions isolated support | Supported | Supported |
-| Azure Functions in-process support | Supported only for in-process .NET 8 | Not supported in-process |
-| Support horizon | Ends November 10, 2026 | Ends November 14, 2028 |
-| Current repo fit | Already targeted | Requires project/global.json/deployment change |
+| Area | Current setting |
+|---|---|
+| Blazor WebAssembly target framework | `net10.0` |
+| Azure Functions target framework | `net10.0` |
+| Azure Functions model | Isolated worker on Azure Functions v4 |
+| SDK pin | `10.0.102` with `rollForward: latestFeature` |
+| GitHub Actions SDK | `10.0.x` |
+| Expected hosting plan | Linux Flex Consumption or another .NET 10-compatible Functions plan |
 
 Durable Functions impact:
 
-| Area | .NET 8 | .NET 10 |
-|---|---|---|
-| Durable orchestration model | Supported in isolated worker | Supported in isolated worker |
-| Activity/orchestrator structure | Same conceptual design | Same conceptual design |
-| Need for Durable package | Yes | Yes |
-| Main benefit | Lowest-risk fit with current repo | Longer support runway and newer ASP.NET Core features |
-
-SSE impact:
-
-| Area | .NET 8 | .NET 10 |
-|---|---|---|
-| SSE support | Manual `text/event-stream` response writing | Cleaner ASP.NET Core SSE primitives are available |
-| Implementation effort | More custom response/flush code | More ergonomic if the Function hosting model supports the needed APIs cleanly |
-| Hosting concern | Still must validate long-lived HTTP behavior | Same validation required, plus hosting-plan compatibility check |
-
-The biggest .NET 10-specific caution is hosting. If the current Azure Function app is Linux Consumption, .NET 10 may require moving to a compatible hosting plan such as Flex Consumption. That should be checked before choosing .NET 10 as part of Phase 3.
-
-Practical recommendation:
-
-| Goal | Recommendation |
+| Area | .NET 10 behavior |
 |---|---|
-| Lowest-risk Phase 3 implementation | Stay on `.NET 8`, add Durable Functions, use polling first |
-| Better live UX prototype | Prototype SSE while keeping polling as fallback |
-| Longer runway and cleaner SSE APIs | Consider `.NET 10`, but verify Azure Functions hosting compatibility first |
-| Durable orchestration only | Do not upgrade just for Durable; Durable does not require .NET 10 |
+| Durable orchestration model | Supported in isolated worker |
+| Activity/orchestrator structure | Same conceptual design |
+| Need for Durable package | Yes |
+| SSE fallback requirement | Keep polling/status endpoints as reconnect and fallback paths |
+
+Hosting remains the main deployment check. The Function App should not be on Linux Consumption for .NET 10 isolated Functions. Confirm the app remains on Linux Flex Consumption, and if the runtime stack needs to be set explicitly, use the supported Linux `linuxFxVersion` value from `az functionapp list-runtimes --os linux`.
 
 ## Recommended Implementation Direction
 
 Default safe path:
 
 ```text
-.NET 8
+.NET 10
   + Durable Functions
   + Durable custom status for progress metadata
   + Durable Entity or Azure Tables for full section outputs
