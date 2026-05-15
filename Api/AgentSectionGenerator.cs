@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Api.Models;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Core;
@@ -27,6 +28,30 @@ public sealed class AgentSectionGenerator
         string consultDraft,
         string sectionName,
         string sectionStandard,
+        CancellationToken cancellationToken)
+    {
+        return await SendPromptAsync(
+            $"section:{sectionName}",
+            BuildUserMessage(consultDraft, sectionName, sectionStandard),
+            cancellationToken);
+    }
+
+    public async Task<string> GenerateSectionAsync(
+        string consultDraft,
+        IReadOnlyList<ClinicalConcept> patientTrajectory,
+        string sectionName,
+        string sectionStandard,
+        CancellationToken cancellationToken)
+    {
+        return await SendPromptAsync(
+            $"section:{sectionName}",
+            BuildTrajectorySectionMessage(consultDraft, patientTrajectory, sectionName, sectionStandard),
+            cancellationToken);
+    }
+
+    public async Task<string> SendPromptAsync(
+        string stage,
+        string userMessage,
         CancellationToken cancellationToken)
     {
         var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
@@ -72,16 +97,16 @@ public sealed class AgentSectionGenerator
             RetryPolicy = new ClientRetryPolicy(maxRetries)
         };
 
-        var userMessage = BuildUserMessage(consultDraft, sectionName, sectionStandard);
         var projectClient = new AIProjectClient(endpointUri, _credential, projectClientOptions);
 
         ResponseResult sdkResponse;
+        Console.Error.WriteLine($"[AgentPrompt] Stage={stage}; PromptLength={userMessage.Length}; Prompt={userMessage}");
 
         try
         {
             _logger.LogInformation(
-                "Sending Foundry agent request. SectionName={SectionName}, AgentName={AgentName}, AgentVersion={AgentVersion}, MessageLength={MessageLength}",
-                sectionName,
+                "Sending Foundry agent request. Stage={Stage}, AgentName={AgentName}, AgentVersion={AgentVersion}, MessageLength={MessageLength}",
+                stage,
                 agentName,
                 agentVersion,
                 userMessage.Length);
@@ -94,8 +119,8 @@ public sealed class AgentSectionGenerator
                 cancellationToken);
 
             _logger.LogInformation(
-                "Foundry agent request completed with version. SectionName={SectionName}, ElapsedMs={ElapsedMs}",
-                sectionName,
+                "Foundry agent request completed with version. Stage={Stage}, ElapsedMs={ElapsedMs}",
+                stage,
                 sdkStopwatch.ElapsedMilliseconds);
         }
         catch (ClientResultException ex) when (ex.Status == 400)
@@ -110,8 +135,8 @@ public sealed class AgentSectionGenerator
                 cancellationToken);
 
             _logger.LogInformation(
-                "Foundry agent request completed without version. SectionName={SectionName}, ElapsedMs={ElapsedMs}",
-                sectionName,
+                "Foundry agent request completed without version. Stage={Stage}, ElapsedMs={ElapsedMs}",
+                stage,
                 retryStopwatch.ElapsedMilliseconds);
         }
 
@@ -119,10 +144,11 @@ public sealed class AgentSectionGenerator
 
         if (string.IsNullOrWhiteSpace(assistantText))
         {
-            _logger.LogError("Foundry response did not contain assistant text. SectionName={SectionName}", sectionName);
+            _logger.LogError("Foundry response did not contain assistant text. Stage={Stage}", stage);
             throw new InvalidOperationException("No assistant response found");
         }
 
+        Console.Error.WriteLine($"[AgentResponse] Stage={stage}; ResponseLength={assistantText.Length}; Response={assistantText}");
         return assistantText;
     }
 
@@ -154,6 +180,63 @@ public sealed class AgentSectionGenerator
             Draft consult note:
             {consultDraft}
             """;
+    }
+
+    private static string BuildTrajectorySectionMessage(
+        string consultDraft,
+        IReadOnlyList<ClinicalConcept> patientTrajectory,
+        string sectionName,
+        string sectionStandard)
+    {
+        return $"""
+            You are writing one section of an oncology consult note.
+
+            Source of truth:
+            Use only the clinical facts contained in the original draft consult note below.
+
+            Organizing context:
+            The structured patient trajectory below has already been reconciled from validated SNOMED concepts. Use it only to organize the section. Do not add typical trajectory details unless they are supported by the original draft consult note or by the validated patient trajectory.
+
+            Section workflow:
+            1. Generate a standard draft for the requested section.
+            2. Update the section with patient information from the original draft.
+            3. Apply the section standard and any section-specific user instructions.
+
+            Missing information rule:
+            Do not invent missing pathology, dates, staging, receptor status, genomic scores, medications, allergies, physical exam findings, or treatment decisions.
+            If a detail is not present in the draft, omit it unless the section would be misleading without it, in which case write "not documented."
+
+            Output rule:
+            Return only the final prose for the requested section. Do not include a heading, JSON, markdown, bullets, or commentary.
+
+            Requested section:
+            {sectionName}
+
+            Section standard and section-specific instructions:
+            {sectionStandard}
+
+            Validated patient trajectory:
+            {FormatConcepts(patientTrajectory)}
+
+            Original draft consult note:
+            {consultDraft}
+            """;
+    }
+
+    private static string FormatConcepts(IReadOnlyList<ClinicalConcept> concepts)
+    {
+        if (concepts.Count == 0)
+        {
+            return "(none)";
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            concepts.Select(concept =>
+            {
+                var support = string.IsNullOrWhiteSpace(concept.Support) ? string.Empty : $" support: {concept.Support}";
+                return $"- {concept.Term} ({concept.Type}) - {concept.Id}; active: {concept.IsActive}; source: {concept.Source}{support}";
+            }));
     }
 
     private static async Task<ResponseResult> CreateAgentResponseAsync(

@@ -166,9 +166,7 @@
   private string? aiProgressNotice;
   private int completedSectionCount;
   private int totalSectionCount;
-  private TaskCompletionSource<bool>? eventStreamCompletionSource;
-  private DotNetObjectReference<Consults>? eventStreamReference;
-  private string? activeEventStreamId;
+  private CancellationTokenSource? activeEventStreamCancellationTokenSource;
   private IReadOnlyList<SectionStandard> activeSectionSnapshots = Array.Empty<SectionStandard>();
 
   protected override async Task OnInitializedAsync()
@@ -288,58 +286,47 @@
     string jobId,
     IReadOnlyList<SectionStandard> sectionSnapshots)
   {
-    eventStreamCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    eventStreamReference = DotNetObjectReference.Create(this);
     activeSectionSnapshots = sectionSnapshots;
+
+    using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+    activeEventStreamCancellationTokenSource = timeoutCancellationTokenSource;
 
     try
     {
-      var eventsUrl = AIService.GetConsultGenerationJobEventsUrl(jobId);
       Logger.LogInformation(
         "Opening consult generation SSE stream. JobId={JobId}, SectionCount={SectionCount}",
         jobId,
         sectionSnapshots.Count);
 
-      activeEventStreamId = await JSRuntime.InvokeAsync<string?>(
-        "consultGenerationJobEvents.start",
-        eventsUrl,
-        eventStreamReference);
-
-      if (string.IsNullOrWhiteSpace(activeEventStreamId))
+      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(jobId, timeoutCancellationTokenSource.Token))
       {
-        Logger.LogWarning(
-          "Consult generation SSE stream was not opened. JobId={JobId}, Reason={Reason}",
-          jobId,
-          "EventSource unavailable or bridge returned no stream id");
+        var eventResult = await HandleConsultGenerationJobEventAsync(jobEvent.EventName, jobEvent.Json);
 
-        return ConsultGenerationStreamResult.FallbackToPolling;
+        if (eventResult == ConsultGenerationEventResult.Completed)
+        {
+          return ConsultGenerationStreamResult.Completed;
+        }
+
+        if (eventResult == ConsultGenerationEventResult.FallbackToPolling)
+        {
+          return ConsultGenerationStreamResult.FallbackToPolling;
+        }
       }
 
-      var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
-      var completedTask = await Task.WhenAny(eventStreamCompletionSource.Task, timeoutTask);
+      Logger.LogWarning(
+        "Consult generation SSE stream ended before done. JobId={JobId}",
+        jobId);
 
-      if (completedTask != eventStreamCompletionSource.Task)
-      {
-        Logger.LogWarning(
-          "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
-          jobId,
-          5);
+      return ConsultGenerationStreamResult.FallbackToPolling;
+    }
+    catch (OperationCanceledException) when (timeoutCancellationTokenSource.IsCancellationRequested)
+    {
+      Logger.LogWarning(
+        "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
+        jobId,
+        5);
 
-        return ConsultGenerationStreamResult.FallbackToPolling;
-      }
-
-      var completed = await eventStreamCompletionSource.Task;
-
-      if (!completed)
-      {
-        Logger.LogWarning(
-          "Consult generation SSE stream ended before done. JobId={JobId}",
-          jobId);
-      }
-
-      return completed
-        ? ConsultGenerationStreamResult.Completed
-        : ConsultGenerationStreamResult.FallbackToPolling;
+      return ConsultGenerationStreamResult.FallbackToPolling;
     }
     catch (Exception ex)
     {
@@ -352,23 +339,12 @@
     }
     finally
     {
-      if (!string.IsNullOrWhiteSpace(activeEventStreamId))
+      if (ReferenceEquals(activeEventStreamCancellationTokenSource, timeoutCancellationTokenSource))
       {
-        try
-        {
-          await JSRuntime.InvokeVoidAsync("consultGenerationJobEvents.close", activeEventStreamId);
-        }
-        catch
-        {
-          // The stream is best-effort; polling remains the fallback if cleanup fails.
-        }
+        activeEventStreamCancellationTokenSource = null;
       }
 
-      activeEventStreamId = null;
       activeSectionSnapshots = Array.Empty<SectionStandard>();
-      eventStreamReference?.Dispose();
-      eventStreamReference = null;
-      eventStreamCompletionSource = null;
     }
   }
 
@@ -399,8 +375,7 @@
     }
   }
 
-  [JSInvokable]
-  public async Task OnConsultGenerationJobEvent(string eventName, string json)
+  private async Task<ConsultGenerationEventResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
   {
     try
     {
@@ -453,6 +428,16 @@
           }
           break;
 
+        case "analysis-started":
+        case "concepts-extracted":
+        case "problem-identified":
+        case "typical-trajectory-created":
+        case "patient-trajectory-created":
+        case "section-generation-started":
+          var stage = JsonSerializer.Deserialize<ConsultGenerationStageEvent>(json, SseJsonOptions);
+          aiProgressNotice = GetConsultGenerationProgressLabel(stage?.Stage ?? eventName);
+          break;
+
         case "done":
           var final = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
           if (final != null)
@@ -468,19 +453,29 @@
             ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
           }
 
-          eventStreamCompletionSource?.TrySetResult(true);
-          break;
+          await InvokeAsync(StateHasChanged);
+          return ConsultGenerationEventResult.Completed;
 
         case "error":
+          var error = JsonSerializer.Deserialize<ConsultGenerationErrorEvent>(json, SseJsonOptions);
+          if (error != null && IsPreprocessingFailureStage(error.Stage))
+          {
+            aiProgressNotice = null;
+            aiRequestError = error.Error;
+            isAiRequestLoading = false;
+            await InvokeAsync(StateHasChanged);
+            return ConsultGenerationEventResult.Completed;
+          }
+
           Logger.LogWarning(
             "Consult generation SSE error event received. PayloadLength={PayloadLength}",
             json.Length);
 
-          eventStreamCompletionSource?.TrySetResult(false);
-          break;
+          return ConsultGenerationEventResult.FallbackToPolling;
       }
 
       await InvokeAsync(StateHasChanged);
+      return ConsultGenerationEventResult.Continue;
     }
     catch
     {
@@ -489,19 +484,8 @@
         eventName,
         json.Length);
 
-      eventStreamCompletionSource?.TrySetResult(false);
+      return ConsultGenerationEventResult.FallbackToPolling;
     }
-  }
-
-  [JSInvokable]
-  public Task OnConsultGenerationJobStreamError(string message)
-  {
-    Logger.LogWarning(
-      "Consult generation SSE browser stream error. Message={Message}",
-      message);
-
-    eventStreamCompletionSource?.TrySetResult(false);
-    return Task.CompletedTask;
   }
 
   private void ApplyConsultGenerationJobResponse(
@@ -513,7 +497,41 @@
     totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
     completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
 
+    if (!string.IsNullOrWhiteSpace(response.AnalysisStatus)
+        && response.Status != "Failed"
+        && !IsPreprocessingFailureStage(response.AnalysisStatus))
+    {
+      aiProgressNotice = GetConsultGenerationProgressLabel(response.AnalysisStatus);
+    }
+
+    if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.AnalysisError))
+    {
+      aiProgressNotice = null;
+      aiRequestError = response.AnalysisError;
+      return;
+    }
+
     UpdateFailedSectionError(sectionSnapshots);
+  }
+
+  private static bool IsPreprocessingFailureStage(string? stage)
+  {
+    return !string.IsNullOrWhiteSpace(stage)
+      && stage.EndsWith("-failed", StringComparison.Ordinal);
+  }
+
+  private static string GetConsultGenerationProgressLabel(string stage)
+  {
+    return stage switch
+    {
+      "analysis-started" => "Analyzing draft",
+      "concepts-extracted" => "Extracting clinical concepts",
+      "problem-identified" => "Identifying primary problem",
+      "typical-trajectory-created" => "Building reference trajectory",
+      "patient-trajectory-created" => "Building patient trajectory",
+      "section-generation-started" => "Generating sections",
+      _ => "Generating consult"
+    };
   }
 
   private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
@@ -617,25 +635,35 @@
     string SectionId,
     string Error);
 
+  private sealed record ConsultGenerationStageEvent(
+    string JobId,
+    string Stage,
+    string Message,
+    int CompletedStageCount,
+    int TotalStageCount);
+
+  private sealed record ConsultGenerationErrorEvent(
+    string JobId,
+    string Error,
+    string? Stage);
+
   private enum ConsultGenerationStreamResult
   {
     Completed,
     FallbackToPolling
   }
 
-  public async ValueTask DisposeAsync()
+  private enum ConsultGenerationEventResult
   {
-    if (!string.IsNullOrWhiteSpace(activeEventStreamId))
-    {
-      try
-      {
-        await JSRuntime.InvokeVoidAsync("consultGenerationJobEvents.close", activeEventStreamId);
-      }
-      catch
-      {
-      }
-    }
+    Continue,
+    Completed,
+    FallbackToPolling
+  }
 
-    eventStreamReference?.Dispose();
+  public ValueTask DisposeAsync()
+  {
+    activeEventStreamCancellationTokenSource?.Cancel();
+    activeEventStreamCancellationTokenSource?.Dispose();
+    return ValueTask.CompletedTask;
   }
 }
