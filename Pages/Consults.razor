@@ -8,6 +8,7 @@
 @inject NavigationManager Navigation
 @inject IAIEndpointService AIService
 @inject IJSRuntime JSRuntime
+@inject ILogger<Consults> Logger
 @attribute [Authorize]
 @implements IAsyncDisposable
 
@@ -261,6 +262,13 @@
 
       if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
       {
+        Logger.LogWarning(
+          "Consult generation falling back to polling. JobId={JobId}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, TotalCount={TotalCount}",
+          job.JobId,
+          generatedSections.Count,
+          failedSectionErrors.Count,
+          totalSectionCount);
+
         aiProgressNotice = "Live updates paused; checking status periodically.";
         await InvokeAsync(StateHasChanged);
         await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
@@ -287,6 +295,11 @@
     try
     {
       var eventsUrl = AIService.GetConsultGenerationJobEventsUrl(jobId);
+      Logger.LogInformation(
+        "Opening consult generation SSE stream. JobId={JobId}, SectionCount={SectionCount}",
+        jobId,
+        sectionSnapshots.Count);
+
       activeEventStreamId = await JSRuntime.InvokeAsync<string?>(
         "consultGenerationJobEvents.start",
         eventsUrl,
@@ -294,6 +307,11 @@
 
       if (string.IsNullOrWhiteSpace(activeEventStreamId))
       {
+        Logger.LogWarning(
+          "Consult generation SSE stream was not opened. JobId={JobId}, Reason={Reason}",
+          jobId,
+          "EventSource unavailable or bridge returned no stream id");
+
         return ConsultGenerationStreamResult.FallbackToPolling;
       }
 
@@ -302,15 +320,34 @@
 
       if (completedTask != eventStreamCompletionSource.Task)
       {
+        Logger.LogWarning(
+          "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
+          jobId,
+          5);
+
         return ConsultGenerationStreamResult.FallbackToPolling;
       }
 
-      return await eventStreamCompletionSource.Task
+      var completed = await eventStreamCompletionSource.Task;
+
+      if (!completed)
+      {
+        Logger.LogWarning(
+          "Consult generation SSE stream ended before done. JobId={JobId}",
+          jobId);
+      }
+
+      return completed
         ? ConsultGenerationStreamResult.Completed
         : ConsultGenerationStreamResult.FallbackToPolling;
     }
-    catch
+    catch (Exception ex)
     {
+      Logger.LogWarning(
+        ex,
+        "Consult generation SSE stream setup failed. JobId={JobId}",
+        jobId);
+
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
     finally
@@ -373,6 +410,14 @@
           var snapshot = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
           if (snapshot != null)
           {
+            Logger.LogInformation(
+              "Consult generation SSE snapshot received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+              snapshot.JobId,
+              snapshot.Status,
+              snapshot.TotalSectionCount,
+              snapshot.CompletedSectionCount,
+              snapshot.FailedSectionCount);
+
             ApplyConsultGenerationJobResponse(snapshot, GetActiveSectionSnapshots());
           }
           break;
@@ -412,6 +457,14 @@
           var final = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
           if (final != null)
           {
+            Logger.LogInformation(
+              "Consult generation SSE done received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+              final.JobId,
+              final.Status,
+              final.TotalSectionCount,
+              final.CompletedSectionCount,
+              final.FailedSectionCount);
+
             ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
           }
 
@@ -419,6 +472,10 @@
           break;
 
         case "error":
+          Logger.LogWarning(
+            "Consult generation SSE error event received. PayloadLength={PayloadLength}",
+            json.Length);
+
           eventStreamCompletionSource?.TrySetResult(false);
           break;
       }
@@ -427,6 +484,11 @@
     }
     catch
     {
+      Logger.LogWarning(
+        "Consult generation SSE event handling failed. EventName={EventName}, PayloadLength={PayloadLength}",
+        eventName,
+        json.Length);
+
       eventStreamCompletionSource?.TrySetResult(false);
     }
   }
@@ -434,6 +496,10 @@
   [JSInvokable]
   public Task OnConsultGenerationJobStreamError(string message)
   {
+    Logger.LogWarning(
+      "Consult generation SSE browser stream error. Message={Message}",
+      message);
+
     eventStreamCompletionSource?.TrySetResult(false);
     return Task.CompletedTask;
   }

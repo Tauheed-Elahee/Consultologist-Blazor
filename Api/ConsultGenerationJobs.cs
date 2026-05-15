@@ -229,10 +229,20 @@ public sealed class ConsultGenerationJobs
 
         try
         {
+            _logger.LogInformation(
+                "Consult generation SSE stream connected. InvocationId={InvocationId}, JobId={JobId}",
+                req.FunctionContext.InvocationId,
+                jobId);
+
             var initialResponse = await WaitForEntityBackedJobResponseAsync(client, jobId, cancellationToken);
 
             if (initialResponse == null)
             {
+                _logger.LogWarning(
+                    "Consult generation SSE entity state was not ready before timeout. InvocationId={InvocationId}, JobId={JobId}",
+                    req.FunctionContext.InvocationId,
+                    jobId);
+
                 await WriteSseEventAsync(
                     response,
                     "error",
@@ -244,12 +254,29 @@ public sealed class ConsultGenerationJobs
 
             await WriteSseEventAsync(response, "snapshot", initialResponse, cancellationToken);
 
+            _logger.LogInformation(
+                "Consult generation SSE snapshot sent. InvocationId={InvocationId}, JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                req.FunctionContext.InvocationId,
+                jobId,
+                initialResponse.Status,
+                initialResponse.TotalSectionCount,
+                initialResponse.CompletedSectionCount,
+                initialResponse.FailedSectionCount);
+
             var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
             var seenFailedSections = initialResponse.FailedSections.Keys.ToHashSet(StringComparer.Ordinal);
 
             if (IsTerminalJobStatus(initialResponse.Status))
             {
                 await WriteSseEventAsync(response, "done", initialResponse, cancellationToken);
+                _logger.LogInformation(
+                    "Consult generation SSE done sent from initial terminal snapshot. InvocationId={InvocationId}, JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                    req.FunctionContext.InvocationId,
+                    jobId,
+                    initialResponse.Status,
+                    initialResponse.TotalSectionCount,
+                    initialResponse.CompletedSectionCount,
+                    initialResponse.FailedSectionCount);
                 return response;
             }
 
@@ -296,6 +323,14 @@ public sealed class ConsultGenerationJobs
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
                     await WriteSseEventAsync(response, "done", latestResponse, cancellationToken);
+                    _logger.LogInformation(
+                        "Consult generation SSE done sent. InvocationId={InvocationId}, JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                        req.FunctionContext.InvocationId,
+                        jobId,
+                        latestResponse.Status,
+                        latestResponse.TotalSectionCount,
+                        latestResponse.CompletedSectionCount,
+                        latestResponse.FailedSectionCount);
                     return response;
                 }
 
@@ -310,6 +345,12 @@ public sealed class ConsultGenerationJobs
                     nextHeartbeatAt = DateTimeOffset.UtcNow + SseHeartbeatInterval;
                 }
             }
+
+            _logger.LogWarning(
+                "Consult generation SSE stream timeout reached before terminal status. InvocationId={InvocationId}, JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
+                req.FunctionContext.InvocationId,
+                jobId,
+                SseStreamTimeout.TotalMinutes);
         }
         catch (OperationCanceledException)
         {
