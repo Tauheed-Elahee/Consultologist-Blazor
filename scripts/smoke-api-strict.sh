@@ -195,6 +195,16 @@ assert_header_contains consult_generation_jobs_invalid Content-Type "application
 assert_json consult_generation_jobs_invalid 'payload.get("error") == "ConsultDraft is required."' "ConsultGenerationJobs invalid response should include exact validation error"
 pass "ConsultGenerationJobs invalid POST returns exact 400 validation JSON"
 
+request consult_generation_jobs_invalid_section \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"ConsultDraft":"Patient has fatigue.","Sections":[{"Id":"","Name":"History","Standard":""}]}' \
+  "$BASE_URL/api/ConsultGenerationJobs"
+assert_status consult_generation_jobs_invalid_section 400
+assert_header_contains consult_generation_jobs_invalid_section Content-Type "application/json"
+assert_json consult_generation_jobs_invalid_section 'payload.get("error") == "Each section requires Id and Name."' "ConsultGenerationJobs invalid section response should allow blank Standard but require Id and Name"
+pass "ConsultGenerationJobs invalid section validation allows blank Standard"
+
 request consult_generation_jobs_not_found "$BASE_URL/api/ConsultGenerationJobs/not-found"
 assert_status consult_generation_jobs_not_found 404
 assert_header_contains consult_generation_jobs_not_found Content-Type "application/json"

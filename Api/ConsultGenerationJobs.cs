@@ -462,10 +462,9 @@ public sealed class ConsultGenerationJobs
         foreach (var section in request.Sections)
         {
             if (string.IsNullOrWhiteSpace(section.Id)
-                || string.IsNullOrWhiteSpace(section.Name)
-                || string.IsNullOrWhiteSpace(section.Standard))
+                || string.IsNullOrWhiteSpace(section.Name))
             {
-                return "Each section requires Id, Name, and Standard.";
+                return "Each section requires Id and Name.";
             }
         }
 

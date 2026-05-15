@@ -319,6 +319,10 @@ public sealed class AgentSectionGenerator
         string sectionName,
         string sectionStandard)
     {
+        var browserInstructions = string.IsNullOrWhiteSpace(sectionStandard)
+            ? "No changes. Preserve the patient-updated draft's clinical content and produce polished final prose for this section."
+            : sectionStandard;
+
         return $"""
             You are applying section-specific writing standards and user instructions to one oncology consult note section.
 
@@ -338,7 +342,7 @@ public sealed class AgentSectionGenerator
             {patientSectionDraft}
 
             Section standard and section-specific instructions:
-            {sectionStandard}
+            {browserInstructions}
             """;
     }
 
