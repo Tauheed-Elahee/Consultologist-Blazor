@@ -36,7 +36,8 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
-    IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null);
+    IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null,
+    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null);
 
 public record SectionGenerationResult(
     string SectionId,
@@ -58,3 +59,10 @@ public sealed record ConsultGenerationValidationWarning(
     string Stage,
     int DroppedLineCount,
     string Reason);
+
+public sealed record ConsultGenerationSectionProseProgress(
+    string SectionId,
+    string SectionName,
+    string? ProseStepStatus,
+    int CompletedProseStepCount,
+    int TotalProseStepCount);

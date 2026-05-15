@@ -291,6 +291,7 @@ public sealed class ConsultGenerationJobs
 
             var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
             var seenFailedSections = initialResponse.FailedSections.Keys.ToHashSet(StringComparer.Ordinal);
+            var highestEmittedSectionProseStepCounts = new Dictionary<string, int>(StringComparer.Ordinal);
             var highestEmittedAnalysisStageCount = 0;
             string? seenAnalysisFailureStatus = null;
             var analysisEmitResult = await WriteAnalysisEventsAsync(
@@ -301,6 +302,11 @@ public sealed class ConsultGenerationJobs
                 cancellationToken);
             highestEmittedAnalysisStageCount = analysisEmitResult.HighestEmittedStageCount;
             seenAnalysisFailureStatus = analysisEmitResult.SeenFailureStatus;
+            await WriteSectionProseStepEventsAsync(
+                writer,
+                initialResponse,
+                highestEmittedSectionProseStepCounts,
+                cancellationToken);
 
             if (IsTerminalJobStatus(initialResponse.Status))
             {
@@ -330,6 +336,12 @@ public sealed class ConsultGenerationJobs
                     await writer.WriteAsync(CreateSseItem("error", new ConsultGenerationJobStreamError(jobId, "Consult generation job was not found.")), cancellationToken);
                     return;
                 }
+
+                await WriteSectionProseStepEventsAsync(
+                    writer,
+                    latestResponse,
+                    highestEmittedSectionProseStepCounts,
+                    cancellationToken);
 
                 foreach (var generatedSection in latestResponse.GeneratedSections)
                 {
@@ -693,6 +705,51 @@ public sealed class ConsultGenerationJobs
         return status.EndsWith("-failed", StringComparison.Ordinal);
     }
 
+    private static async Task WriteSectionProseStepEventsAsync(
+        ChannelWriter<SseItem<string>> writer,
+        ConsultGenerationJobResponse response,
+        Dictionary<string, int> highestEmittedSectionProseStepCounts,
+        CancellationToken cancellationToken)
+    {
+        if (response.SectionProseProgress == null)
+        {
+            return;
+        }
+
+        foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
+        {
+            highestEmittedSectionProseStepCounts.TryGetValue(progress.SectionId, out var highestEmittedStepCount);
+            var completedStepCount = Math.Clamp(
+                progress.CompletedProseStepCount,
+                0,
+                ConsultGenerationSectionProseSteps.TotalStepCount);
+
+            for (var stepCount = highestEmittedStepCount + 1; stepCount <= completedStepCount; stepCount++)
+            {
+                var step = GetSectionProseStepByCompletedCount(stepCount);
+
+                if (step == null)
+                {
+                    continue;
+                }
+
+                await writer.WriteAsync(CreateSseItem(
+                    step,
+                    new ConsultGenerationSectionProseStepEvent(
+                        response.JobId,
+                        progress.SectionId,
+                        progress.SectionName,
+                        step,
+                        GetSectionProseStepMessage(step),
+                        stepCount,
+                        progress.TotalProseStepCount)),
+                    cancellationToken);
+
+                highestEmittedSectionProseStepCounts[progress.SectionId] = stepCount;
+            }
+        }
+    }
+
     private static string GetAnalysisStageMessage(string stage)
     {
         return stage switch
@@ -718,6 +775,28 @@ public sealed class ConsultGenerationJobs
             5 => ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated,
             6 => ConsultGenerationAnalysisStatuses.SectionGenerationStarted,
             _ => null
+        };
+    }
+
+    private static string? GetSectionProseStepByCompletedCount(int completedStepCount)
+    {
+        return completedStepCount switch
+        {
+            1 => ConsultGenerationSectionProseSteps.StandardDraftCreated,
+            2 => ConsultGenerationSectionProseSteps.PatientDraftCreated,
+            3 => ConsultGenerationSectionProseSteps.InstructionsApplied,
+            _ => null
+        };
+    }
+
+    private static string GetSectionProseStepMessage(string step)
+    {
+        return step switch
+        {
+            ConsultGenerationSectionProseSteps.StandardDraftCreated => "Standard section draft created.",
+            ConsultGenerationSectionProseSteps.PatientDraftCreated => "Patient information applied to section draft.",
+            ConsultGenerationSectionProseSteps.InstructionsApplied => "Section instructions applied.",
+            _ => "Section prose step completed."
         };
     }
 
@@ -764,6 +843,15 @@ public sealed record ConsultGenerationJobStageEvent(
     string Message,
     int CompletedStageCount,
     int TotalStageCount);
+
+public sealed record ConsultGenerationSectionProseStepEvent(
+    string JobId,
+    string SectionId,
+    string SectionName,
+    string Step,
+    string Message,
+    int CompletedStepCount,
+    int TotalStepCount);
 
 public sealed record AnalysisEventEmitResult(
     int HighestEmittedStageCount,
@@ -928,10 +1016,12 @@ public sealed class ConsultGenerationOrchestrator
 
         foreach (var section in request.Sections)
         {
-            var activityInput = new ConsultGenerationActivityInput(request.ConsultDraft, patientTrajectory.Concepts, section);
-            var task = context.CallActivityAsync<SectionGenerationResult>(
-                nameof(GenerateConsultSectionActivity),
-                activityInput);
+            var task = GenerateSectionPipelineAsync(
+                context,
+                entityId,
+                request.ConsultDraft,
+                patientTrajectory.Concepts,
+                section);
 
             pendingTasks.Add(task);
             taskSections[task] = section;
@@ -1022,6 +1112,67 @@ public sealed class ConsultGenerationOrchestrator
             analysisError
         });
     }
+
+    private static async Task<SectionGenerationResult> GenerateSectionPipelineAsync(
+        TaskOrchestrationContext context,
+        EntityInstanceId entityId,
+        string consultDraft,
+        IReadOnlyList<ClinicalConcept> patientTrajectoryConcepts,
+        ConsultGenerationSectionRequest section)
+    {
+        var input = new ConsultGenerationActivityInput(consultDraft, patientTrajectoryConcepts, section);
+        var stepName = ConsultGenerationSectionProseSteps.StandardDraftCreated;
+
+        try
+        {
+            var standardDraft = await context.CallActivityAsync<string>(
+                ConsultGenerationActivityNames.GenerateStandardSectionDraft,
+                input);
+
+            await context.Entities.CallEntityAsync(
+                entityId,
+                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
+                new ConsultGenerationSectionProseStepUpdate(
+                    section.Id,
+                    section.Name,
+                    ConsultGenerationSectionProseSteps.StandardDraftCreated,
+                    1));
+
+            stepName = ConsultGenerationSectionProseSteps.PatientDraftCreated;
+            var patientDraft = await context.CallActivityAsync<string>(
+                ConsultGenerationActivityNames.UpdateSectionWithPatientInformation,
+                input with { SectionDraft = standardDraft });
+
+            await context.Entities.CallEntityAsync(
+                entityId,
+                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
+                new ConsultGenerationSectionProseStepUpdate(
+                    section.Id,
+                    section.Name,
+                    ConsultGenerationSectionProseSteps.PatientDraftCreated,
+                    2));
+
+            stepName = ConsultGenerationSectionProseSteps.InstructionsApplied;
+            var finalProse = await context.CallActivityAsync<string>(
+                ConsultGenerationActivityNames.ApplySectionInstructions,
+                input with { SectionDraft = patientDraft });
+
+            await context.Entities.CallEntityAsync(
+                entityId,
+                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
+                new ConsultGenerationSectionProseStepUpdate(
+                    section.Id,
+                    section.Name,
+                    ConsultGenerationSectionProseSteps.InstructionsApplied,
+                    3));
+
+            return new SectionGenerationResult(section.Id, section.Name, true, finalProse.Trim(), null);
+        }
+        catch (Exception ex)
+        {
+            return new SectionGenerationResult(section.Id, section.Name, false, null, $"{stepName} failed: {ex.Message}");
+        }
+    }
 }
 
 public sealed class GenerateConsultSectionActivity
@@ -1037,8 +1188,8 @@ public sealed class GenerateConsultSectionActivity
         _sectionGenerator = sectionGenerator;
     }
 
-    [Function(nameof(GenerateConsultSectionActivity))]
-    public async Task<SectionGenerationResult> RunAsync(
+    [Function(ConsultGenerationActivityNames.GenerateStandardSectionDraft)]
+    public async Task<string> GenerateStandardSectionDraftAsync(
         [ActivityTrigger] ConsultGenerationActivityInput input,
         CancellationToken cancellationToken)
     {
@@ -1048,13 +1199,105 @@ public sealed class GenerateConsultSectionActivity
         try
         {
             _logger.LogInformation(
-                "Starting durable section generation. SectionId={SectionId}, SectionName={SectionName}",
+                "Starting standard section draft generation. SectionId={SectionId}, SectionName={SectionName}",
                 section.Id,
                 section.Name);
 
-            var prose = await _sectionGenerator.GenerateSectionAsync(
-                input.ConsultDraft,
+            var prose = await _sectionGenerator.GenerateStandardSectionDraftAsync(
                 input.PatientTrajectoryConcepts,
+                section.Name,
+                cancellationToken);
+
+            var trimmedProse = prose.Trim();
+
+            _logger.LogInformation(
+                "Standard section draft generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                trimmedProse.Length,
+                stopwatch.ElapsedMilliseconds);
+
+            return trimmedProse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Standard section draft generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+    }
+
+    [Function(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation)]
+    public async Task<string> UpdateSectionWithPatientInformationAsync(
+        [ActivityTrigger] ConsultGenerationActivityInput input,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var section = input.Section;
+
+        try
+        {
+            _logger.LogInformation(
+                "Starting patient section draft generation. SectionId={SectionId}, SectionName={SectionName}",
+                section.Id,
+                section.Name);
+
+            var prose = await _sectionGenerator.UpdateSectionWithPatientInformationAsync(
+                input.SectionDraft ?? string.Empty,
+                input.ConsultDraft,
+                section.Name,
+                cancellationToken);
+
+            var trimmedProse = prose.Trim();
+
+            _logger.LogInformation(
+                "Patient section draft generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                trimmedProse.Length,
+                stopwatch.ElapsedMilliseconds);
+
+            return trimmedProse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Patient section draft generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                section.Id,
+                section.Name,
+                ex.GetType().FullName,
+                ex.Message,
+                stopwatch.ElapsedMilliseconds);
+
+            throw;
+        }
+    }
+
+    [Function(ConsultGenerationActivityNames.ApplySectionInstructions)]
+    public async Task<string> ApplySectionInstructionsAsync(
+        [ActivityTrigger] ConsultGenerationActivityInput input,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var section = input.Section;
+
+        try
+        {
+            _logger.LogInformation(
+                "Starting section instruction application. SectionId={SectionId}, SectionName={SectionName}",
+                section.Id,
+                section.Name);
+
+            var prose = await _sectionGenerator.ApplySectionInstructionsAsync(
+                input.SectionDraft ?? string.Empty,
                 section.Name,
                 section.Standard,
                 cancellationToken);
@@ -1062,26 +1305,26 @@ public sealed class GenerateConsultSectionActivity
             var trimmedProse = prose.Trim();
 
             _logger.LogInformation(
-                "Durable section generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                "Section instruction application completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
                 section.Id,
                 section.Name,
                 trimmedProse.Length,
                 stopwatch.ElapsedMilliseconds);
 
-            return new SectionGenerationResult(section.Id, section.Name, true, trimmedProse, null);
+            return trimmedProse;
         }
         catch (Exception ex)
         {
             _logger.LogError(
                 ex,
-                "Durable section generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                "Section instruction application failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
                 section.Id,
                 section.Name,
                 ex.GetType().FullName,
                 ex.Message,
                 stopwatch.ElapsedMilliseconds);
 
-            return new SectionGenerationResult(section.Id, section.Name, false, null, ex.Message);
+            throw;
         }
     }
 }
@@ -1455,6 +1698,16 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State = state;
     }
 
+    public void MarkSectionProseStep(ConsultGenerationSectionProseStepUpdate input)
+    {
+        var state = EnsureState();
+        var section = state.GetOrAddSection(input.SectionId, input.SectionName);
+        section.ProseStepStatus = input.ProseStepStatus;
+        section.CompletedProseStepCount = input.CompletedProseStepCount;
+        section.TotalProseStepCount = ConsultGenerationSectionProseSteps.TotalStepCount;
+        State = state;
+    }
+
     public void FinalizeJob(ConsultGenerationJobFinalize input)
     {
         var state = EnsureState();
@@ -1512,13 +1765,20 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 public sealed record ConsultGenerationActivityInput(
     string ConsultDraft,
     IReadOnlyList<ClinicalConcept> PatientTrajectoryConcepts,
-    ConsultGenerationSectionRequest Section);
+    ConsultGenerationSectionRequest Section,
+    string? SectionDraft = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
     IReadOnlyList<ConsultGenerationSectionRequest> Sections);
 
 public sealed record ConsultGenerationJobFinalize(string Status);
+
+public sealed record ConsultGenerationSectionProseStepUpdate(
+    string SectionId,
+    string SectionName,
+    string ProseStepStatus,
+    int CompletedProseStepCount);
 
 public sealed record ConsultGenerationAnalysisUpdate(
     string AnalysisStatus,
@@ -1630,6 +1890,16 @@ public sealed class ConsultGenerationJobState
             .Where(section => section.Status == ConsultGenerationSectionStatuses.Failed)
             .ToDictionary(section => section.Id, section => section.Error ?? "Section generation failed.");
 
+        var sectionProseProgress = Sections.Values
+            .ToDictionary(
+                section => section.Id,
+                section => new ConsultGenerationSectionProseProgress(
+                    section.Id,
+                    section.Name,
+                    section.ProseStepStatus,
+                    section.CompletedProseStepCount,
+                    section.TotalProseStepCount));
+
         return new ConsultGenerationJobResponse(
             JobId,
             Status,
@@ -1648,7 +1918,8 @@ public sealed class ConsultGenerationJobState
             PatientTrajectoryConcepts,
             CompletedStageCount,
             TotalStageCount,
-            ValidationWarnings);
+            ValidationWarnings,
+            sectionProseProgress);
     }
 }
 
@@ -1660,6 +1931,9 @@ public sealed class ConsultGenerationSectionState
     public string? GeneratedText { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
+    public string? ProseStepStatus { get; set; }
+    public int CompletedProseStepCount { get; set; }
+    public int TotalProseStepCount { get; set; } = ConsultGenerationSectionProseSteps.TotalStepCount;
 }
 
 public static class ConsultGenerationJobStatuses
@@ -1668,6 +1942,13 @@ public static class ConsultGenerationJobStatuses
     public const string Running = "Running";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
+}
+
+public static class ConsultGenerationActivityNames
+{
+    public const string GenerateStandardSectionDraft = "generate-standard-section-draft";
+    public const string UpdateSectionWithPatientInformation = "update-section-with-patient-information";
+    public const string ApplySectionInstructions = "apply-section-instructions";
 }
 
 public static class ConsultGenerationAnalysisStatuses
@@ -1683,6 +1964,14 @@ public static class ConsultGenerationAnalysisStatuses
     public const string ProblemIdentificationFailed = "problem-identification-failed";
     public const string TypicalTrajectoryFailed = "typical-trajectory-failed";
     public const string PatientTrajectoryFailed = "patient-trajectory-failed";
+}
+
+public static class ConsultGenerationSectionProseSteps
+{
+    public const int TotalStepCount = 3;
+    public const string StandardDraftCreated = "section-standard-draft-created";
+    public const string PatientDraftCreated = "section-patient-draft-created";
+    public const string InstructionsApplied = "section-instructions-applied";
 }
 
 public static class ConsultGenerationSectionStatuses

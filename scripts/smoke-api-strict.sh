@@ -297,6 +297,8 @@ PY
     assert_json durable_job_status 'isinstance(payload.get("ProblemContext"), list) and len(payload.get("ProblemContext")) > 0' "Durable completed job should persist problem context"
     assert_json durable_job_status 'isinstance(payload.get("TypicalTrajectoryConcepts"), list) and len(payload.get("TypicalTrajectoryConcepts")) > 0' "Durable completed job should persist typical trajectory concepts"
     assert_json durable_job_status 'isinstance(payload.get("PatientTrajectoryConcepts"), list) and len(payload.get("PatientTrajectoryConcepts")) > 0' "Durable completed job should persist patient trajectory concepts"
+    assert_json durable_job_status 'payload.get("SectionProseProgress", {}).get("history", {}).get("CompletedProseStepCount") == 3' "Durable completed job should persist completed prose step count"
+    assert_json durable_job_status 'payload.get("SectionProseProgress", {}).get("history", {}).get("TotalProseStepCount") == 3' "Durable completed job should persist total prose step count"
   else
     assert_json durable_job_status 'isinstance(payload.get("AnalysisError"), str) and len(payload.get("AnalysisError")) > 0' "Durable preprocessing failure should expose analysis error"
   fi
@@ -411,6 +413,39 @@ for event_name, data in events:
         stage = payload.get("Stage")
         if stage is not None and not stage.endswith("-failed"):
             raise SystemExit(f"Durable SSE preprocessing error stage should be a failed kebab-case stage; payload={payload!r}")
+
+section_step_names = {
+    "section-standard-draft-created",
+    "section-patient-draft-created",
+    "section-instructions-applied",
+}
+section_step_events = [(event_name, json.loads(data)) for event_name, data in events if event_name in section_step_names]
+section_step_order = [event_name for event_name, _ in section_step_events]
+expected_section_step_order = [
+    "section-standard-draft-created",
+    "section-patient-draft-created",
+    "section-instructions-applied",
+]
+if section_step_order != expected_section_step_order:
+    raise SystemExit(f"Durable SSE stream should emit all section prose steps exactly once in order; actual={section_step_order!r}")
+
+section_completed_index = next((index for index, (event_name, _) in enumerate(events) if event_name == "section-completed"), None)
+if section_completed_index is None:
+    raise SystemExit("Durable SSE stream did not include section-completed")
+
+last_section_step_index = max(index for index, (event_name, _) in enumerate(events) if event_name in section_step_names)
+if last_section_step_index > section_completed_index:
+    raise SystemExit("Durable SSE section prose steps should be emitted before section-completed")
+
+for expected_count, (event_name, payload) in enumerate(section_step_events, start=1):
+    if payload.get("Step") != event_name:
+        raise SystemExit(f"Durable SSE section prose step payload should match event name; event={event_name!r}; payload={payload!r}")
+    if payload.get("SectionId") != "history":
+        raise SystemExit(f"Durable SSE section prose step should identify the section; payload={payload!r}")
+    if payload.get("CompletedStepCount") != expected_count:
+        raise SystemExit(f"Durable SSE section prose step should increment CompletedStepCount; payload={payload!r}")
+    if payload.get("TotalStepCount") != 3:
+        raise SystemExit(f"Durable SSE section prose step should include TotalStepCount=3; payload={payload!r}")
 PY
   [[ "$sse_body" == *"event: section-completed"* || "$sse_body" == *"event: section-failed"* ]] || fail "Durable SSE stream did not include a section event; body=$sse_body"
   [[ "$sse_body" == *"event: done"* ]] || fail "Durable SSE stream did not include done; body=$sse_body"

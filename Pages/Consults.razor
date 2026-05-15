@@ -439,6 +439,16 @@
           aiProgressNotice = GetConsultGenerationProgressLabel(stage?.Stage ?? eventName);
           break;
 
+        case "section-standard-draft-created":
+        case "section-patient-draft-created":
+        case "section-instructions-applied":
+          var sectionStep = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(json, SseJsonOptions);
+          if (sectionStep != null)
+          {
+            aiProgressNotice = $"{GetSectionProseStepProgressLabel(sectionStep.Step)}: {sectionStep.SectionName}";
+          }
+          break;
+
         case "done":
           var final = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
           if (final != null)
@@ -532,6 +542,17 @@
       "patient-trajectory-created" => "Building patient trajectory",
       "section-generation-started" => "Generating sections",
       _ => "Generating consult"
+    };
+  }
+
+  private static string GetSectionProseStepProgressLabel(string step)
+  {
+    return step switch
+    {
+      "section-standard-draft-created" => "Drafting section",
+      "section-patient-draft-created" => "Applying patient information",
+      "section-instructions-applied" => "Applying section instructions",
+      _ => "Generating section"
     };
   }
 
@@ -642,6 +663,15 @@
     string Message,
     int CompletedStageCount,
     int TotalStageCount);
+
+  private sealed record ConsultGenerationSectionProseStepEvent(
+    string JobId,
+    string SectionId,
+    string SectionName,
+    string Step,
+    string Message,
+    int CompletedStepCount,
+    int TotalStepCount);
 
   private sealed record ConsultGenerationErrorEvent(
     string JobId,

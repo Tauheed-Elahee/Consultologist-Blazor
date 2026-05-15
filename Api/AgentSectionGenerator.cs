@@ -49,6 +49,41 @@ public sealed class AgentSectionGenerator
             cancellationToken);
     }
 
+    public async Task<string> GenerateStandardSectionDraftAsync(
+        IReadOnlyList<ClinicalConcept> patientTrajectory,
+        string sectionName,
+        CancellationToken cancellationToken)
+    {
+        return await SendPromptAsync(
+            $"section-standard-draft:{sectionName}",
+            BuildStandardSectionDraftMessage(patientTrajectory, sectionName),
+            cancellationToken);
+    }
+
+    public async Task<string> UpdateSectionWithPatientInformationAsync(
+        string standardSectionDraft,
+        string consultDraft,
+        string sectionName,
+        CancellationToken cancellationToken)
+    {
+        return await SendPromptAsync(
+            $"section-patient-draft:{sectionName}",
+            BuildPatientSectionDraftMessage(standardSectionDraft, consultDraft, sectionName),
+            cancellationToken);
+    }
+
+    public async Task<string> ApplySectionInstructionsAsync(
+        string patientSectionDraft,
+        string sectionName,
+        string sectionStandard,
+        CancellationToken cancellationToken)
+    {
+        return await SendPromptAsync(
+            $"section-instructions-applied:{sectionName}",
+            BuildSectionInstructionsMessage(patientSectionDraft, sectionName, sectionStandard),
+            cancellationToken);
+    }
+
     public async Task<string> SendPromptAsync(
         string stage,
         string userMessage,
@@ -220,6 +255,90 @@ public sealed class AgentSectionGenerator
 
             Original draft consult note:
             {consultDraft}
+            """;
+    }
+
+    private static string BuildStandardSectionDraftMessage(
+        IReadOnlyList<ClinicalConcept> patientTrajectory,
+        string sectionName)
+    {
+        return $"""
+            You are writing one standard section of an oncology consult note.
+
+            Task:
+            Write a standard draft for the requested section using the validated patient trajectory as organizing context.
+
+            Guardrail:
+            Do not add typical trajectory details unless they are present in the validated patient trajectory. This is a draft to be reconciled with the original consult note in the next step.
+
+            Output rule:
+            Return only prose for the requested section. Do not include a heading, JSON, markdown, bullets, or commentary.
+
+            Requested section:
+            {sectionName}
+
+            Validated patient trajectory:
+            {FormatConcepts(patientTrajectory)}
+            """;
+    }
+
+    private static string BuildPatientSectionDraftMessage(
+        string standardSectionDraft,
+        string consultDraft,
+        string sectionName)
+    {
+        return $"""
+            You are updating one oncology consult note section with patient information.
+
+            Source of truth:
+            Use only the clinical facts contained in the original draft consult note below.
+
+            Task:
+            Rewrite the standard section draft so it reflects the patient information in the original draft consult note.
+
+            Missing information rule:
+            Do not invent missing pathology, dates, staging, receptor status, genomic scores, medications, allergies, physical exam findings, or treatment decisions.
+            If a detail is not present in the original draft, omit it unless the section would be misleading without it, in which case write "not documented."
+
+            Output rule:
+            Return only prose for the requested section. Do not include a heading, JSON, markdown, bullets, or commentary.
+
+            Requested section:
+            {sectionName}
+
+            Standard section draft:
+            {standardSectionDraft}
+
+            Original draft consult note:
+            {consultDraft}
+            """;
+    }
+
+    private static string BuildSectionInstructionsMessage(
+        string patientSectionDraft,
+        string sectionName,
+        string sectionStandard)
+    {
+        return $"""
+            You are applying section-specific writing standards and user instructions to one oncology consult note section.
+
+            Task:
+            Revise the patient-updated section draft to follow the section standard and section-specific user instructions.
+
+            Guardrail:
+            Preserve the clinical facts already present in the patient-updated draft. Do not add new clinical facts from the standard or instructions.
+
+            Output rule:
+            Return only final prose for the requested section. Do not include a heading, JSON, markdown, bullets, or commentary.
+
+            Requested section:
+            {sectionName}
+
+            Patient-updated section draft:
+            {patientSectionDraft}
+
+            Section standard and section-specific instructions:
+            {sectionStandard}
             """;
     }
 

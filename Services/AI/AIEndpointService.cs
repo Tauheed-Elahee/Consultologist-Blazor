@@ -408,4 +408,12 @@ public record ConsultGenerationJobResponse(
     string? AnalysisStatus = null,
     string? AnalysisError = null,
     int? CompletedStageCount = null,
-    int? TotalStageCount = null);
+    int? TotalStageCount = null,
+    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null);
+
+public record ConsultGenerationSectionProseProgress(
+    string SectionId,
+    string SectionName,
+    string? ProseStepStatus,
+    int CompletedProseStepCount,
+    int TotalProseStepCount);
