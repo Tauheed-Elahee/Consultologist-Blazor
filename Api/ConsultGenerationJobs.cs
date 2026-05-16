@@ -21,8 +21,8 @@ public sealed class ConsultGenerationJobs
     private static readonly TimeSpan SsePollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan SseEntityInitializationPollInterval = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan SseEntityInitializationTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SseInitialJobResponsePollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan SseInitialJobResponseTimeout = TimeSpan.FromSeconds(10);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -263,12 +263,12 @@ public sealed class ConsultGenerationJobs
                 "Consult generation SSE stream connected. JobId={JobId}",
                 jobId);
 
-            var initialResponse = await WaitForEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+            var initialResponse = await WaitForInitialJobResponseAsync(client, jobId, cancellationToken);
 
             if (initialResponse == null)
             {
                 _logger.LogWarning(
-                    "Consult generation SSE entity state was not ready before timeout. JobId={JobId}",
+                    "Consult generation SSE job state was not ready before timeout. JobId={JobId}",
                     jobId);
 
                 await writer.WriteAsync(CreateSseItem(
@@ -519,26 +519,26 @@ public sealed class ConsultGenerationJobs
         return await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken) != null;
     }
 
-    private static async Task<ConsultGenerationJobResponse?> WaitForEntityBackedJobResponseAsync(
+    private static async Task<ConsultGenerationJobResponse?> WaitForInitialJobResponseAsync(
         DurableTaskClient client,
         string jobId,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
 
-        while (stopwatch.Elapsed < SseEntityInitializationTimeout)
+        while (stopwatch.Elapsed < SseInitialJobResponseTimeout)
         {
-            var response = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+            var response = await GetJobResponseAsync(client, jobId, cancellationToken);
 
             if (response != null)
             {
                 return response;
             }
 
-            await Task.Delay(SseEntityInitializationPollInterval, cancellationToken);
+            await Task.Delay(SseInitialJobResponsePollInterval, cancellationToken);
         }
 
-        return await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+        return await GetJobResponseAsync(client, jobId, cancellationToken);
     }
 
     private static async Task<ConsultGenerationJobResponse?> GetEntityBackedJobResponseAsync(
