@@ -15,12 +15,6 @@ builder.Services.AddFluentUIComponents();
 builder.Services.AddMsalAuthentication(options =>
 {
     builder.Configuration.Bind("AzureAd", options.ProviderOptions.Authentication);
-    var apiScope = builder.Configuration["AzureFunction:ApiScope"];
-    if (!string.IsNullOrWhiteSpace(apiScope))
-    {
-        options.ProviderOptions.DefaultAccessTokenScopes.Add(apiScope);
-    }
-
     options.ProviderOptions.LoginMode = "redirect";
 });
 
