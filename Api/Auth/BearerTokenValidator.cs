@@ -56,9 +56,9 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
             var principal = _tokenHandler.ValidateToken(token, new TokenValidationParameters
             {
                 ValidateIssuer = true,
-                ValidIssuers = GetValidIssuers(authority, oidcConfiguration.Issuer),
+                IssuerValidator = (issuer, _, _) => ValidateIssuer(authority, oidcConfiguration.Issuer, issuer),
                 ValidateAudience = true,
-                ValidAudience = audience,
+                ValidAudiences = GetValidAudiences(audience),
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromMinutes(2),
                 ValidateIssuerSigningKey = true,
@@ -117,18 +117,92 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
             : _configuration[key]!;
     }
 
+    private static string ValidateIssuer(string authority, string metadataIssuer, string issuer)
+    {
+        var validIssuers = GetValidIssuers(authority, metadataIssuer).ToArray();
+
+        if (validIssuers.Contains(issuer, StringComparer.OrdinalIgnoreCase)
+            || MatchesTenantIssuerTemplate(metadataIssuer, issuer)
+            || MatchesAuthorityTenantIssuer(authority, issuer))
+        {
+            return issuer;
+        }
+
+        throw new SecurityTokenInvalidIssuerException($"Issuer '{issuer}' is not valid for authority '{authority}'.");
+    }
+
     private static IEnumerable<string> GetValidIssuers(string authority, string metadataIssuer)
     {
-        yield return authority;
-        yield return metadataIssuer;
+        yield return authority.TrimEnd('/');
+        yield return metadataIssuer.TrimEnd('/');
 
-        if (authority.Contains("/v2.0", StringComparison.OrdinalIgnoreCase))
+        var normalizedAuthority = authority.TrimEnd('/');
+
+        if (normalizedAuthority.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase))
         {
-            yield return authority.Replace("/v2.0", string.Empty, StringComparison.OrdinalIgnoreCase);
+            yield return normalizedAuthority[..^"/v2.0".Length];
         }
         else
         {
-            yield return $"{authority}/v2.0";
+            yield return $"{normalizedAuthority}/v2.0";
+        }
+    }
+
+    private static bool MatchesTenantIssuerTemplate(string metadataIssuer, string issuer)
+    {
+        const string tenantPlaceholder = "{tenantid}";
+
+        if (!metadataIssuer.Contains(tenantPlaceholder, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var escapedTemplate = Uri.EscapeDataString(tenantPlaceholder);
+        var template = metadataIssuer.Replace(escapedTemplate, tenantPlaceholder, StringComparison.OrdinalIgnoreCase);
+        var parts = template.Split(tenantPlaceholder, StringSplitOptions.None);
+
+        return parts.Length == 2
+            && issuer.StartsWith(parts[0], StringComparison.OrdinalIgnoreCase)
+            && issuer.EndsWith(parts[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesAuthorityTenantIssuer(string authority, string issuer)
+    {
+        var normalizedAuthority = authority.TrimEnd('/');
+
+        foreach (var segment in new[] { "/organizations", "/common" })
+        {
+            var markerIndex = normalizedAuthority.IndexOf(segment, StringComparison.OrdinalIgnoreCase);
+
+            if (markerIndex < 0)
+            {
+                continue;
+            }
+
+            var prefix = normalizedAuthority[..markerIndex];
+            var suffix = normalizedAuthority.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase)
+                ? "/v2.0"
+                : string.Empty;
+
+            if (issuer.StartsWith($"{prefix}/", StringComparison.OrdinalIgnoreCase)
+                && issuer.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<string> GetValidAudiences(string audience)
+    {
+        yield return audience;
+
+        const string apiPrefix = "api://";
+
+        if (audience.StartsWith(apiPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return audience[apiPrefix.Length..];
         }
     }
 
