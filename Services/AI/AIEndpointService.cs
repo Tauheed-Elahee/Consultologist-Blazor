@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.ServerSentEvents;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
@@ -439,7 +441,60 @@ public class AIEndpointService : IAIEndpointService
             throw new AccessTokenNotAvailableException(_navigation, tokenResult, new[] { apiScope });
         }
 
+        LogAccessTokenClaims(token.Value);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+    }
+
+    private void LogAccessTokenClaims(string token)
+    {
+        try
+        {
+            var parts = token.Split('.');
+
+            if (parts.Length < 2)
+            {
+                _logger.LogWarning("Access token is not a JWT.");
+                return;
+            }
+
+            using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(Base64UrlDecode(parts[1])));
+            var root = payload.RootElement;
+
+            _logger.LogInformation(
+                "Access token claims. Issuer={Issuer}, Audience={Audience}, Scope={Scope}, Roles={Roles}, Subject={Subject}, ObjectId={ObjectId}, TenantId={TenantId}",
+                GetJsonString(root, "iss"),
+                GetJsonValue(root, "aud"),
+                GetJsonString(root, "scp"),
+                GetJsonValue(root, "roles"),
+                GetJsonString(root, "sub"),
+                GetJsonString(root, "oid"),
+                GetJsonString(root, "tid"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to inspect access token claims.");
+        }
+    }
+
+    private static byte[] Base64UrlDecode(string value)
+    {
+        var padded = value.Replace('-', '+').Replace('_', '/');
+        padded = padded.PadRight(padded.Length + ((4 - padded.Length % 4) % 4), '=');
+        return Convert.FromBase64String(padded);
+    }
+
+    private static string? GetJsonString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static string? GetJsonValue(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var value)
+            ? value.GetRawText()
+            : null;
     }
 }
 
