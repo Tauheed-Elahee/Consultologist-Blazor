@@ -20,6 +20,7 @@ public record ConsultGenerationJobStartResponse(
 
 public record ConsultGenerationJobResponse(
     string JobId,
+    string AppUserId,
     string Status,
     int TotalSectionCount,
     int CompletedSectionCount,

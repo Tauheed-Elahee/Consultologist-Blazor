@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.ServerSentEvents;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using System.Runtime.CompilerServices;
 
@@ -32,12 +34,21 @@ public class AIEndpointService : IAIEndpointService
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
+    private readonly IAccessTokenProvider _accessTokenProvider;
+    private readonly NavigationManager _navigation;
     private readonly ILogger<AIEndpointService> _logger;
 
-    public AIEndpointService(HttpClient httpClient, IConfiguration configuration, ILogger<AIEndpointService> logger)
+    public AIEndpointService(
+        HttpClient httpClient,
+        IConfiguration configuration,
+        IAccessTokenProvider accessTokenProvider,
+        NavigationManager navigation,
+        ILogger<AIEndpointService> logger)
     {
         _httpClient = httpClient;
         _configuration = configuration;
+        _accessTokenProvider = accessTokenProvider;
+        _navigation = navigation;
         _logger = logger;
     }
 
@@ -66,7 +77,13 @@ public class AIEndpointService : IAIEndpointService
                 consultDraft.Length,
                 sectionStandard.Length);
 
-            var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, functionUrl)
+            {
+                Content = JsonContent.Create(request)
+            };
+            await AddAuthorizationAsync(httpRequest);
+
+            var response = await _httpClient.SendAsync(httpRequest);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -149,7 +166,13 @@ public class AIEndpointService : IAIEndpointService
                 timeoutSeconds,
                 consultDraft.Length);
 
-            var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, functionUrl)
+            {
+                Content = JsonContent.Create(request)
+            };
+            await AddAuthorizationAsync(httpRequest);
+
+            var response = await _httpClient.SendAsync(httpRequest);
             var result = await response.Content.ReadFromJsonAsync<ConsultGenerationResponse>();
 
             if (!response.IsSuccessStatusCode)
@@ -229,7 +252,13 @@ public class AIEndpointService : IAIEndpointService
                 sections.Count,
                 consultDraft.Length);
 
-            var response = await _httpClient.PostAsJsonAsync(functionUrl, request);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, functionUrl)
+            {
+                Content = JsonContent.Create(request)
+            };
+            await AddAuthorizationAsync(httpRequest);
+
+            var response = await _httpClient.SendAsync(httpRequest);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -289,7 +318,10 @@ public class AIEndpointService : IAIEndpointService
 
             _logger.LogDebug("Polling consult generation job at {Url}. JobId={JobId}", statusUrl, jobId);
 
-            var response = await _httpClient.GetAsync(statusUrl);
+            using var request = new HttpRequestMessage(HttpMethod.Get, statusUrl);
+            await AddAuthorizationAsync(request);
+
+            var response = await _httpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -355,6 +387,7 @@ public class AIEndpointService : IAIEndpointService
 
         using var request = new HttpRequestMessage(HttpMethod.Get, eventsUrl);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        await AddAuthorizationAsync(request);
         request.SetBrowserResponseStreamingEnabled(true);
 
         _logger.LogInformation(
@@ -386,6 +419,28 @@ public class AIEndpointService : IAIEndpointService
             yield return new ConsultGenerationJobSseEvent(item.EventType, item.Data);
         }
     }
+
+    private async Task AddAuthorizationAsync(HttpRequestMessage request)
+    {
+        var apiScope = _configuration["AzureFunction:ApiScope"];
+
+        if (string.IsNullOrWhiteSpace(apiScope))
+        {
+            throw new InvalidOperationException("AzureFunction:ApiScope is not configured.");
+        }
+
+        var tokenResult = await _accessTokenProvider.RequestAccessToken(new AccessTokenRequestOptions
+        {
+            Scopes = new[] { apiScope }
+        });
+
+        if (!tokenResult.TryGetToken(out var token))
+        {
+            throw new AccessTokenNotAvailableException(_navigation, tokenResult, new[] { apiScope });
+        }
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+    }
 }
 
 public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
@@ -397,6 +452,7 @@ public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json);
 public record ConsultGenerationJobResponse(
     string JobId,
+    string? AppUserId,
     string Status,
     int TotalSectionCount,
     int CompletedSectionCount,

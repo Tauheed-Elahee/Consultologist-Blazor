@@ -1,8 +1,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
-@using System.Text.Json
-@inject HttpClient Http
+@inject IAccountEndpointService AccountService
 @attribute [Authorize]
 
 @page "/profile"
@@ -21,7 +20,7 @@
 
 <AuthorizeView>
     <Authorized>
-        @if (graphApiResponse != null)
+        @if (account != null)
         {
             <section class="content-card">
                 <div class="form-stack">
@@ -30,17 +29,39 @@
                     </h2>
 
                     <p class="panel-description">
-                        These details come from the Microsoft Graph <code>/me</code> endpoint for the current session.
+                        These details come from the Consultologist account service for the current clinician session.
                     </p>
 
-                    <div class="code-panel">
-                        <pre style="margin: 0;"><code class="language-json">@JsonSerializer.Serialize(graphApiResponse, new JsonSerializerOptions { WriteIndented = true })</code></pre>
+                    <div class="state-panel">
+                        <span class="muted-text">Display name</span>
+                        <strong>@account.DisplayName</strong>
+                    </div>
+
+                    <div class="state-panel">
+                        <span class="muted-text">Email</span>
+                        <strong>@(account.Email ?? "Not provided")</strong>
+                    </div>
+
+                    <div class="state-panel">
+                        <span class="muted-text">App user ID</span>
+                        <strong>@account.AppUserId</strong>
+                    </div>
+
+                    <div class="state-panel">
+                        <span class="muted-text">Current identity</span>
+                        <strong>@account.CurrentIdentity.Provider</strong>
                     </div>
 
                     <FluentMessageBar Intent="MessageIntent.Info">
-                        The workspace uses the cached access token for protected session requests and refreshes it when available.
+                        Protected API requests use this account identity for server-side authorization and job ownership.
                     </FluentMessageBar>
                 </div>
+            </section>
+        }
+        else if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <section class="state-panel">
+                <FluentMessageBar Intent="MessageIntent.Error">@errorMessage</FluentMessageBar>
             </section>
         }
         else
@@ -59,7 +80,8 @@
   [CascadingParameter]
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
-  private JsonDocument? graphApiResponse = null;
+  private AccountMeResponse? account;
+  private string? errorMessage;
 
   protected override async Task OnInitializedAsync()
   {
@@ -70,13 +92,15 @@
     {
       try
       {
-        using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
-        response.EnsureSuccessStatusCode();
-        graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+        account = await AccountService.GetCurrentAccountAsync();
       }
       catch (AccessTokenNotAvailableException exception)
       {
         exception.Redirect();
+      }
+      catch (Exception ex)
+      {
+        errorMessage = $"Unable to load account information: {ex.Message}";
       }
     }
   }

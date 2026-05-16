@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using Api.Auth;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -12,11 +13,16 @@ public class AgentProxy
 {
     private readonly ILogger<AgentProxy> _logger;
     private readonly AgentSectionGenerator _sectionGenerator;
+    private readonly IAccountAuthorizer _authorizer;
 
-    public AgentProxy(ILogger<AgentProxy> logger, AgentSectionGenerator sectionGenerator)
+    public AgentProxy(
+        ILogger<AgentProxy> logger,
+        AgentSectionGenerator sectionGenerator,
+        IAccountAuthorizer authorizer)
     {
         _logger = logger;
         _sectionGenerator = sectionGenerator;
+        _authorizer = authorizer;
     }
 
     // TODO: Change AuthorizationLevel.Anonymous to AuthorizationLevel.Function for production
@@ -32,6 +38,18 @@ public class AgentProxy
         if (IsOptions(req))
         {
             return CreateEmptyResponse(req, HttpStatusCode.OK);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
         }
 
         try

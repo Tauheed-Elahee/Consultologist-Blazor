@@ -9,6 +9,7 @@
 @inject IAIEndpointService AIService
 @inject IJSRuntime JSRuntime
 @inject ILogger<Consults> Logger
+@inject IAccountEndpointService AccountService
 @attribute [Authorize]
 @implements IAsyncDisposable
 
@@ -145,7 +146,7 @@
 
 @code {
   private const string StandardsPath = "templates/consult_section_standards.md";
-  private const string StorageKey = "consultologist.consultSectionStandards.v1";
+  private const string StorageKeyPrefix = "consultologist.consultSectionStandards.v1";
   private static readonly JsonSerializerOptions SseJsonOptions = new()
   {
     PropertyNameCaseInsensitive = true
@@ -154,7 +155,7 @@
   [CascadingParameter]
   private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
-  private JsonDocument? graphApiResponse;
+  private AccountMeResponse? account;
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private Dictionary<string, string> generatedSections = new();
@@ -171,11 +172,11 @@
 
   protected override async Task OnInitializedAsync()
   {
-    await LoadUserProfileAsync();
+    await LoadAccountAsync();
     await LoadSectionStandardsAsync();
   }
 
-  private async Task LoadUserProfileAsync()
+  private async Task LoadAccountAsync()
   {
     var authState = await AuthenticationStateTask!;
     var user = authState.User;
@@ -187,13 +188,15 @@
 
     try
     {
-      using var response = await Http.GetAsync("https://graph.microsoft.com/v1.0/me");
-      response.EnsureSuccessStatusCode();
-      graphApiResponse = await response.Content.ReadFromJsonAsync<JsonDocument>().ConfigureAwait(false);
+      account = await AccountService.GetCurrentAccountAsync();
     }
     catch (AccessTokenNotAvailableException exception)
     {
       exception.Redirect();
+    }
+    catch (Exception ex)
+    {
+      standardsLoadError = $"Unable to load account information: {ex.Message}";
     }
   }
 
@@ -204,7 +207,7 @@
 
     try
     {
-      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", GetStorageKey());
       var markdown = string.IsNullOrWhiteSpace(storedMarkdown)
         ? await LoadBundledStandardsAsync()
         : storedMarkdown;
@@ -586,6 +589,13 @@
   {
     var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
     return await Http.GetStringAsync(standardsUri);
+  }
+
+  private string GetStorageKey()
+  {
+    return account == null
+      ? $"{StorageKeyPrefix}:anonymous"
+      : $"{StorageKeyPrefix}:{account.AppUserId}";
   }
 
   private static List<SectionStandard> ParseStandards(string markdown)

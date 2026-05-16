@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using BlazorWasm;
+using BlazorWasm.Services.Accounts;
 using BlazorWasm.Services.AI;
 using Microsoft.FluentUI.AspNetCore.Components;
 
@@ -14,22 +15,16 @@ builder.Services.AddFluentUIComponents();
 builder.Services.AddMsalAuthentication(options =>
 {
     builder.Configuration.Bind("AzureAd", options.ProviderOptions.Authentication);
-    options.ProviderOptions.DefaultAccessTokenScopes
-            .Add("https://graph.microsoft.com/User.Read");
+    var apiScope = builder.Configuration["AzureFunction:ApiScope"];
+    if (!string.IsNullOrWhiteSpace(apiScope))
+    {
+        options.ProviderOptions.DefaultAccessTokenScopes.Add(apiScope);
+    }
+
     options.ProviderOptions.LoginMode = "redirect";
 });
 
-builder.Services.AddScoped(sp =>
-{
-    var authorizationMessageHandler =
-        sp.GetRequiredService<AuthorizationMessageHandler>();
-    authorizationMessageHandler.InnerHandler = new HttpClientHandler();
-    authorizationMessageHandler.ConfigureHandler(
-        authorizedUrls: new[] { "https://graph.microsoft.com/v1.0" },
-        scopes: new[] { "User.Read" });
-
-    return new HttpClient(authorizationMessageHandler);
-});
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 
 // Register AI Endpoint Service with separate HttpClient (no Graph auth handler)
 var agentProxyTimeoutSeconds = builder.Configuration.GetValue<int?>("AzureFunction:TimeoutSeconds") ?? 240;
@@ -37,5 +32,7 @@ builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(agentProxyTimeoutSeconds);
 });
+
+builder.Services.AddHttpClient<IAccountEndpointService, AccountEndpointService>();
 
 await builder.Build().RunAsync();

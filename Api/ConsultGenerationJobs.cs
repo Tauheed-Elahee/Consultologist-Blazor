@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using System.Net.ServerSentEvents;
+using Api.Auth;
 using Api.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -30,10 +31,12 @@ public sealed class ConsultGenerationJobs
     };
 
     private readonly ILogger<ConsultGenerationJobs> _logger;
+    private readonly IAccountAuthorizer _authorizer;
 
-    public ConsultGenerationJobs(ILogger<ConsultGenerationJobs> logger)
+    public ConsultGenerationJobs(ILogger<ConsultGenerationJobs> logger, IAccountAuthorizer authorizer)
     {
         _logger = logger;
+        _authorizer = authorizer;
     }
 
     [Function("StartConsultGenerationJob")]
@@ -56,6 +59,18 @@ public sealed class ConsultGenerationJobs
                 req.FunctionContext.InvocationId);
 
             return CreateEmptyResponse(req, HttpStatusCode.OK);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -118,7 +133,7 @@ public sealed class ConsultGenerationJobs
             await client.Entities.SignalEntityAsync(
                 entityId,
                 nameof(ConsultGenerationJobEntity.Initialize),
-                new ConsultGenerationJobInitialize(jobId, request.Sections));
+                new ConsultGenerationJobInitialize(jobId, account.AppUserId, request.Sections));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -127,7 +142,7 @@ public sealed class ConsultGenerationJobs
 
             var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
                 nameof(ConsultGenerationOrchestrator),
-                request,
+                new ConsultGenerationOrchestrationInput(request, account.AppUserId),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -184,7 +199,19 @@ public sealed class ConsultGenerationJobs
             return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "JobId is required." }, cancellationToken);
         }
 
-        var response = await GetJobResponseAsync(client, jobId, cancellationToken);
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        var response = await GetJobResponseAsync(client, jobId, account.AppUserId, cancellationToken);
 
         return response == null
             ? await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken)
@@ -221,7 +248,22 @@ public sealed class ConsultGenerationJobs
             return new BadRequestObjectResult(new { error = "JobId is required." });
         }
 
-        if (!await JobExistsAsync(client, jobId, cancellationToken))
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            FunctionCors.Apply(req, req.HttpContext.Response);
+            req.HttpContext.Response.Headers.WWWAuthenticate = "Bearer";
+            return new UnauthorizedResult();
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            FunctionCors.Apply(req, req.HttpContext.Response);
+            return new ForbidResult();
+        }
+
+        if (!await JobExistsAsync(client, jobId, account.AppUserId, cancellationToken))
         {
             FunctionCors.Apply(req, req.HttpContext.Response);
             return new NotFoundObjectResult(new { error = "Consult generation job was not found." });
@@ -230,6 +272,7 @@ public sealed class ConsultGenerationJobs
         var events = CreateConsultGenerationJobEventsAsync(
             client,
             jobId,
+            account.AppUserId,
             cancellationToken);
 
         return new CorsResultActionResult(TypedResults.ServerSentEvents(events));
@@ -238,6 +281,7 @@ public sealed class ConsultGenerationJobs
     private IAsyncEnumerable<SseItem<string>> CreateConsultGenerationJobEventsAsync(
         DurableTaskClient client,
         string jobId,
+        string appUserId,
         CancellationToken cancellationToken)
     {
         var channel = Channel.CreateUnbounded<SseItem<string>>(new UnboundedChannelOptions
@@ -246,7 +290,7 @@ public sealed class ConsultGenerationJobs
             SingleWriter = true
         });
 
-        _ = WriteConsultGenerationJobEventsAsync(client, jobId, channel.Writer, cancellationToken);
+        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, channel.Writer, cancellationToken);
 
         return channel.Reader.ReadAllAsync(cancellationToken);
     }
@@ -254,6 +298,7 @@ public sealed class ConsultGenerationJobs
     private async Task WriteConsultGenerationJobEventsAsync(
         DurableTaskClient client,
         string jobId,
+        string appUserId,
         ChannelWriter<SseItem<string>> writer,
         CancellationToken cancellationToken)
     {
@@ -263,7 +308,7 @@ public sealed class ConsultGenerationJobs
                 "Consult generation SSE stream connected. JobId={JobId}",
                 jobId);
 
-            var initialResponse = await WaitForInitialJobResponseAsync(client, jobId, cancellationToken);
+            var initialResponse = await WaitForInitialJobResponseAsync(client, jobId, appUserId, cancellationToken);
 
             if (initialResponse == null)
             {
@@ -329,7 +374,7 @@ public sealed class ConsultGenerationJobs
             {
                 await Task.Delay(SsePollInterval, cancellationToken);
 
-                var latestResponse = await GetJobResponseAsync(client, jobId, cancellationToken);
+                var latestResponse = await GetJobResponseAsync(client, jobId, appUserId, cancellationToken);
 
                 if (latestResponse == null)
                 {
@@ -481,6 +526,7 @@ public sealed class ConsultGenerationJobs
     private static async Task<ConsultGenerationJobResponse?> GetJobResponseAsync(
         DurableTaskClient client,
         string jobId,
+        string appUserId,
         CancellationToken cancellationToken)
     {
         var entityBackedResponse = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
@@ -488,6 +534,11 @@ public sealed class ConsultGenerationJobs
 
         if (entityBackedResponse != null)
         {
+            if (!string.Equals(entityBackedResponse.AppUserId, appUserId, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             return MergeEntityAndRuntimeStatus(
                 entityBackedResponse,
                 instance?.RuntimeStatus);
@@ -497,6 +548,7 @@ public sealed class ConsultGenerationJobs
             ? null
             : new ConsultGenerationJobResponse(
                 jobId,
+                appUserId,
                 MapRuntimeStatus(instance.RuntimeStatus),
                 0,
                 0,
@@ -509,26 +561,30 @@ public sealed class ConsultGenerationJobs
     private static async Task<bool> JobExistsAsync(
         DurableTaskClient client,
         string jobId,
+        string appUserId,
         CancellationToken cancellationToken)
     {
-        if (await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken) != null)
+        var entityResponse = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
+
+        if (entityResponse != null)
         {
-            return true;
+            return string.Equals(entityResponse.AppUserId, appUserId, StringComparison.Ordinal);
         }
 
-        return await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken) != null;
+        return false;
     }
 
     private static async Task<ConsultGenerationJobResponse?> WaitForInitialJobResponseAsync(
         DurableTaskClient client,
         string jobId,
+        string appUserId,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
 
         while (stopwatch.Elapsed < SseInitialJobResponseTimeout)
         {
-            var response = await GetJobResponseAsync(client, jobId, cancellationToken);
+            var response = await GetJobResponseAsync(client, jobId, appUserId, cancellationToken);
 
             if (response != null)
             {
@@ -538,7 +594,7 @@ public sealed class ConsultGenerationJobs
             await Task.Delay(SseInitialJobResponsePollInterval, cancellationToken);
         }
 
-        return await GetJobResponseAsync(client, jobId, cancellationToken);
+        return await GetJobResponseAsync(client, jobId, appUserId, cancellationToken);
     }
 
     private static async Task<ConsultGenerationJobResponse?> GetEntityBackedJobResponseAsync(
@@ -861,14 +917,15 @@ public sealed class ConsultGenerationOrchestrator
     [Function(nameof(ConsultGenerationOrchestrator))]
     public async Task RunAsync([OrchestrationTrigger] TaskOrchestrationContext context)
     {
-        var request = context.GetInput<ConsultGenerationRequest>()
+        var input = context.GetInput<ConsultGenerationOrchestrationInput>()
             ?? throw new InvalidOperationException("Consult generation request input is required.");
+        var request = input.Request;
 
         var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), context.InstanceId);
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.Initialize),
-            new ConsultGenerationJobInitialize(context.InstanceId, request.Sections));
+            new ConsultGenerationJobInitialize(context.InstanceId, input.AppUserId, request.Sections));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -1620,11 +1677,12 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     {
         if (State == null || State.Sections.Count == 0)
         {
-            State = ConsultGenerationJobState.Create(input.JobId, input.Sections);
+            State = ConsultGenerationJobState.Create(input.JobId, input.AppUserId, input.Sections);
             return;
         }
 
         State.JobId = string.IsNullOrWhiteSpace(State.JobId) ? input.JobId : State.JobId;
+        State.AppUserId = string.IsNullOrWhiteSpace(State.AppUserId) ? input.AppUserId : State.AppUserId;
 
         if (State.CreatedAtUtc == default)
         {
@@ -1723,7 +1781,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 
     private ConsultGenerationJobState EnsureState()
     {
-        return State ?? ConsultGenerationJobState.Create(string.Empty, Array.Empty<ConsultGenerationSectionRequest>());
+        return State ?? ConsultGenerationJobState.Create(string.Empty, string.Empty, Array.Empty<ConsultGenerationSectionRequest>());
     }
 
     private static void ApplyAnalysisUpdate(ConsultGenerationJobState state, ConsultGenerationAnalysisUpdate input)
@@ -1767,8 +1825,13 @@ public sealed record ConsultGenerationActivityInput(
     ConsultGenerationSectionRequest Section,
     string? SectionDraft = null);
 
+public sealed record ConsultGenerationOrchestrationInput(
+    ConsultGenerationRequest Request,
+    string AppUserId);
+
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
+    string AppUserId,
     IReadOnlyList<ConsultGenerationSectionRequest> Sections);
 
 public sealed record ConsultGenerationJobFinalize(string Status);
@@ -1826,6 +1889,7 @@ public sealed record ConsultGenerationAnalysisUpdate(
 public sealed class ConsultGenerationJobState
 {
     public string JobId { get; set; } = string.Empty;
+    public string AppUserId { get; set; } = string.Empty;
     public string Status { get; set; } = ConsultGenerationJobStatuses.Queued;
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset? StartedAtUtc { get; set; }
@@ -1844,11 +1908,13 @@ public sealed class ConsultGenerationJobState
 
     public static ConsultGenerationJobState Create(
         string jobId,
+        string appUserId,
         IReadOnlyList<ConsultGenerationSectionRequest> sections)
     {
         return new ConsultGenerationJobState
         {
             JobId = jobId,
+            AppUserId = appUserId,
             Status = ConsultGenerationJobStatuses.Queued,
             CreatedAtUtc = DateTimeOffset.UtcNow,
             Sections = sections.ToDictionary(
@@ -1901,6 +1967,7 @@ public sealed class ConsultGenerationJobState
 
         return new ConsultGenerationJobResponse(
             JobId,
+            AppUserId,
             Status,
             Sections.Count,
             completedSections.Count,

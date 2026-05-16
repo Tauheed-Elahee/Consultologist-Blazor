@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
+using Api.Auth;
 using Api.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -13,11 +14,16 @@ public sealed class ConsultGeneration
 {
     private readonly ILogger<ConsultGeneration> _logger;
     private readonly AgentSectionGenerator _sectionGenerator;
+    private readonly IAccountAuthorizer _authorizer;
 
-    public ConsultGeneration(ILogger<ConsultGeneration> logger, AgentSectionGenerator sectionGenerator)
+    public ConsultGeneration(
+        ILogger<ConsultGeneration> logger,
+        AgentSectionGenerator sectionGenerator,
+        IAccountAuthorizer authorizer)
     {
         _logger = logger;
         _sectionGenerator = sectionGenerator;
+        _authorizer = authorizer;
 
         Console.Error.WriteLine($"[Api.StartupDiagnostics] ConsultGeneration constructed. Utc={DateTimeOffset.UtcNow:O}");
         _logger.LogInformation("ConsultGeneration constructed.");
@@ -43,6 +49,18 @@ public sealed class ConsultGeneration
                 req.FunctionContext.InvocationId);
 
             return CreateEmptyResponse(req, HttpStatusCode.OK);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
         }
 
         try
