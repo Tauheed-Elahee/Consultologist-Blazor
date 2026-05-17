@@ -24,6 +24,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
     {
         _configuration = configuration;
         _logger = logger;
+        _tokenHandler.MapInboundClaims = false;
 
         var authority = GetRequiredConfiguration("Auth:Authority").TrimEnd('/');
         _configurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
@@ -208,7 +209,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
 
     private static IEnumerable<string> GetScopes(ClaimsPrincipal principal)
     {
-        foreach (var claimType in new[] { "scp", "scope" })
+        foreach (var claimType in new[] { "scp", "scope", "http://schemas.microsoft.com/identity/claims/scope" })
         {
             var claim = principal.FindFirstValue(claimType);
 
