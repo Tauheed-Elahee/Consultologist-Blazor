@@ -51,6 +51,33 @@ scp=access_as_user
 
 Bearer tokens must not be pasted into logs, issues, or chat. Use decoded claim summaries when debugging.
 
+## Account Settings
+
+Authenticated user preferences are stored server-side in Azure Table Storage so they follow the app account across browsers and devices.
+
+Current tables:
+
+- `AppUsers`: internal app user records.
+- `IdentityLinks`: provider identity to app user lookup.
+- `UserIdentityLinks`: app user to linked identities lookup.
+- `AccountSettings`: per-user settings keyed by app user ID and setting key.
+
+The generic settings endpoint shape is:
+
+```text
+GET    /api/Account/Settings/{key}
+PUT    /api/Account/Settings/{key}
+DELETE /api/Account/Settings/{key}
+```
+
+The initial setting key is:
+
+```text
+consult.sectionStandardsMarkdown
+```
+
+`GET` returns `404` when the setting has not been saved, and the Blazor app falls back to `wwwroot/templates/consult_section_standards.md`. `PUT` accepts a JSON body with `value` and `contentType`. `DELETE` removes the override and restores the default behavior.
+
 ## LinkedIn Login
 
 LinkedIn login can be added through an OAuth 2.0 / OpenID Connect flow. The app should not store LinkedIn client secrets or perform privileged token exchange directly in Blazor WebAssembly.

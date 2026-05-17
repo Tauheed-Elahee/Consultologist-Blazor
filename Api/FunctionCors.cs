@@ -30,7 +30,7 @@ internal static class FunctionCors
         }
 
         response.Headers.Add("Access-Control-Allow-Origin", origin);
-        response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
@@ -59,7 +59,7 @@ internal static class FunctionCors
         }
 
         response.Headers.AccessControlAllowOrigin = origin;
-        response.Headers.AccessControlAllowMethods = "GET, POST, OPTIONS";
+        response.Headers.AccessControlAllowMethods = "GET, POST, PUT, DELETE, OPTIONS";
         response.Headers.AccessControlAllowHeaders = "Content-Type, Authorization";
     }
 }

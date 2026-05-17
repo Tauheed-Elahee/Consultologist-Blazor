@@ -56,6 +56,74 @@ public sealed class AccountEndpointService : IAccountEndpointService
             ?? throw new InvalidOperationException("Failed to deserialize account response.");
     }
 
+    public async Task<AccountSettingResponse?> GetSettingAsync(string key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, GetSettingUrl(key));
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "Account setting endpoint failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"Account setting endpoint failed: {response.StatusCode}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<AccountSettingResponse>()
+            ?? throw new InvalidOperationException("Failed to deserialize account setting response.");
+    }
+
+    public async Task SaveSettingAsync(string key, string value, string contentType)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, GetSettingUrl(key))
+        {
+            Content = JsonContent.Create(new SaveAccountSettingRequest(value, contentType))
+        };
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "Account setting save endpoint failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"Account setting save endpoint failed: {response.StatusCode}");
+        }
+    }
+
+    public async Task DeleteSettingAsync(string key)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, GetSettingUrl(key));
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "Account setting delete endpoint failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"Account setting delete endpoint failed: {response.StatusCode}");
+        }
+    }
+
     private async Task AddAuthorizationAsync(HttpRequestMessage request)
     {
         var apiScope = _configuration["AzureFunction:ApiScope"];
@@ -76,5 +144,21 @@ public sealed class AccountEndpointService : IAccountEndpointService
         }
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+    }
+
+    private string GetSettingUrl(string key)
+    {
+        var accountUrl = _configuration["AzureFunction:AccountMeUrl"];
+
+        if (string.IsNullOrWhiteSpace(accountUrl))
+        {
+            throw new InvalidOperationException("AzureFunction:AccountMeUrl is not configured.");
+        }
+
+        var settingsBaseUrl = accountUrl.EndsWith("/Me", StringComparison.OrdinalIgnoreCase)
+            ? accountUrl[..^"/Me".Length] + "/Settings/"
+            : accountUrl.TrimEnd('/') + "/Settings/";
+
+        return settingsBaseUrl + Uri.EscapeDataString(key);
     }
 }

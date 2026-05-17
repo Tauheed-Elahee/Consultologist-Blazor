@@ -14,3 +14,13 @@ public sealed record AccountIdentity(
     string Subject,
     DateTimeOffset LinkedAt,
     DateTimeOffset LastSeenAt);
+
+public sealed record AccountSettingResponse(
+    string Key,
+    string Value,
+    string ContentType,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record SaveAccountSettingRequest(
+    string Value,
+    string ContentType);

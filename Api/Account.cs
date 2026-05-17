@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Api.Auth;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -7,11 +8,20 @@ namespace Api;
 
 public sealed class Account
 {
+    private const int MaxSettingKeyLength = 128;
+    private const int MaxSettingValueLength = 32_000;
+    private const int MaxContentTypeLength = 128;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
     private readonly IAccountAuthorizer _authorizer;
+    private readonly IAccountSettingsStore _settingsStore;
 
-    public Account(IAccountAuthorizer authorizer)
+    public Account(IAccountAuthorizer authorizer, IAccountSettingsStore settingsStore)
     {
         _authorizer = authorizer;
+        _settingsStore = settingsStore;
     }
 
     [Function("AccountMe")]
@@ -51,6 +61,199 @@ public sealed class Account
                 account.LinkedIdentities),
             cancellationToken);
 
+        return response;
+    }
+
+    [Function("AccountSettingGet")]
+    public async Task<HttpResponseData> GetSettingAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "Account/Settings/{key}")] HttpRequestData req,
+        string key)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        var validationError = ValidateSettingKey(key);
+        if (validationError != null)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, validationError, cancellationToken);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        var setting = await _settingsStore.GetAsync(account.AppUserId, key, cancellationToken);
+        if (setting == null)
+        {
+            return CreateNoContentLikeResponse(req, HttpStatusCode.NotFound);
+        }
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(
+            new AccountSettingResponse(setting.Key, setting.Value, setting.ContentType, setting.UpdatedAtUtc),
+            cancellationToken);
+
+        return response;
+    }
+
+    [Function("AccountSettingSave")]
+    public async Task<HttpResponseData> SaveSettingAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "Account/Settings/{key}")] HttpRequestData req,
+        string key)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        var validationError = ValidateSettingKey(key);
+        if (validationError != null)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, validationError, cancellationToken);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        SaveAccountSettingRequest? request;
+        try
+        {
+            request = await JsonSerializer.DeserializeAsync<SaveAccountSettingRequest>(
+                req.Body,
+                JsonOptions,
+                cancellationToken: cancellationToken);
+        }
+        catch (JsonException)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, "Invalid setting payload.", cancellationToken);
+        }
+
+        if (request?.Value == null)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, "Setting value is required.", cancellationToken);
+        }
+
+        if (request.Value.Length > MaxSettingValueLength)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.RequestEntityTooLarge, "Setting value is too large.", cancellationToken);
+        }
+
+        var contentType = string.IsNullOrWhiteSpace(request.ContentType)
+            ? "text/plain"
+            : request.ContentType.Trim();
+
+        if (contentType.Length > MaxContentTypeLength)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, "Setting content type is too long.", cancellationToken);
+        }
+
+        await _settingsStore.SaveAsync(account.AppUserId, key, request.Value, contentType, cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.NoContent);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    [Function("AccountSettingDelete")]
+    public async Task<HttpResponseData> DeleteSettingAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "Account/Settings/{key}")] HttpRequestData req,
+        string key)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        var validationError = ValidateSettingKey(key);
+        if (validationError != null)
+        {
+            return await CreateTextResponseAsync(req, HttpStatusCode.BadRequest, validationError, cancellationToken);
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        await _settingsStore.DeleteAsync(account.AppUserId, key, cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.NoContent);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    [Function("AccountSettingOptions")]
+    public HttpResponseData OptionsSettingAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "options", Route = "Account/Settings/{key}")] HttpRequestData req,
+        string key)
+    {
+        return CreateOptionsResponse(req);
+    }
+
+    private static string? ValidateSettingKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return "Setting key is required.";
+        }
+
+        if (key.Length > MaxSettingKeyLength)
+        {
+            return "Setting key is too long.";
+        }
+
+        foreach (var character in key)
+        {
+            if (char.IsLetterOrDigit(character) ||
+                character is '.' or '_' or '-' or ':')
+            {
+                continue;
+            }
+
+            return "Setting key contains unsupported characters.";
+        }
+
+        return null;
+    }
+
+    private static HttpResponseData CreateOptionsResponse(HttpRequestData req)
+    {
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private static HttpResponseData CreateNoContentLikeResponse(HttpRequestData req, HttpStatusCode statusCode)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private static async Task<HttpResponseData> CreateTextResponseAsync(
+        HttpRequestData req,
+        HttpStatusCode statusCode,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var response = req.CreateResponse(statusCode);
+        FunctionCors.Apply(req, response);
+        await response.WriteStringAsync(message, cancellationToken);
         return response;
     }
 }

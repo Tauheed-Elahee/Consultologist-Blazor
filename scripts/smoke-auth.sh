@@ -34,11 +34,28 @@ assert_status() {
   pass "$label returned HTTP $expected"
 }
 
+assert_status_one_of() {
+  local actual="$1"
+  local expected="$2"
+  local label="$3"
+
+  if [[ ",$expected," != *",$actual,"* ]]; then
+    echo "Response body:" >&2
+    cat /tmp/consultologist-smoke-body.txt >&2 || true
+    fail "$label expected one of HTTP $expected, got $actual"
+  fi
+
+  pass "$label returned HTTP $actual"
+}
+
 echo "Consultologist auth smoke"
 echo "Base URL: $BASE_URL"
 
 status="$(http_status GET "$BASE_URL/api/Account/Me")"
 assert_status "$status" "401" "Anonymous account endpoint"
+
+status="$(http_status GET "$BASE_URL/api/Account/Settings/consult.sectionStandardsMarkdown")"
+assert_status "$status" "401" "Anonymous account setting endpoint"
 
 status="$(http_status POST "$BASE_URL/api/ConsultGenerationJobs" \
   -H "Content-Type: application/json" \
@@ -53,6 +70,10 @@ fi
 status="$(http_status GET "$BASE_URL/api/Account/Me" \
   -H "Authorization: Bearer $ACCESS_TOKEN")"
 assert_status "$status" "200" "Authenticated account endpoint"
+
+status="$(http_status GET "$BASE_URL/api/Account/Settings/consult.sectionStandardsMarkdown" \
+  -H "Authorization: Bearer $ACCESS_TOKEN")"
+assert_status_one_of "$status" "200,404" "Authenticated account setting endpoint"
 
 status="$(http_status POST "$BASE_URL/api/ConsultGenerationJobs" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \

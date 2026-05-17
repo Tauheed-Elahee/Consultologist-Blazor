@@ -81,3 +81,30 @@ public sealed record AccountMeResponse(
     string Status,
     AccountIdentity CurrentIdentity,
     IReadOnlyList<AccountIdentity> LinkedIdentities);
+
+public sealed class AccountSettingEntity : ITableEntity
+{
+    public string PartitionKey { get; set; } = string.Empty;
+    public string RowKey { get; set; } = string.Empty;
+    public DateTimeOffset? Timestamp { get; set; }
+    public ETag ETag { get; set; }
+    public string Value { get; set; } = string.Empty;
+    public string ContentType { get; set; } = "text/plain";
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+
+public sealed record AccountSetting(
+    string Key,
+    string Value,
+    string ContentType,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record AccountSettingResponse(
+    string Key,
+    string Value,
+    string ContentType,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record SaveAccountSettingRequest(
+    string? Value,
+    string? ContentType);

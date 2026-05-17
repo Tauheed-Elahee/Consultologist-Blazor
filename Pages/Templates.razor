@@ -1,11 +1,9 @@
 @using Microsoft.AspNetCore.Authorization
-@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Net
 @using System.Text
 @inject HttpClient Http
 @inject NavigationManager Navigation
-@inject IJSRuntime JSRuntime
 @inject IAccountEndpointService AccountService
 @attribute [Authorize]
 
@@ -18,7 +16,7 @@
         <span class="section-eyebrow">Templates</span>
         <h1 class="page-title">Section standards for consult notes.</h1>
         <p class="page-description">
-            Edit the clinical writing standards used for each generated section. Changes are stored in this browser.
+            Edit the clinical writing standards used for each generated section. Changes are saved to your account.
         </p>
     </div>
 </section>
@@ -95,12 +93,9 @@
 
 @code {
   private const string StandardsPath = "templates/consult_section_standards.md";
-  private const string StorageKeyPrefix = "consultologist.consultSectionStandards.v1";
+  private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
+  private const string MarkdownContentType = "text/markdown";
 
-  [CascadingParameter]
-  private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
-
-  private AccountMeResponse? account;
   private List<SectionStandard> standards = new();
   private string? defaultMarkdown;
   private bool isLoading;
@@ -110,33 +105,7 @@
 
   protected override async Task OnInitializedAsync()
   {
-    await LoadAccountAsync();
     await LoadStandardsAsync();
-  }
-
-  private async Task LoadAccountAsync()
-  {
-    var authState = await AuthenticationStateTask!;
-    var user = authState.User;
-
-    if (user.Identity?.IsAuthenticated != true)
-    {
-      return;
-    }
-
-    try
-    {
-      account = await AccountService.GetCurrentAccountAsync();
-    }
-    catch (AccessTokenNotAvailableException exception)
-    {
-      exception.Redirect();
-    }
-    catch (Exception ex)
-    {
-      statusIntent = MessageIntent.Error;
-      statusMessage = $"Unable to load account information: {ex.Message}";
-    }
   }
 
   private async Task LoadStandardsAsync()
@@ -147,8 +116,12 @@
     try
     {
       defaultMarkdown = await LoadBundledStandardsAsync();
-      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", GetStorageKey());
-      standards = ParseStandards(string.IsNullOrWhiteSpace(storedMarkdown) ? defaultMarkdown : storedMarkdown);
+      var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
+      standards = ParseStandards(string.IsNullOrWhiteSpace(savedSetting?.Value) ? defaultMarkdown : savedSetting.Value);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
     }
     catch (Exception ex)
     {
@@ -169,9 +142,13 @@
 
     try
     {
-      await JSRuntime.InvokeVoidAsync("localStorage.setItem", GetStorageKey(), SerializeStandards(standards));
+      await AccountService.SaveSettingAsync(StandardsSettingKey, SerializeStandards(standards), MarkdownContentType);
       statusIntent = MessageIntent.Success;
       statusMessage = "Section standards saved.";
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
     }
     catch (Exception ex)
     {
@@ -193,9 +170,13 @@
     {
       defaultMarkdown ??= await LoadBundledStandardsAsync();
       standards = ParseStandards(defaultMarkdown);
-      await JSRuntime.InvokeVoidAsync("localStorage.removeItem", GetStorageKey());
+      await AccountService.DeleteSettingAsync(StandardsSettingKey);
       statusIntent = MessageIntent.Success;
       statusMessage = "Default section standards restored.";
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
     }
     catch (Exception ex)
     {
@@ -212,13 +193,6 @@
   {
     var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
     return await Http.GetStringAsync(standardsUri);
-  }
-
-  private string GetStorageKey()
-  {
-    return account == null
-      ? $"{StorageKeyPrefix}:anonymous"
-      : $"{StorageKeyPrefix}:{account.AppUserId}";
   }
 
   private static List<SectionStandard> ParseStandards(string markdown)

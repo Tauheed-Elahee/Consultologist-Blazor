@@ -1,5 +1,4 @@
 @using Microsoft.AspNetCore.Authorization
-@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Text
 @using System.Text.Json
@@ -7,7 +6,6 @@
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IAIEndpointService AIService
-@inject IJSRuntime JSRuntime
 @inject ILogger<Consults> Logger
 @inject IAccountEndpointService AccountService
 @attribute [Authorize]
@@ -61,7 +59,7 @@
                     <div class="form-stack">
                         <h2 class="panel-title">Section standards</h2>
                         <p class="panel-description">
-                            The active standards are loaded from browser storage, with bundled defaults as the fallback.
+                            The active standards are loaded from your account, with bundled defaults as the fallback.
                         </p>
 
                         <div class="state-panel">
@@ -146,16 +144,12 @@
 
 @code {
   private const string StandardsPath = "templates/consult_section_standards.md";
-  private const string StorageKeyPrefix = "consultologist.consultSectionStandards.v1";
+  private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
   private static readonly JsonSerializerOptions SseJsonOptions = new()
   {
     PropertyNameCaseInsensitive = true
   };
 
-  [CascadingParameter]
-  private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
-
-  private AccountMeResponse? account;
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private Dictionary<string, string> generatedSections = new();
@@ -172,32 +166,7 @@
 
   protected override async Task OnInitializedAsync()
   {
-    await LoadAccountAsync();
     await LoadSectionStandardsAsync();
-  }
-
-  private async Task LoadAccountAsync()
-  {
-    var authState = await AuthenticationStateTask!;
-    var user = authState.User;
-
-    if (user.Identity?.IsAuthenticated != true)
-    {
-      return;
-    }
-
-    try
-    {
-      account = await AccountService.GetCurrentAccountAsync();
-    }
-    catch (AccessTokenNotAvailableException exception)
-    {
-      exception.Redirect();
-    }
-    catch (Exception ex)
-    {
-      standardsLoadError = $"Unable to load account information: {ex.Message}";
-    }
   }
 
   private async Task LoadSectionStandardsAsync()
@@ -207,12 +176,17 @@
 
     try
     {
-      var storedMarkdown = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", GetStorageKey());
-      var markdown = string.IsNullOrWhiteSpace(storedMarkdown)
-        ? await LoadBundledStandardsAsync()
-        : storedMarkdown;
+      var defaultMarkdown = await LoadBundledStandardsAsync();
+      var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
+      var markdown = string.IsNullOrWhiteSpace(savedSetting?.Value)
+        ? defaultMarkdown
+        : savedSetting.Value;
 
       sectionStandards = ParseStandards(markdown);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
     }
     catch (Exception ex)
     {
@@ -589,13 +563,6 @@
   {
     var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
     return await Http.GetStringAsync(standardsUri);
-  }
-
-  private string GetStorageKey()
-  {
-    return account == null
-      ? $"{StorageKeyPrefix}:anonymous"
-      : $"{StorageKeyPrefix}:{account.AppUserId}";
   }
 
   private static List<SectionStandard> ParseStandards(string markdown)
