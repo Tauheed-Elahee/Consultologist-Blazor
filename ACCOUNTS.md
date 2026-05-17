@@ -1,10 +1,55 @@
-# Accounts and LinkedIn Login
+# Accounts, Entra API Access, and LinkedIn Login
 
 ## Summary
 
-This app currently uses Microsoft Entra ID login through MSAL in the Blazor WebAssembly client. LinkedIn login is possible, but it should not be implemented as browser-only authorization. A Blazor WebAssembly app runs on the user's machine, so any rule like "only allow verified LinkedIn accounts" must be enforced by a trusted server-side component.
+This app currently uses Microsoft Entra ID login through MSAL in the Blazor WebAssembly client. Protected Azure Functions validate an Entra access token for the Consultologist API and resolve the caller to an internal app account stored in Azure Tables.
+
+LinkedIn login is possible, but it should not be implemented as browser-only authorization. A Blazor WebAssembly app runs on the user's machine, so any rule like "only allow verified LinkedIn accounts" must be enforced by a trusted server-side component.
 
 The preferred lightweight server-side component for this repository is the existing Azure Functions project under `Api/`.
+
+## Current Entra Setup
+
+The production setup uses two app registrations:
+
+- **Consultologist SPA**: `7aea065e-4632-43d3-adb7-9cd315f2b8da`
+- **Consultologist API**: `b3866040-8bae-4c01-88ba-ecff646df451`
+
+The SPA signs users in and requests the delegated API scope only when calling protected Functions:
+
+```text
+api://b3866040-8bae-4c01-88ba-ecff646df451/access_as_user
+```
+
+The API app registration must expose:
+
+```text
+Application ID URI: api://b3866040-8bae-4c01-88ba-ecff646df451
+Scope: access_as_user
+requestedAccessTokenVersion: 2
+```
+
+The SPA app registration must have delegated permission to the API scope. The API registration may also pre-authorize the SPA client application for `access_as_user`.
+
+The Function App settings should be:
+
+```text
+Auth__Authority=https://login.microsoftonline.com/4258958f-9334-4a8c-af82-d7cddc47ae50/v2.0
+Auth__Audience=b3866040-8bae-4c01-88ba-ecff646df451
+Auth__RequiredScope=access_as_user
+AccountStorage__ConnectionStringName=AzureWebJobsStorage
+```
+
+Expected access-token claims:
+
+```text
+ver=2.0
+iss=https://login.microsoftonline.com/4258958f-9334-4a8c-af82-d7cddc47ae50/v2.0
+aud=b3866040-8bae-4c01-88ba-ecff646df451
+scp=access_as_user
+```
+
+Bearer tokens must not be pasted into logs, issues, or chat. Use decoded claim summaries when debugging.
 
 ## LinkedIn Login
 
