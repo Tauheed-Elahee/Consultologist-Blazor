@@ -263,12 +263,6 @@ public sealed class ConsultGenerationJobs
             return new ForbidResult();
         }
 
-        if (!await JobExistsAsync(client, jobId, account.AppUserId, cancellationToken))
-        {
-            FunctionCors.Apply(req, req.HttpContext.Response);
-            return new NotFoundObjectResult(new { error = "Consult generation job was not found." });
-        }
-
         var events = CreateConsultGenerationJobEventsAsync(
             client,
             jobId,
@@ -556,22 +550,6 @@ public sealed class ConsultGenerationJobs
                 new Dictionary<string, string>(),
                 new Dictionary<string, string>(),
                 false);
-    }
-
-    private static async Task<bool> JobExistsAsync(
-        DurableTaskClient client,
-        string jobId,
-        string appUserId,
-        CancellationToken cancellationToken)
-    {
-        var entityResponse = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
-
-        if (entityResponse != null)
-        {
-            return string.Equals(entityResponse.AppUserId, appUserId, StringComparison.Ordinal);
-        }
-
-        return false;
     }
 
     private static async Task<ConsultGenerationJobResponse?> WaitForInitialJobResponseAsync(
