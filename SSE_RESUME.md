@@ -1,0 +1,188 @@
+# SSE Resume Plan
+
+## Goal
+
+Consult generation progress should use this resilience chain:
+
+```text
+SSE live stream -> SSE resume -> polling fallback
+```
+
+The live SSE stream provides real-time progress. SSE resume should recover from transient stream drops by replaying missed semantic events. Polling remains the final fallback and authoritative way to retrieve current or terminal job state.
+
+Job ownership and authorization continue to use the authenticated account and the consult generation job ID. SSE event IDs are cursors within an authorized job stream; they are not authorization tokens.
+
+## Current State
+
+- The app has a working live SSE stream at `GET /api/ConsultGenerationJobs/{jobId}/events`.
+- The app has polling fallback through `GET /api/ConsultGenerationJobs/{jobId}`.
+- SSE events currently include `event:` and `data:` fields, but no `id:` field.
+- Current stream events are derived from Durable job state, not an append-only event log.
+- Because events are not persisted as an ordered log, true replay/resume is not currently possible.
+
+## Target Architecture
+
+- Keep `GET /api/ConsultGenerationJobs/{jobId}` as the authoritative current/final state endpoint.
+- Keep `GET /api/ConsultGenerationJobs/{jobId}/events` as the live progress endpoint.
+- Add ordered SSE event IDs in this form:
+
+```text
+{jobId}:{sequenceNumber}
+```
+
+Example:
+
+```text
+id: 04c45d68053c4b75b5db57e04b977e01:000000000012
+event: concepts-extracted
+data: {...}
+```
+
+- Persist semantic stream events so reconnects can replay missed events.
+- On reconnect, read `Last-Event-ID`, replay events after that sequence, then continue streaming live events.
+- If live SSE or resume fails, fall back to polling.
+
+## Phases
+
+### Phase 1: Current SSE and Polling
+
+- Keep the current SSE stream and polling fallback.
+- Treat SSE as an optimization for progress updates.
+- Treat polling as the source of truth for current and terminal job state.
+
+### Phase 2: Diagnostic SSE IDs
+
+- Add `id:` values to emitted SSE events without implementing replay yet.
+- Use monotonically increasing sequence numbers scoped to the job.
+- Use IDs for browser Network tab diagnostics and server logs.
+- Do not rely on IDs for client recovery until events are persisted.
+
+### Phase 3: Persist Semantic Event Log
+
+- Add an append-only event table for consult generation stream events.
+- Persist only semantic events:
+  - `snapshot`
+  - analysis stages
+  - section prose steps
+  - `section-completed`
+  - `section-failed`
+  - `done`
+  - terminal `error`
+- Do not persist heartbeat events.
+- Make event writes idempotent so retries do not duplicate sequence numbers.
+
+### Phase 4: Implement `Last-Event-ID` Replay
+
+- Parse `Last-Event-ID` from reconnecting SSE requests.
+- Validate that the event ID job portion matches the requested route job ID.
+- Authorize the caller against the job owner before replaying anything.
+- Replay persisted events after the requested sequence number.
+- Continue live streaming after replay completes.
+
+### Phase 5: Harden Fallbacks and Observability
+
+- Keep polling as the final fallback for stream failures, resume failures, and timeouts.
+- Log stream starts, reconnects, replay counts, last event IDs, and fallback reasons.
+- Add smoke coverage for:
+  - live SSE
+  - reconnect with `Last-Event-ID`
+  - invalid or mismatched `Last-Event-ID`
+  - polling fallback after stream failure
+
+### Phase 6: Profile Job History
+
+- Add a user-indexed job history table for the Profile tab.
+- Do not use the SSE event log as the Profile history source.
+- Write an index row when a job is created.
+- Update the index row when a job starts, completes, fails, or progress counts change.
+- Add an authenticated list endpoint:
+
+```text
+GET /api/Account/Jobs?limit=20&continuationToken=...
+```
+
+- Return only jobs belonging to the authenticated `AppUserId`.
+- Show recent jobs in the Profile tab with status, timestamps, and progress counts.
+- Reuse `GET /api/ConsultGenerationJobs/{jobId}` for full job detail when a user selects a job.
+
+## Storage Design
+
+### SSE Event Log
+
+Use Azure Table Storage for the resumable event stream:
+
+```text
+Table: ConsultGenerationJobEvents
+PartitionKey = JobId
+RowKey       = zero-padded sequence number
+AppUserId
+EventType
+PayloadJson
+CreatedAtUtc
+```
+
+Example row key:
+
+```text
+000000000012
+```
+
+The SSE `id:` value should combine the job ID and sequence number:
+
+```text
+04c45d68053c4b75b5db57e04b977e01:000000000012
+```
+
+### Profile Job Index
+
+Use a separate user-indexed table for job history:
+
+```text
+Table: ConsultGenerationJobIndex
+PartitionKey = AppUserId
+RowKey       = reverseTimestamp_jobId
+JobId
+Status
+CreatedAtUtc
+StartedAtUtc
+CompletedAtUtc
+SectionCount
+CompletedSectionCount
+FailedSectionCount
+```
+
+Use reverse timestamp row keys so newest jobs list first.
+
+Keep this table metadata-only by default. Do not store consult draft text, generated note text, or clinical preview text in the index table unless there is a separate product and privacy decision.
+
+## Client Behavior
+
+- Open the SSE stream only after job creation succeeds with `202 Accepted` and a job ID.
+- Track the latest received event ID.
+- If the stream drops, reconnect with `Last-Event-ID`.
+- If resume fails or times out, fall back to polling.
+- Polling remains responsible for confirming terminal state.
+
+## Security
+
+- Never trust `Last-Event-ID` for authorization.
+- Always authorize with the bearer token and server-side job ownership checks.
+- Reject or ignore `Last-Event-ID` values for a different job ID.
+- Do not expose full bearer tokens in diagnostics.
+- Do not accept client-supplied user IDs for job history queries; always use the authenticated `AppUserId`.
+
+## Acceptance Criteria
+
+- Live SSE still works without resume.
+- Event IDs appear in the browser Network tab.
+- A dropped stream can reconnect and replay missed semantic events.
+- Polling still reaches final state if SSE or resume fails.
+- Unauthorized users cannot stream, replay, poll, or list another user's jobs.
+- Profile can list the current user's recent jobs without scanning Durable entities.
+
+## Assumptions
+
+- Azure Table Storage is the preferred event log and job index storage.
+- Durable job state remains the authoritative current job state.
+- Polling remains the final fallback and source of truth for terminal state.
+- Resume is implemented incrementally, not as a rewrite of the current working SSE pipeline.
