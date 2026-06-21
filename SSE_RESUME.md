@@ -53,9 +53,10 @@ data: {...}
 ### Phase 2: Diagnostic SSE IDs
 
 - Add `id:` values to emitted SSE events without implementing replay yet.
-- Use monotonically increasing sequence numbers scoped to the job.
+- Use monotonically increasing sequence numbers scoped to the opened stream connection.
 - Use IDs for browser Network tab diagnostics and server logs.
 - Do not rely on IDs for client recovery until events are persisted.
+- Expect Phase 2 IDs to restart at `000000000001` after reconnects.
 
 ### Phase 3: Persist Semantic Event Log
 

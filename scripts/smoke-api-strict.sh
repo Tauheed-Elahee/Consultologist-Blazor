@@ -360,11 +360,13 @@ PY
   [[ "$sse_body" == *"event: snapshot"* ]] || fail "Durable SSE stream did not include snapshot; body=$sse_body"
   python3 - "$tmp_dir/durable_job_sse_stream.body" <<'PY'
 import json
+import re
 import sys
 from collections import Counter
 
 path = sys.argv[1]
 events = []
+current_id = None
 current_event = None
 current_data = []
 
@@ -373,21 +375,36 @@ with open(path, "r", encoding="utf-8") as handle:
         line = raw_line.rstrip("\n")
         if line == "":
             if current_event is not None:
-                events.append((current_event, "\n".join(current_data)))
+                events.append((current_id, current_event, "\n".join(current_data)))
+            current_id = None
             current_event = None
             current_data = []
             continue
 
-        if line.startswith("event: "):
+        if line.startswith("id: "):
+            current_id = line.removeprefix("id: ")
+        elif line.startswith("event: "):
             current_event = line.removeprefix("event: ")
         elif line.startswith("data: "):
             current_data.append(line.removeprefix("data: "))
 
-for event_name, data in events:
+semantic_events = [(event_id, event_name, data) for event_id, event_name, data in events if event_name != "heartbeat"]
+if not semantic_events:
+    raise SystemExit("Durable SSE stream did not include semantic events")
+
+for event_id, event_name, data in semantic_events:
+    if not event_id:
+        raise SystemExit(f"Durable SSE semantic event should include id; event={event_name!r}")
+    if not re.fullmatch(r"[0-9a-f]{32}:[0-9]{12}", event_id):
+        raise SystemExit(f"Durable SSE event id should be job-scoped and zero padded; event_id={event_id!r}")
+
+for event_id, event_name, data in events:
     if event_name == "snapshot":
         payload = json.loads(data)
         if payload.get("TotalSectionCount") != 1:
             raise SystemExit(f"Durable SSE snapshot should be entity-backed with TotalSectionCount=1; payload={payload!r}")
+        if event_id != f"{payload.get('JobId')}:000000000001":
+            raise SystemExit(f"Durable SSE first event id should be snapshot sequence 1; event_id={event_id!r}; payload={payload!r}")
         break
 else:
     raise SystemExit("Durable SSE stream did not include a parseable snapshot event")
@@ -400,9 +417,9 @@ stage_names = {
     "patient-trajectory-created",
     "section-generation-started",
 }
-stage_events = [(event_name, json.loads(data)) for event_name, data in events if event_name in stage_names]
+stage_events = [(event_name, json.loads(data)) for _, event_name, data in events if event_name in stage_names]
 if not stage_events:
-    raise SystemExit(f"Durable SSE stream did not include any preprocessing stage events; events={[name for name, _ in events]!r}")
+    raise SystemExit(f"Durable SSE stream did not include any preprocessing stage events; events={[name for _, name, _ in events]!r}")
 
 counts = Counter(event_name for event_name, _ in stage_events)
 duplicates = {name: count for name, count in counts.items() if count > 1}
@@ -417,7 +434,7 @@ for event_name, payload in stage_events:
     if not isinstance(payload.get("CompletedStageCount"), int):
         raise SystemExit(f"Durable SSE stage payload should include integer CompletedStageCount; payload={payload!r}")
 
-for event_name, data in events:
+for _, event_name, data in events:
     if event_name == "error":
         payload = json.loads(data)
         stage = payload.get("Stage")
@@ -429,7 +446,7 @@ section_step_names = {
     "section-patient-draft-created",
     "section-instructions-applied",
 }
-section_step_events = [(event_name, json.loads(data)) for event_name, data in events if event_name in section_step_names]
+section_step_events = [(event_name, json.loads(data)) for _, event_name, data in events if event_name in section_step_names]
 section_step_order = [event_name for event_name, _ in section_step_events]
 expected_section_step_order = [
     "section-standard-draft-created",
@@ -439,11 +456,11 @@ expected_section_step_order = [
 if section_step_order != expected_section_step_order:
     raise SystemExit(f"Durable SSE stream should emit all section prose steps exactly once in order; actual={section_step_order!r}")
 
-section_completed_index = next((index for index, (event_name, _) in enumerate(events) if event_name == "section-completed"), None)
+section_completed_index = next((index for index, (_, event_name, _) in enumerate(events) if event_name == "section-completed"), None)
 if section_completed_index is None:
     raise SystemExit("Durable SSE stream did not include section-completed")
 
-last_section_step_index = max(index for index, (event_name, _) in enumerate(events) if event_name in section_step_names)
+last_section_step_index = max(index for index, (_, event_name, _) in enumerate(events) if event_name in section_step_names)
 if last_section_step_index > section_completed_index:
     raise SystemExit("Durable SSE section prose steps should be emitted before section-completed")
 

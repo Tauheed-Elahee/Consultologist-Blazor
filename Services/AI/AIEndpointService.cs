@@ -416,7 +416,7 @@ public class AIEndpointService : IAIEndpointService
 
         await foreach (var item in parser.EnumerateAsync(cancellationToken))
         {
-            yield return new ConsultGenerationJobSseEvent(item.EventType, item.Data);
+            yield return new ConsultGenerationJobSseEvent(item.EventType, item.Data, item.EventId);
         }
     }
 
@@ -449,7 +449,7 @@ public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<Consul
 public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
 public record ConsultGenerationResponse(Dictionary<string, string> GeneratedSections, Dictionary<string, string> FailedSections, bool Success);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
-public record ConsultGenerationJobSseEvent(string EventName, string Json);
+public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
     string JobId,
     string? AppUserId,
