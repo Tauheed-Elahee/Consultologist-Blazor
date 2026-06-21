@@ -32,11 +32,16 @@ public sealed class ConsultGenerationJobs
 
     private readonly ILogger<ConsultGenerationJobs> _logger;
     private readonly IAccountAuthorizer _authorizer;
+    private readonly IConsultGenerationJobEventStore _eventStore;
 
-    public ConsultGenerationJobs(ILogger<ConsultGenerationJobs> logger, IAccountAuthorizer authorizer)
+    public ConsultGenerationJobs(
+        ILogger<ConsultGenerationJobs> logger,
+        IAccountAuthorizer authorizer,
+        IConsultGenerationJobEventStore eventStore)
     {
         _logger = logger;
         _authorizer = authorizer;
+        _eventStore = eventStore;
     }
 
     [Function("StartConsultGenerationJob")]
@@ -263,10 +268,23 @@ public sealed class ConsultGenerationJobs
             return new ForbidResult();
         }
 
+        var initialResponse = await WaitForInitialJobResponseAsync(
+            client,
+            jobId,
+            account.AppUserId,
+            cancellationToken);
+
+        if (initialResponse == null)
+        {
+            FunctionCors.Apply(req, req.HttpContext.Response);
+            return new NotFoundObjectResult(new { error = "Consult generation job was not found." });
+        }
+
         var events = CreateConsultGenerationJobEventsAsync(
             client,
             jobId,
             account.AppUserId,
+            initialResponse,
             cancellationToken);
 
         return new CorsResultActionResult(TypedResults.ServerSentEvents(events));
@@ -276,6 +294,7 @@ public sealed class ConsultGenerationJobs
         DurableTaskClient client,
         string jobId,
         string appUserId,
+        ConsultGenerationJobResponse initialResponse,
         CancellationToken cancellationToken)
     {
         var channel = Channel.CreateUnbounded<SseItem<string>>(new UnboundedChannelOptions
@@ -284,7 +303,7 @@ public sealed class ConsultGenerationJobs
             SingleWriter = true
         });
 
-        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, channel.Writer, cancellationToken);
+        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, initialResponse, channel.Writer, cancellationToken);
 
         return channel.Reader.ReadAllAsync(cancellationToken);
     }
@@ -293,71 +312,33 @@ public sealed class ConsultGenerationJobs
         DurableTaskClient client,
         string jobId,
         string appUserId,
+        ConsultGenerationJobResponse initialResponse,
         ChannelWriter<SseItem<string>> writer,
         CancellationToken cancellationToken)
     {
-        var eventIds = new SseEventIdGenerator(jobId, _logger);
-
         try
         {
             _logger.LogInformation(
                 "Consult generation SSE stream connected. JobId={JobId}",
                 jobId);
-
-            var initialResponse = await WaitForInitialJobResponseAsync(client, jobId, appUserId, cancellationToken);
-
-            if (initialResponse == null)
-            {
-                _logger.LogWarning(
-                    "Consult generation SSE job state was not ready before timeout. JobId={JobId}",
-                    jobId);
-
-                await writer.WriteAsync(CreateSseItem(
-                    "error",
-                    new ConsultGenerationJobStreamError(jobId, "Consult generation job state was not ready before the event stream timeout."),
-                    eventIds),
-                    cancellationToken);
-
-                return;
-            }
-
-            await writer.WriteAsync(CreateSseItem("snapshot", initialResponse, eventIds), cancellationToken);
+            var highestEmittedSequence = await WriteMaterializedEventsAsync(
+                writer,
+                initialResponse,
+                0,
+                cancellationToken);
 
             _logger.LogInformation(
-                "Consult generation SSE snapshot sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                "Consult generation SSE initial events sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
                 jobId,
                 initialResponse.Status,
                 initialResponse.TotalSectionCount,
                 initialResponse.CompletedSectionCount,
                 initialResponse.FailedSectionCount);
 
-            var seenCompletedSections = initialResponse.GeneratedSections.Keys.ToHashSet(StringComparer.Ordinal);
-            var seenFailedSections = initialResponse.FailedSections.Keys.ToHashSet(StringComparer.Ordinal);
-            var highestEmittedSectionProseStepCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-            var highestEmittedAnalysisStageCount = 0;
-            string? seenAnalysisFailureStatus = null;
-            var analysisEmitResult = await WriteAnalysisEventsAsync(
-                writer,
-                initialResponse,
-                highestEmittedAnalysisStageCount,
-                seenAnalysisFailureStatus,
-                eventIds,
-                cancellationToken);
-            highestEmittedAnalysisStageCount = analysisEmitResult.HighestEmittedStageCount;
-            seenAnalysisFailureStatus = analysisEmitResult.SeenFailureStatus;
-            await WriteSectionProseStepEventsAsync(
-                writer,
-                initialResponse,
-                highestEmittedSectionProseStepCounts,
-                eventIds,
-                cancellationToken);
-
             if (IsTerminalJobStatus(initialResponse.Status))
             {
-                await WriteRuntimeFailureEventAsync(writer, initialResponse, eventIds, cancellationToken);
-                await writer.WriteAsync(CreateSseItem("done", initialResponse, eventIds), cancellationToken);
                 _logger.LogInformation(
-                    "Consult generation SSE done sent from initial terminal snapshot. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                    "Consult generation SSE terminal initial state sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
                     jobId,
                     initialResponse.Status,
                     initialResponse.TotalSectionCount,
@@ -378,55 +359,17 @@ public sealed class ConsultGenerationJobs
 
                 if (latestResponse == null)
                 {
-                    await writer.WriteAsync(CreateSseItem("error", new ConsultGenerationJobStreamError(jobId, "Consult generation job was not found."), eventIds), cancellationToken);
-                    return;
+                    throw new InvalidOperationException("Consult generation job was not found.");
                 }
 
-                await WriteSectionProseStepEventsAsync(
+                highestEmittedSequence = await WriteMaterializedEventsAsync(
                     writer,
                     latestResponse,
-                    highestEmittedSectionProseStepCounts,
-                    eventIds,
+                    highestEmittedSequence,
                     cancellationToken);
-
-                foreach (var generatedSection in latestResponse.GeneratedSections)
-                {
-                    if (seenCompletedSections.Add(generatedSection.Key))
-                    {
-                        await writer.WriteAsync(CreateSseItem(
-                            "section-completed",
-                            new ConsultGenerationJobSectionCompletedEvent(jobId, generatedSection.Key, generatedSection.Value),
-                            eventIds),
-                            cancellationToken);
-                    }
-                }
-
-                foreach (var failedSection in latestResponse.FailedSections)
-                {
-                    if (seenFailedSections.Add(failedSection.Key))
-                    {
-                        await writer.WriteAsync(CreateSseItem(
-                            "section-failed",
-                            new ConsultGenerationJobSectionFailedEvent(jobId, failedSection.Key, failedSection.Value),
-                            eventIds),
-                            cancellationToken);
-                    }
-                }
-
-                analysisEmitResult = await WriteAnalysisEventsAsync(
-                    writer,
-                    latestResponse,
-                    highestEmittedAnalysisStageCount,
-                    seenAnalysisFailureStatus,
-                    eventIds,
-                    cancellationToken);
-                highestEmittedAnalysisStageCount = analysisEmitResult.HighestEmittedStageCount;
-                seenAnalysisFailureStatus = analysisEmitResult.SeenFailureStatus;
 
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
-                    await WriteRuntimeFailureEventAsync(writer, latestResponse, eventIds, cancellationToken);
-                    await writer.WriteAsync(CreateSseItem("done", latestResponse, eventIds), cancellationToken);
                     _logger.LogInformation(
                         "Consult generation SSE done sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
                         jobId,
@@ -468,17 +411,8 @@ public sealed class ConsultGenerationJobs
                 ex.GetType().FullName,
                 ex.Message);
 
-            try
-            {
-                await writer.WriteAsync(CreateSseItem("error", new ConsultGenerationJobStreamError(jobId, ex.Message), eventIds), CancellationToken.None);
-            }
-            catch (Exception writeException)
-            {
-                _logger.LogInformation(
-                    writeException,
-                    "Unable to write consult generation SSE error event. JobId={JobId}",
-                    jobId);
-            }
+            writer.TryComplete(ex);
+            return;
         }
         finally
         {
@@ -696,36 +630,203 @@ public sealed class ConsultGenerationJobs
         return response;
     }
 
-    private static SseItem<string> CreateSseItem<T>(
-        string eventName,
-        T payload,
-        SseEventIdGenerator? eventIds = null)
-    {
-        var json = JsonSerializer.Serialize(payload, JsonOptions);
-        return eventIds == null
-            ? new SseItem<string>(json, eventName)
-            : new SseItem<string>(json, eventName) { EventId = eventIds.Next(eventName) };
-    }
-
-    private static async Task WriteRuntimeFailureEventAsync(
+    private async Task<long> WriteMaterializedEventsAsync(
         ChannelWriter<SseItem<string>> writer,
         ConsultGenerationJobResponse response,
-        SseEventIdGenerator eventIds,
+        long highestEmittedSequence,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+        IReadOnlyList<ConsultGenerationJobStoredEvent> storedEvents;
+
+        try
+        {
+            storedEvents = await _eventStore.AppendAsync(
+                response.JobId,
+                response.AppUserId,
+                CreateSemanticEventCandidates(response),
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Consult generation SSE event persistence failed. JobId={JobId}, Status={Status}",
+                response.JobId,
+                response.Status);
+
+            throw;
+        }
+
+        foreach (var storedEvent in storedEvents.Where(storedEvent => storedEvent.Sequence > highestEmittedSequence))
+        {
+            await writer.WriteAsync(CreateSseItem(storedEvent), cancellationToken);
+            highestEmittedSequence = Math.Max(highestEmittedSequence, storedEvent.Sequence);
+        }
+
+        return highestEmittedSequence;
+    }
+
+    private static SseItem<string> CreateSseItem(ConsultGenerationJobStoredEvent storedEvent)
+    {
+        return new SseItem<string>(storedEvent.PayloadJson, storedEvent.EventType)
+        {
+            EventId = storedEvent.SseId
+        };
+    }
+
+    private static SseItem<string> CreateSseItem<T>(
+        string eventName,
+        T payload)
+    {
+        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        return new SseItem<string>(json, eventName);
+    }
+
+    private static IReadOnlyList<ConsultGenerationJobEventCandidate> CreateSemanticEventCandidates(
+        ConsultGenerationJobResponse response)
+    {
+        var candidates = new List<ConsultGenerationJobEventCandidate>();
+
+        AddEventCandidate(candidates, "snapshot", "snapshot", response);
+        AddAnalysisEventCandidates(candidates, response);
+        AddSectionProseStepEventCandidates(candidates, response);
+
+        foreach (var generatedSection in response.GeneratedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
+        {
+            AddEventCandidate(
+                candidates,
+                "section-completed",
+                $"section-completed:{generatedSection.Key}",
+                new ConsultGenerationJobSectionCompletedEvent(response.JobId, generatedSection.Key, generatedSection.Value));
+        }
+
+        foreach (var failedSection in response.FailedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
+        {
+            AddEventCandidate(
+                candidates,
+                "section-failed",
+                $"section-failed:{failedSection.Key}",
+                new ConsultGenerationJobSectionFailedEvent(response.JobId, failedSection.Key, failedSection.Value));
+        }
+
+        if (IsTerminalJobStatus(response.Status))
+        {
+            if (!string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+            {
+                var stage = response.RuntimeFailureStage ?? ConsultGenerationRuntimeFailure.StageName;
+                AddEventCandidate(
+                    candidates,
+                    "error",
+                    $"error:{stage}",
+                    new ConsultGenerationJobStreamError(response.JobId, response.RuntimeFailureError, stage));
+            }
+
+            AddEventCandidate(candidates, "done", "done", response);
+        }
+
+        return candidates;
+    }
+
+    private static void AddAnalysisEventCandidates(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        ConsultGenerationJobResponse response)
+    {
+        if (string.IsNullOrWhiteSpace(response.AnalysisStatus))
         {
             return;
         }
 
-        await writer.WriteAsync(CreateSseItem(
-            "error",
-            new ConsultGenerationJobStreamError(
-                response.JobId,
-                response.RuntimeFailureError,
-                response.RuntimeFailureStage ?? ConsultGenerationRuntimeFailure.StageName),
-            eventIds),
-            cancellationToken);
+        if (IsAnalysisFailureStatus(response.AnalysisStatus))
+        {
+            AddEventCandidate(
+                candidates,
+                "error",
+                $"error:{response.AnalysisStatus}",
+                new ConsultGenerationJobStreamError(
+                    response.JobId,
+                    response.AnalysisError ?? "Consult preprocessing failed.",
+                    response.AnalysisStatus));
+            return;
+        }
+
+        var completedStageCount = Math.Clamp(
+            response.CompletedStageCount ?? 0,
+            0,
+            ConsultGenerationAnalysisStatuses.TotalStageCount);
+
+        for (var stageCount = 1; stageCount <= completedStageCount; stageCount++)
+        {
+            var stage = GetAnalysisStageByCompletedCount(stageCount);
+
+            if (stage == null)
+            {
+                continue;
+            }
+
+            AddEventCandidate(
+                candidates,
+                stage,
+                $"analysis:{stage}",
+                new ConsultGenerationJobStageEvent(
+                    response.JobId,
+                    stage,
+                    GetAnalysisStageMessage(stage),
+                    stageCount,
+                    response.TotalStageCount ?? ConsultGenerationAnalysisStatuses.TotalStageCount));
+        }
+    }
+
+    private static void AddSectionProseStepEventCandidates(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        ConsultGenerationJobResponse response)
+    {
+        if (response.SectionProseProgress == null)
+        {
+            return;
+        }
+
+        foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
+        {
+            var completedStepCount = Math.Clamp(
+                progress.CompletedProseStepCount,
+                0,
+                ConsultGenerationSectionProseSteps.TotalStepCount);
+
+            for (var stepCount = 1; stepCount <= completedStepCount; stepCount++)
+            {
+                var step = GetSectionProseStepByCompletedCount(stepCount);
+
+                if (step == null)
+                {
+                    continue;
+                }
+
+                AddEventCandidate(
+                    candidates,
+                    step,
+                    $"section-prose:{progress.SectionId}:{step}",
+                    new ConsultGenerationSectionProseStepEvent(
+                        response.JobId,
+                        progress.SectionId,
+                        progress.SectionName,
+                        step,
+                        GetSectionProseStepMessage(step),
+                        stepCount,
+                        progress.TotalProseStepCount));
+            }
+        }
+    }
+
+    private static void AddEventCandidate<T>(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        string eventType,
+        string eventKey,
+        T payload)
+    {
+        candidates.Add(new ConsultGenerationJobEventCandidate(
+            eventType,
+            eventKey,
+            JsonSerializer.Serialize(payload, JsonOptions)));
     }
 
     private static ConsultGenerationRuntimeFailure? GetSanitizedRuntimeFailure(OrchestrationMetadata instance)
@@ -820,145 +921,9 @@ public sealed class ConsultGenerationJobs
         return "A backend dependency failed.";
     }
 
-    private static async Task<AnalysisEventEmitResult> WriteAnalysisEventsAsync(
-        ChannelWriter<SseItem<string>> writer,
-        ConsultGenerationJobResponse response,
-        int highestEmittedStageCount,
-        string? seenFailureStatus,
-        SseEventIdGenerator eventIds,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(response.AnalysisStatus))
-        {
-            return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
-        }
-
-        if (IsAnalysisFailureStatus(response.AnalysisStatus))
-        {
-            if (!string.Equals(response.AnalysisStatus, seenFailureStatus, StringComparison.Ordinal))
-            {
-                await writer.WriteAsync(CreateSseItem(
-                    "error",
-                    new ConsultGenerationJobStreamError(
-                        response.JobId,
-                        response.AnalysisError ?? "Consult preprocessing failed.",
-                        response.AnalysisStatus),
-                    eventIds),
-                    cancellationToken);
-                seenFailureStatus = response.AnalysisStatus;
-            }
-
-            return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
-        }
-
-        var completedStageCount = Math.Clamp(
-            response.CompletedStageCount ?? 0,
-            0,
-            ConsultGenerationAnalysisStatuses.TotalStageCount);
-
-        for (var stageCount = highestEmittedStageCount + 1; stageCount <= completedStageCount; stageCount++)
-        {
-            var stage = GetAnalysisStageByCompletedCount(stageCount);
-
-            if (stage == null)
-            {
-                continue;
-            }
-
-            await writer.WriteAsync(CreateSseItem(
-                stage,
-                new ConsultGenerationJobStageEvent(
-                    response.JobId,
-                    stage,
-                    GetAnalysisStageMessage(stage),
-                    stageCount,
-                    response.TotalStageCount ?? ConsultGenerationAnalysisStatuses.TotalStageCount),
-                eventIds),
-                cancellationToken);
-
-            highestEmittedStageCount = stageCount;
-        }
-
-        return new AnalysisEventEmitResult(highestEmittedStageCount, seenFailureStatus);
-    }
-
     private static bool IsAnalysisFailureStatus(string status)
     {
         return status.EndsWith("-failed", StringComparison.Ordinal);
-    }
-
-    private static async Task WriteSectionProseStepEventsAsync(
-        ChannelWriter<SseItem<string>> writer,
-        ConsultGenerationJobResponse response,
-        Dictionary<string, int> highestEmittedSectionProseStepCounts,
-        SseEventIdGenerator eventIds,
-        CancellationToken cancellationToken)
-    {
-        if (response.SectionProseProgress == null)
-        {
-            return;
-        }
-
-        foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
-        {
-            highestEmittedSectionProseStepCounts.TryGetValue(progress.SectionId, out var highestEmittedStepCount);
-            var completedStepCount = Math.Clamp(
-                progress.CompletedProseStepCount,
-                0,
-                ConsultGenerationSectionProseSteps.TotalStepCount);
-
-            for (var stepCount = highestEmittedStepCount + 1; stepCount <= completedStepCount; stepCount++)
-            {
-                var step = GetSectionProseStepByCompletedCount(stepCount);
-
-                if (step == null)
-                {
-                    continue;
-                }
-
-                await writer.WriteAsync(CreateSseItem(
-                    step,
-                    new ConsultGenerationSectionProseStepEvent(
-                        response.JobId,
-                        progress.SectionId,
-                        progress.SectionName,
-                        step,
-                        GetSectionProseStepMessage(step),
-                        stepCount,
-                        progress.TotalProseStepCount),
-                    eventIds),
-                    cancellationToken);
-
-                highestEmittedSectionProseStepCounts[progress.SectionId] = stepCount;
-            }
-        }
-    }
-
-    private sealed class SseEventIdGenerator
-    {
-        private readonly string _jobId;
-        private readonly ILogger _logger;
-        private long _sequence;
-
-        public SseEventIdGenerator(string jobId, ILogger logger)
-        {
-            _jobId = jobId;
-            _logger = logger;
-        }
-
-        public string Next(string eventName)
-        {
-            _sequence++;
-            var eventId = $"{_jobId}:{_sequence:D12}";
-
-            _logger.LogDebug(
-                "Consult generation SSE event ID assigned. JobId={JobId}, EventName={EventName}, EventId={EventId}",
-                _jobId,
-                eventName,
-                eventId);
-
-            return eventId;
-        }
     }
 
     private static string GetAnalysisStageMessage(string stage)
@@ -1063,10 +1028,6 @@ public sealed record ConsultGenerationSectionProseStepEvent(
     string Message,
     int CompletedStepCount,
     int TotalStepCount);
-
-public sealed record AnalysisEventEmitResult(
-    int HighestEmittedStageCount,
-    string? SeenFailureStatus);
 
 public sealed record ConsultGenerationRuntimeFailure(
     string Stage,

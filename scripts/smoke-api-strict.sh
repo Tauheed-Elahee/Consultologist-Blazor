@@ -392,11 +392,23 @@ semantic_events = [(event_id, event_name, data) for event_id, event_name, data i
 if not semantic_events:
     raise SystemExit("Durable SSE stream did not include semantic events")
 
+semantic_sequences = []
 for event_id, event_name, data in semantic_events:
     if not event_id:
         raise SystemExit(f"Durable SSE semantic event should include id; event={event_name!r}")
     if not re.fullmatch(r"[0-9a-f]{32}:[0-9]{12}", event_id):
         raise SystemExit(f"Durable SSE event id should be job-scoped and zero padded; event_id={event_id!r}")
+    semantic_sequences.append(int(event_id.rsplit(":", 1)[1]))
+
+if semantic_sequences != sorted(semantic_sequences):
+    raise SystemExit(f"Durable SSE semantic event ids should be monotonically increasing; sequences={semantic_sequences!r}")
+
+if len(semantic_sequences) != len(set(semantic_sequences)):
+    raise SystemExit(f"Durable SSE semantic event ids should not repeat; sequences={semantic_sequences!r}")
+
+heartbeat_ids = [event_id for event_id, event_name, _ in events if event_name == "heartbeat" and event_id]
+if heartbeat_ids:
+    raise SystemExit(f"Durable SSE heartbeat events should not advance persisted event ids; heartbeat_ids={heartbeat_ids!r}")
 
 for event_id, event_name, data in events:
     if event_name == "snapshot":

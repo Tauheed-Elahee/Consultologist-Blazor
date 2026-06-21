@@ -60,6 +60,7 @@ builder.Services.AddScoped<AgentProxy>();
 builder.Services.AddSingleton<IBearerTokenValidator, BearerTokenValidator>();
 builder.Services.AddSingleton<IAccountStore, AccountStore>();
 builder.Services.AddSingleton<IAccountSettingsStore, AccountSettingsStore>();
+builder.Services.AddSingleton<IConsultGenerationJobEventStore, TableConsultGenerationJobEventStore>();
 builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
 builder.Services.AddScoped<ConsultGeneration>();
