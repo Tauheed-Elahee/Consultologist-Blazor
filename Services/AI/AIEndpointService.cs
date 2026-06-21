@@ -465,7 +465,9 @@ public record ConsultGenerationJobResponse(
     string? AnalysisError = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
-    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null);
+    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
+    string? RuntimeFailureStage = null,
+    string? RuntimeFailureError = null);
 
 public record ConsultGenerationSectionProseProgress(
     string SectionId,

@@ -354,6 +354,7 @@ public sealed class ConsultGenerationJobs
 
             if (IsTerminalJobStatus(initialResponse.Status))
             {
+                await WriteRuntimeFailureEventAsync(writer, initialResponse, eventIds, cancellationToken);
                 await writer.WriteAsync(CreateSseItem("done", initialResponse, eventIds), cancellationToken);
                 _logger.LogInformation(
                     "Consult generation SSE done sent from initial terminal snapshot. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
@@ -424,6 +425,7 @@ public sealed class ConsultGenerationJobs
 
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
+                    await WriteRuntimeFailureEventAsync(writer, latestResponse, eventIds, cancellationToken);
                     await writer.WriteAsync(CreateSseItem("done", latestResponse, eventIds), cancellationToken);
                     _logger.LogInformation(
                         "Consult generation SSE done sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
@@ -535,6 +537,12 @@ public sealed class ConsultGenerationJobs
         var entityBackedResponse = await GetEntityBackedJobResponseAsync(client, jobId, cancellationToken);
         var instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: false, cancellationToken);
 
+        if (instance?.RuntimeStatus == OrchestrationRuntimeStatus.Failed)
+        {
+            instance = await client.GetInstancesAsync(jobId, getInputsAndOutputs: true, cancellationToken)
+                ?? instance;
+        }
+
         if (entityBackedResponse != null)
         {
             if (!string.Equals(entityBackedResponse.AppUserId, appUserId, StringComparison.Ordinal))
@@ -544,21 +552,28 @@ public sealed class ConsultGenerationJobs
 
             return MergeEntityAndRuntimeStatus(
                 entityBackedResponse,
-                instance?.RuntimeStatus);
+                instance);
         }
 
-        return instance == null
-            ? null
-            : new ConsultGenerationJobResponse(
-                jobId,
-                appUserId,
-                MapRuntimeStatus(instance.RuntimeStatus),
-                0,
-                0,
-                0,
-                new Dictionary<string, string>(),
-                new Dictionary<string, string>(),
-                false);
+        if (instance == null)
+        {
+            return null;
+        }
+
+        var runtimeFailure = GetSanitizedRuntimeFailure(instance);
+
+        return new ConsultGenerationJobResponse(
+            jobId,
+            appUserId,
+            MapRuntimeStatus(instance.RuntimeStatus),
+            0,
+            0,
+            0,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>(),
+            false,
+            RuntimeFailureStage: runtimeFailure?.Stage,
+            RuntimeFailureError: runtimeFailure?.Error);
     }
 
     private static async Task<ConsultGenerationJobResponse?> WaitForInitialJobResponseAsync(
@@ -599,18 +614,22 @@ public sealed class ConsultGenerationJobs
 
     private static ConsultGenerationJobResponse MergeEntityAndRuntimeStatus(
         ConsultGenerationJobResponse response,
-        OrchestrationRuntimeStatus? runtimeStatus)
+        OrchestrationMetadata? instance)
     {
-        if (runtimeStatus == null
+        if (instance == null
             || IsTerminalJobStatus(response.Status)
-            || !IsTerminalRuntimeStatus(runtimeStatus.Value))
+            || !IsTerminalRuntimeStatus(instance.RuntimeStatus))
         {
             return response;
         }
 
+        var runtimeFailure = GetSanitizedRuntimeFailure(instance);
+
         return response with
         {
-            Status = MapRuntimeStatus(runtimeStatus.Value)
+            Status = MapRuntimeStatus(instance.RuntimeStatus),
+            RuntimeFailureStage = runtimeFailure?.Stage,
+            RuntimeFailureError = runtimeFailure?.Error
         };
     }
 
@@ -686,6 +705,119 @@ public sealed class ConsultGenerationJobs
         return eventIds == null
             ? new SseItem<string>(json, eventName)
             : new SseItem<string>(json, eventName) { EventId = eventIds.Next(eventName) };
+    }
+
+    private static async Task WriteRuntimeFailureEventAsync(
+        ChannelWriter<SseItem<string>> writer,
+        ConsultGenerationJobResponse response,
+        SseEventIdGenerator eventIds,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+        {
+            return;
+        }
+
+        await writer.WriteAsync(CreateSseItem(
+            "error",
+            new ConsultGenerationJobStreamError(
+                response.JobId,
+                response.RuntimeFailureError,
+                response.RuntimeFailureStage ?? ConsultGenerationRuntimeFailure.StageName),
+            eventIds),
+            cancellationToken);
+    }
+
+    private static ConsultGenerationRuntimeFailure? GetSanitizedRuntimeFailure(OrchestrationMetadata instance)
+    {
+        if (MapRuntimeStatus(instance.RuntimeStatus) != ConsultGenerationJobStatuses.Failed)
+        {
+            return null;
+        }
+
+        if (instance.FailureDetails == null)
+        {
+            return new ConsultGenerationRuntimeFailure(
+                ConsultGenerationRuntimeFailure.StageName,
+                "Consult generation failed while running the backend workflow. Backend workflow stopped before completion.");
+        }
+
+        return GetSanitizedRuntimeFailure(instance.FailureDetails);
+    }
+
+    private static ConsultGenerationRuntimeFailure GetSanitizedRuntimeFailure(TaskFailureDetails failureDetails)
+    {
+        var failureText = GetFailureText(failureDetails);
+        var action = GetRuntimeFailureAction(failureText);
+        var cause = GetRuntimeFailureCause(failureText);
+
+        return new ConsultGenerationRuntimeFailure(
+            ConsultGenerationRuntimeFailure.StageName,
+            $"Consult generation failed while {action}. {cause}");
+    }
+
+    private static string GetFailureText(TaskFailureDetails failureDetails)
+    {
+        var parts = new List<string>();
+
+        for (var current = failureDetails; current != null; current = current.InnerFailure)
+        {
+            if (!string.IsNullOrWhiteSpace(current.ErrorType))
+            {
+                parts.Add(current.ErrorType);
+            }
+
+            if (!string.IsNullOrWhiteSpace(current.ErrorMessage))
+            {
+                parts.Add(current.ErrorMessage);
+            }
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static string GetRuntimeFailureAction(string failureText)
+    {
+        if (failureText.Contains(nameof(ExtractPatientConceptsActivity), StringComparison.Ordinal))
+        {
+            return "extracting patient concepts";
+        }
+
+        if (failureText.Contains(nameof(IdentifyProblemActivity), StringComparison.Ordinal))
+        {
+            return "identifying the primary problem";
+        }
+
+        if (failureText.Contains(nameof(CreateTypicalTrajectoryActivity), StringComparison.Ordinal))
+        {
+            return "building the reference trajectory";
+        }
+
+        if (failureText.Contains(nameof(CreatePatientTrajectoryActivity), StringComparison.Ordinal))
+        {
+            return "building the patient trajectory";
+        }
+
+        if (failureText.Contains(ConsultGenerationActivityNames.GenerateStandardSectionDraft, StringComparison.Ordinal)
+            || failureText.Contains(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation, StringComparison.Ordinal)
+            || failureText.Contains(ConsultGenerationActivityNames.ApplySectionInstructions, StringComparison.Ordinal))
+        {
+            return "generating a consult section";
+        }
+
+        return "running the backend workflow";
+    }
+
+    private static string GetRuntimeFailureCause(string failureText)
+    {
+        if (failureText.Contains("HTTP 408", StringComparison.OrdinalIgnoreCase)
+            || failureText.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+            || failureText.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Upstream AI service timed out.";
+        }
+
+        return "A backend dependency failed.";
     }
 
     private static async Task<AnalysisEventEmitResult> WriteAnalysisEventsAsync(
@@ -935,6 +1067,13 @@ public sealed record ConsultGenerationSectionProseStepEvent(
 public sealed record AnalysisEventEmitResult(
     int HighestEmittedStageCount,
     string? SeenFailureStatus);
+
+public sealed record ConsultGenerationRuntimeFailure(
+    string Stage,
+    string Error)
+{
+    public const string StageName = "runtime-failed";
+}
 
 public sealed class ConsultGenerationOrchestrator
 {

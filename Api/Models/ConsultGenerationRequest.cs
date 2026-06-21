@@ -38,7 +38,9 @@ public record ConsultGenerationJobResponse(
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
     IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null,
-    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null);
+    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
+    string? RuntimeFailureStage = null,
+    string? RuntimeFailureError = null);
 
 public record SectionGenerationResult(
     string SectionId,

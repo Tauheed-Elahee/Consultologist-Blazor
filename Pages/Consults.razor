@@ -452,7 +452,7 @@
             aiRequestError = error.Error;
             isAiRequestLoading = false;
             await InvokeAsync(StateHasChanged);
-            return ConsultGenerationEventResult.Completed;
+            return ConsultGenerationEventResult.Continue;
           }
 
           Logger.LogWarning(
@@ -496,6 +496,13 @@
     {
       aiProgressNotice = null;
       aiRequestError = response.AnalysisError;
+      return;
+    }
+
+    if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+    {
+      aiProgressNotice = null;
+      aiRequestError = response.RuntimeFailureError;
       return;
     }
 
