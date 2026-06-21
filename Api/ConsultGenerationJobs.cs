@@ -218,9 +218,14 @@ public sealed class ConsultGenerationJobs
 
         var response = await GetJobResponseAsync(client, jobId, account.AppUserId, cancellationToken);
 
-        return response == null
-            ? await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken)
-            : await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
+        if (response == null)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.NotFound, new { error = "Consult generation job was not found." }, cancellationToken);
+        }
+
+        await TryMaterializeEventsForPollingAsync(response, cancellationToken);
+
+        return await CreateJsonResponseAsync(req, HttpStatusCode.OK, response, cancellationToken);
     }
 
     [Function("GetConsultGenerationJobEvents")]
@@ -664,6 +669,32 @@ public sealed class ConsultGenerationJobs
         }
 
         return highestEmittedSequence;
+    }
+
+    private async Task TryMaterializeEventsForPollingAsync(
+        ConsultGenerationJobResponse response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _eventStore.AppendAsync(
+                response.JobId,
+                response.AppUserId,
+                CreateSemanticEventCandidates(response),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Consult generation polling event materialization failed. Returning job response without persisted SSE catch-up events. JobId={JobId}, Status={Status}",
+                response.JobId,
+                response.Status);
+        }
     }
 
     private static SseItem<string> CreateSseItem(ConsultGenerationJobStoredEvent storedEvent)
