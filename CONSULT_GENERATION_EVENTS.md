@@ -104,10 +104,14 @@ sequenceDiagram
 The `/events` endpoint emits these server-sent event names:
 
 - `snapshot`: initial full `ConsultGenerationJobResponse`.
+- analysis stage events: preprocessing progress such as `analysis-started`, `concepts-extracted`, and `section-generation-started`.
+- section prose step events: per-section prose progress such as `section-standard-draft-created`, `section-patient-draft-created`, and `section-instructions-applied`.
 - `section-completed`: one completed section with `JobId`, `SectionId`, and generated `Text`.
 - `section-failed`: one failed section with `JobId`, `SectionId`, and `Error`.
 - `heartbeat`: stream keepalive with `JobId` and current `Status`.
 - `done`: final full `ConsultGenerationJobResponse`.
 - `error`: stream-level failure with `JobId` and `Error`.
 
-The Blazor page treats `snapshot`, `section-completed`, `section-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.
+Semantic events include persisted `id:` values in the form `{jobId}:{sequence:D12}`. Heartbeat events are not persisted and do not advance the semantic event sequence.
+
+The Blazor page treats `snapshot`, analysis stage events, section prose step events, `section-completed`, `section-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.

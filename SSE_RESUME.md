@@ -16,9 +16,10 @@ Job ownership and authorization continue to use the authenticated account and th
 
 - The app has a working live SSE stream at `GET /api/ConsultGenerationJobs/{jobId}/events`.
 - The app has polling fallback through `GET /api/ConsultGenerationJobs/{jobId}`.
-- SSE events currently include `event:` and `data:` fields, but no `id:` field.
-- Current stream events are derived from Durable job state, not an append-only event log.
-- Because events are not persisted as an ordered log, true replay/resume is not currently possible.
+- Semantic SSE events include persisted `id:` values in the form `{jobId}:{sequenceNumber}`.
+- Semantic stream events are materialized from Durable job state into an append-only Azure Table log.
+- Heartbeat events are not persisted and do not advance the semantic event sequence.
+- `Last-Event-ID` replay is not implemented yet, so true browser resume is still Phase 4 work.
 
 ## Target Architecture
 
@@ -71,6 +72,7 @@ data: {...}
   - terminal `error`
 - Do not persist heartbeat events.
 - Make event writes idempotent so retries do not duplicate sequence numbers.
+- Materialize missing semantic events from Durable job state during SSE streaming and normal polling.
 
 ### Phase 4: Implement `Last-Event-ID` Replay
 
@@ -118,6 +120,7 @@ PartitionKey = JobId
 RowKey       = zero-padded sequence number
 AppUserId
 EventType
+EventKey
 PayloadJson
 CreatedAtUtc
 ```
@@ -133,6 +136,15 @@ The SSE `id:` value should combine the job ID and sequence number:
 ```text
 04c45d68053c4b75b5db57e04b977e01:000000000012
 ```
+
+The implementation also stores metadata rows in the same partition for idempotency:
+
+```text
+RowKey = !sequence
+RowKey = !event-key:{sha256(EventKey)}
+```
+
+`EventKey` values are deterministic semantic keys such as `snapshot`, `analysis:concepts-extracted`, `section-prose:hpi:section-standard-draft-created`, `section-completed:hpi`, `error:runtime-failed`, and `done`.
 
 ### Profile Job Index
 
