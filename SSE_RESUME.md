@@ -74,7 +74,49 @@ data: {...}
 - Make event writes idempotent so retries do not duplicate sequence numbers.
 - Materialize missing semantic events from Durable job state during SSE streaming and normal polling.
 
-### Phase 4: Implement `Last-Event-ID` Replay
+### Phase 4: Stream Exit Diagnostics
+
+- Add a client-generated SSE attempt ID for each stream open.
+- Send the attempt ID to `GET /api/ConsultGenerationJobs/{jobId}/events`, either as `attemptId` query string or `X-Consultologist-Sse-Attempt` header.
+- Include `JobId`, `AttemptId`, latest event ID, latest event type, elapsed time, and emitted event counts in server logs.
+- Log one server-side stream exit record from `finally` with an explicit exit reason:
+  - `Completed`
+  - `RequestAborted`
+  - `ServerTimeout`
+  - `ServerError`
+  - `TerminalInitialState`
+- Add a small authenticated diagnostics endpoint such as:
+
+```text
+POST /api/Diagnostics/SseExit
+```
+
+- Send client-side stream exit diagnostics with:
+  - `JobId`
+  - `AttemptId`
+  - reason
+  - latest event ID
+  - latest event name
+  - elapsed time
+  - received event count
+  - whether polling fallback started or completed
+  - `document.visibilityState`
+  - `navigator.onLine`
+  - whether a service worker controlled the page
+- Use explicit client reasons:
+  - `completed-via-sse`
+  - `ended-before-done`
+  - `timeout`
+  - `exception`
+  - `server-error-event`
+  - `manual-cancel`
+  - `component-disposed`
+  - `navigation`
+  - `polling-fallback-started`
+  - `polling-fallback-completed`
+- Do not initially intercept or mutate SSE traffic in the service worker. Record whether a service worker controlled the page first; add service-worker fetch diagnostics later only if attempt-level correlation still leaves the cause ambiguous.
+
+### Phase 5: Implement `Last-Event-ID` Replay
 
 - Parse `Last-Event-ID` from reconnecting SSE requests.
 - Validate that the event ID job portion matches the requested route job ID.
@@ -82,7 +124,7 @@ data: {...}
 - Replay persisted events after the requested sequence number.
 - Continue live streaming after replay completes.
 
-### Phase 5: Harden Fallbacks and Observability
+### Phase 6: Harden Fallbacks and Observability
 
 - Keep polling as the final fallback for stream failures, resume failures, and timeouts.
 - Log stream starts, reconnects, replay counts, last event IDs, and fallback reasons.
@@ -92,7 +134,7 @@ data: {...}
   - invalid or mismatched `Last-Event-ID`
   - polling fallback after stream failure
 
-### Phase 6: Profile Job History
+### Phase 7: Profile Job History
 
 - Add a user-indexed job history table for the Profile tab.
 - Do not use the SSE event log as the Profile history source.
