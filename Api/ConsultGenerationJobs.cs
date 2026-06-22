@@ -19,6 +19,15 @@ namespace Api;
 
 public sealed class ConsultGenerationJobs
 {
+    private const string MissingSseAttemptId = "missing";
+    private const string InvalidSseAttemptId = "invalid";
+    private const string SseExitReasonCompleted = "Completed";
+    private const string SseExitReasonTerminalInitialState = "TerminalInitialState";
+    private const string SseExitReasonRequestAborted = "RequestAborted";
+    private const string SseExitReasonServerTimeout = "ServerTimeout";
+    private const string SseExitReasonServerError = "ServerError";
+    private const string SseExitReasonChannelCompleted = "ChannelCompleted";
+
     private static readonly TimeSpan SsePollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SseStreamTimeout = TimeSpan.FromMinutes(10);
@@ -235,12 +244,14 @@ public sealed class ConsultGenerationJobs
         string jobId)
     {
         var cancellationToken = req.HttpContext.RequestAborted;
+        var attemptId = GetSseAttemptId(req);
 
         _logger.LogInformation(
-            "GetConsultGenerationJobEvents entered. Method={Method}, Path={Path}, JobId={JobId}",
+            "GetConsultGenerationJobEvents entered. Method={Method}, Path={Path}, JobId={JobId}, AttemptId={AttemptId}",
             req.Method,
             req.Path,
-            jobId);
+            jobId,
+            attemptId);
 
         if (IsOptions(req))
         {
@@ -289,6 +300,7 @@ public sealed class ConsultGenerationJobs
             client,
             jobId,
             account.AppUserId,
+            attemptId,
             initialResponse,
             cancellationToken);
 
@@ -299,6 +311,7 @@ public sealed class ConsultGenerationJobs
         DurableTaskClient client,
         string jobId,
         string appUserId,
+        string attemptId,
         ConsultGenerationJobResponse initialResponse,
         CancellationToken cancellationToken)
     {
@@ -308,7 +321,7 @@ public sealed class ConsultGenerationJobs
             SingleWriter = true
         });
 
-        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, initialResponse, channel.Writer, cancellationToken);
+        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, attemptId, initialResponse, channel.Writer, cancellationToken);
 
         return channel.Reader.ReadAllAsync(cancellationToken);
     }
@@ -317,38 +330,56 @@ public sealed class ConsultGenerationJobs
         DurableTaskClient client,
         string jobId,
         string appUserId,
+        string attemptId,
         ConsultGenerationJobResponse initialResponse,
         ChannelWriter<SseItem<string>> writer,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        var initialEventCount = 0;
+        var liveEventCount = 0;
+        var heartbeatCount = 0;
+        var highestEmittedSequence = 0L;
+        var latestEventId = (string?)null;
+        var latestEventType = (string?)null;
+        var terminalStatus = (string?)null;
+        var latestStatus = initialResponse.Status;
+        var exitReason = SseExitReasonChannelCompleted;
+        var serverErrorType = (string?)null;
+
         try
         {
             _logger.LogInformation(
-                "Consult generation SSE stream connected. JobId={JobId}",
-                jobId);
-            var highestEmittedSequence = await WriteMaterializedEventsAsync(
+                "Consult generation SSE stream connected. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}",
+                jobId,
+                appUserId,
+                attemptId);
+
+            var initialWriteResult = await WriteMaterializedEventsAsync(
                 writer,
                 initialResponse,
                 0,
                 cancellationToken);
+            highestEmittedSequence = initialWriteResult.HighestEmittedSequence;
+            initialEventCount += initialWriteResult.EventCount;
+            latestEventId = initialWriteResult.LatestEventId ?? latestEventId;
+            latestEventType = initialWriteResult.LatestEventType ?? latestEventType;
 
             _logger.LogInformation(
-                "Consult generation SSE initial events sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+                "Consult generation SSE initial events sent. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, InitialEventCount={InitialEventCount}",
                 jobId,
+                appUserId,
+                attemptId,
                 initialResponse.Status,
                 initialResponse.TotalSectionCount,
                 initialResponse.CompletedSectionCount,
-                initialResponse.FailedSectionCount);
+                initialResponse.FailedSectionCount,
+                initialEventCount);
 
             if (IsTerminalJobStatus(initialResponse.Status))
             {
-                _logger.LogInformation(
-                    "Consult generation SSE terminal initial state sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
-                    jobId,
-                    initialResponse.Status,
-                    initialResponse.TotalSectionCount,
-                    initialResponse.CompletedSectionCount,
-                    initialResponse.FailedSectionCount);
+                terminalStatus = initialResponse.Status;
+                exitReason = SseExitReasonTerminalInitialState;
                 return;
             }
 
@@ -367,60 +398,79 @@ public sealed class ConsultGenerationJobs
                     throw new InvalidOperationException("Consult generation job was not found.");
                 }
 
-                highestEmittedSequence = await WriteMaterializedEventsAsync(
+                latestStatus = latestResponse.Status;
+
+                var liveWriteResult = await WriteMaterializedEventsAsync(
                     writer,
                     latestResponse,
                     highestEmittedSequence,
                     cancellationToken);
+                highestEmittedSequence = liveWriteResult.HighestEmittedSequence;
+                liveEventCount += liveWriteResult.EventCount;
+                latestEventId = liveWriteResult.LatestEventId ?? latestEventId;
+                latestEventType = liveWriteResult.LatestEventType ?? latestEventType;
 
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
-                    _logger.LogInformation(
-                        "Consult generation SSE done sent. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
-                        jobId,
-                        latestResponse.Status,
-                        latestResponse.TotalSectionCount,
-                        latestResponse.CompletedSectionCount,
-                        latestResponse.FailedSectionCount);
+                    terminalStatus = latestResponse.Status;
+                    exitReason = SseExitReasonCompleted;
                     return;
                 }
 
                 if (DateTimeOffset.UtcNow >= nextHeartbeatAt)
                 {
-                    await writer.WriteAsync(CreateSseItem(
+                    var heartbeat = CreateSseItem(
                         "heartbeat",
-                        new ConsultGenerationJobHeartbeatEvent(jobId, latestResponse.Status)),
-                        cancellationToken);
+                        new ConsultGenerationJobHeartbeatEvent(jobId, latestResponse.Status));
+                    await writer.WriteAsync(heartbeat, cancellationToken);
+                    heartbeatCount++;
+                    latestEventId = heartbeat.EventId ?? latestEventId;
+                    latestEventType = heartbeat.EventType;
 
                     nextHeartbeatAt = DateTimeOffset.UtcNow + SseHeartbeatInterval;
                 }
             }
 
-            _logger.LogWarning(
-                "Consult generation SSE stream timeout reached before terminal status. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
-                jobId,
-                SseStreamTimeout.TotalMinutes);
+            exitReason = SseExitReasonServerTimeout;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogInformation(
-                "Consult generation SSE stream canceled. JobId={JobId}",
-                jobId);
+            exitReason = SseExitReasonRequestAborted;
+        }
+        catch (ChannelClosedException)
+        {
+            exitReason = SseExitReasonChannelCompleted;
         }
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Consult generation SSE stream failed. JobId={JobId}, ExceptionType={ExceptionType}, Message={Message}",
-                jobId,
-                ex.GetType().FullName,
-                ex.Message);
-
+            exitReason = SseExitReasonServerError;
+            serverErrorType = ex.GetType().FullName;
             writer.TryComplete(ex);
             return;
         }
         finally
         {
+            var logLevel = exitReason is SseExitReasonServerTimeout or SseExitReasonServerError
+                ? LogLevel.Warning
+                : LogLevel.Information;
+
+            _logger.Log(
+                logLevel,
+                "Consult generation SSE stream exited. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, ExitReason={ExitReason}, ElapsedMs={ElapsedMs}, InitialEventCount={InitialEventCount}, LiveEventCount={LiveEventCount}, HeartbeatCount={HeartbeatCount}, LatestEventId={LatestEventId}, LatestEventType={LatestEventType}, TerminalStatus={TerminalStatus}, LatestStatus={LatestStatus}, ServerErrorType={ServerErrorType}",
+                jobId,
+                appUserId,
+                attemptId,
+                exitReason,
+                stopwatch.ElapsedMilliseconds,
+                initialEventCount,
+                liveEventCount,
+                heartbeatCount,
+                latestEventId,
+                latestEventType,
+                terminalStatus,
+                latestStatus,
+                serverErrorType);
+
             writer.TryComplete();
         }
     }
@@ -616,6 +666,20 @@ public sealed class ConsultGenerationJobs
         return HttpMethods.IsOptions(req.Method);
     }
 
+    private static string GetSseAttemptId(HttpRequest req)
+    {
+        var rawAttemptId = req.Query["attemptId"].FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(rawAttemptId))
+        {
+            return MissingSseAttemptId;
+        }
+
+        return Guid.TryParse(rawAttemptId.Trim(), out var attemptId)
+            ? attemptId.ToString("D")
+            : InvalidSseAttemptId;
+    }
+
     private static HttpResponseData CreateEmptyResponse(HttpRequestData req, HttpStatusCode statusCode)
     {
         var response = req.CreateResponse(statusCode);
@@ -635,7 +699,7 @@ public sealed class ConsultGenerationJobs
         return response;
     }
 
-    private async Task<long> WriteMaterializedEventsAsync(
+    private async Task<SseMaterializedWriteResult> WriteMaterializedEventsAsync(
         ChannelWriter<SseItem<string>> writer,
         ConsultGenerationJobResponse response,
         long highestEmittedSequence,
@@ -662,13 +726,25 @@ public sealed class ConsultGenerationJobs
             throw;
         }
 
+        var eventCount = 0;
+        var latestEventId = (string?)null;
+        var latestEventType = (string?)null;
+
         foreach (var storedEvent in storedEvents.Where(storedEvent => storedEvent.Sequence > highestEmittedSequence))
         {
-            await writer.WriteAsync(CreateSseItem(storedEvent), cancellationToken);
+            var item = CreateSseItem(storedEvent);
+            await writer.WriteAsync(item, cancellationToken);
             highestEmittedSequence = Math.Max(highestEmittedSequence, storedEvent.Sequence);
+            eventCount++;
+            latestEventId = item.EventId;
+            latestEventType = item.EventType;
         }
 
-        return highestEmittedSequence;
+        return new SseMaterializedWriteResult(
+            highestEmittedSequence,
+            eventCount,
+            latestEventId,
+            latestEventType);
     }
 
     private async Task TryMaterializeEventsForPollingAsync(
@@ -1023,6 +1099,12 @@ public sealed class ConsultGenerationJobs
             return _result.ExecuteAsync(context.HttpContext);
         }
     }
+
+    private sealed record SseMaterializedWriteResult(
+        long HighestEmittedSequence,
+        int EventCount,
+        string? LatestEventId,
+        string? LatestEventType);
 }
 
 public sealed record ConsultGenerationJobSectionCompletedEvent(

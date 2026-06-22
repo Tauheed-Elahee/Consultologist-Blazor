@@ -1,11 +1,15 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using Microsoft.AspNetCore.Components.Routing
+@using System.Diagnostics
 @using System.Text
 @using System.Text.Json
 @using BlazorWasm.Services.AI
+@using BlazorWasm.Services.Diagnostics
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IAIEndpointService AIService
+@inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
 @inject IAccountEndpointService AccountService
 @attribute [Authorize]
@@ -162,10 +166,13 @@
   private int completedSectionCount;
   private int totalSectionCount;
   private CancellationTokenSource? activeEventStreamCancellationTokenSource;
+  private string? activeEventStreamCancellationReason;
+  private SseAttemptState? activeSseAttempt;
   private IReadOnlyList<SectionStandard> activeSectionSnapshots = Array.Empty<SectionStandard>();
 
   protected override async Task OnInitializedAsync()
   {
+    Navigation.LocationChanged += HandleLocationChanged;
     await LoadSectionStandardsAsync();
   }
 
@@ -245,6 +252,7 @@
           totalSectionCount);
 
         aiProgressNotice = "Live updates paused; checking status periodically.";
+        MarkPollingFallbackStarted();
         await InvokeAsync(StateHasChanged);
         await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
       }
@@ -256,6 +264,8 @@
     finally
     {
       isAiRequestLoading = false;
+      activeSseAttempt = null;
+      activeEventStreamCancellationReason = null;
     }
   }
 
@@ -264,28 +274,43 @@
     IReadOnlyList<SectionStandard> sectionSnapshots)
   {
     activeSectionSnapshots = sectionSnapshots;
+    var attempt = new SseAttemptState(jobId, Guid.NewGuid().ToString("D"));
+    activeSseAttempt = attempt;
 
     const int streamTimeoutMinutes = 10;
+    using var streamCancellationTokenSource = new CancellationTokenSource();
     using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(streamTimeoutMinutes));
-    activeEventStreamCancellationTokenSource = timeoutCancellationTokenSource;
+    using var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+      streamCancellationTokenSource.Token,
+      timeoutCancellationTokenSource.Token);
+    activeEventStreamCancellationTokenSource = streamCancellationTokenSource;
+    activeEventStreamCancellationReason = null;
 
     try
     {
       Logger.LogInformation(
-        "Opening consult generation SSE stream. JobId={JobId}, SectionCount={SectionCount}",
+        "Opening consult generation SSE stream. JobId={JobId}, AttemptId={AttemptId}, SectionCount={SectionCount}",
         jobId,
+        attempt.AttemptId,
         sectionSnapshots.Count);
 
-      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(jobId, timeoutCancellationTokenSource.Token))
+      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(jobId, attempt.AttemptId, linkedCancellationTokenSource.Token))
       {
+        attempt.RecordEvent(jobEvent);
         var eventResult = await HandleConsultGenerationJobEventAsync(jobEvent.EventName, jobEvent.Json);
 
-        if (eventResult == ConsultGenerationEventResult.Completed)
+        if (eventResult.DiagnosticReason != null)
         {
+          ReportSseExit(attempt, eventResult.DiagnosticReason);
+        }
+
+        if (eventResult.Result == ConsultGenerationEventResult.Completed)
+        {
+          ReportSseExit(attempt, "completed-via-sse");
           return ConsultGenerationStreamResult.Completed;
         }
 
-        if (eventResult == ConsultGenerationEventResult.FallbackToPolling)
+        if (eventResult.Result == ConsultGenerationEventResult.FallbackToPolling)
         {
           return ConsultGenerationStreamResult.FallbackToPolling;
         }
@@ -295,15 +320,30 @@
         "Consult generation SSE stream ended before done. JobId={JobId}",
         jobId);
 
+      ReportSseExit(attempt, "ended-before-done");
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
-    catch (OperationCanceledException) when (timeoutCancellationTokenSource.IsCancellationRequested)
+    catch (OperationCanceledException) when (timeoutCancellationTokenSource.IsCancellationRequested
+                                            && !streamCancellationTokenSource.IsCancellationRequested)
     {
       Logger.LogWarning(
         "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
         jobId,
         streamTimeoutMinutes);
 
+      ReportSseExit(attempt, "timeout");
+      return ConsultGenerationStreamResult.FallbackToPolling;
+    }
+    catch (OperationCanceledException)
+    {
+      var reason = activeEventStreamCancellationReason ?? "manual-cancel";
+      Logger.LogWarning(
+        "Consult generation SSE stream canceled. JobId={JobId}, AttemptId={AttemptId}, Reason={Reason}",
+        jobId,
+        attempt.AttemptId,
+        reason);
+
+      ReportSseExit(attempt, reason);
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
     catch (Exception ex)
@@ -313,11 +353,12 @@
         "Consult generation SSE stream setup failed. JobId={JobId}",
         jobId);
 
+      ReportSseExit(attempt, "exception");
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
     finally
     {
-      if (ReferenceEquals(activeEventStreamCancellationTokenSource, timeoutCancellationTokenSource))
+      if (ReferenceEquals(activeEventStreamCancellationTokenSource, streamCancellationTokenSource))
       {
         activeEventStreamCancellationTokenSource = null;
       }
@@ -340,6 +381,7 @@
         if (response.Status is "Completed" or "Failed")
         {
           aiProgressNotice = null;
+          MarkPollingFallbackCompleted();
           return;
         }
 
@@ -353,7 +395,7 @@
     }
   }
 
-  private async Task<ConsultGenerationEventResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
+  private async Task<ConsultGenerationEventHandlingResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
   {
     try
     {
@@ -442,7 +484,7 @@
           }
 
           await InvokeAsync(StateHasChanged);
-          return ConsultGenerationEventResult.Completed;
+          return new ConsultGenerationEventHandlingResult(ConsultGenerationEventResult.Completed);
 
         case "error":
           var error = JsonSerializer.Deserialize<ConsultGenerationErrorEvent>(json, SseJsonOptions);
@@ -452,18 +494,22 @@
             aiRequestError = error.Error;
             isAiRequestLoading = false;
             await InvokeAsync(StateHasChanged);
-            return ConsultGenerationEventResult.Continue;
+            return new ConsultGenerationEventHandlingResult(
+              ConsultGenerationEventResult.Continue,
+              "server-error-event");
           }
 
           Logger.LogWarning(
             "Consult generation SSE error event received. PayloadLength={PayloadLength}",
             json.Length);
 
-          return ConsultGenerationEventResult.FallbackToPolling;
+          return new ConsultGenerationEventHandlingResult(
+            ConsultGenerationEventResult.FallbackToPolling,
+            "server-error-event");
       }
 
       await InvokeAsync(StateHasChanged);
-      return ConsultGenerationEventResult.Continue;
+      return new ConsultGenerationEventHandlingResult(ConsultGenerationEventResult.Continue);
     }
     catch
     {
@@ -472,7 +518,9 @@
         eventName,
         json.Length);
 
-      return ConsultGenerationEventResult.FallbackToPolling;
+      return new ConsultGenerationEventHandlingResult(
+        ConsultGenerationEventResult.FallbackToPolling,
+        "exception");
     }
   }
 
@@ -557,6 +605,86 @@
       .Select(section => section.Name);
 
     aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
+  }
+
+  private void MarkPollingFallbackStarted()
+  {
+    if (activeSseAttempt == null)
+    {
+      return;
+    }
+
+    activeSseAttempt.PollingFallbackStarted = true;
+    ReportSseExit(activeSseAttempt, "polling-fallback-started");
+  }
+
+  private void MarkPollingFallbackCompleted()
+  {
+    if (activeSseAttempt == null)
+    {
+      return;
+    }
+
+    activeSseAttempt.PollingFallbackStarted = true;
+    activeSseAttempt.PollingFallbackCompleted = true;
+    ReportSseExit(activeSseAttempt, "polling-fallback-completed");
+  }
+
+  private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+  {
+    CancelActiveEventStream("navigation");
+  }
+
+  private void CancelActiveEventStream(string reason)
+  {
+    activeEventStreamCancellationReason ??= reason;
+
+    if (IsLifecycleSseExitReason(reason))
+    {
+      isAiRequestLoading = false;
+    }
+
+    if (activeSseAttempt != null)
+    {
+      ReportSseExit(activeSseAttempt, reason);
+    }
+
+    try
+    {
+      activeEventStreamCancellationTokenSource?.Cancel();
+    }
+    catch (ObjectDisposedException)
+    {
+    }
+  }
+
+  private void ReportSseExit(SseAttemptState attempt, string reason)
+  {
+    if (IsLifecycleSseExitReason(reason))
+    {
+      if (attempt.LifecycleExitReported)
+      {
+        return;
+      }
+
+      attempt.LifecycleExitReported = true;
+    }
+
+    _ = SseDiagnostics.ReportSseExitAsync(new SseExitDiagnostic(
+      attempt.JobId,
+      attempt.AttemptId,
+      reason,
+      attempt.LatestEventId,
+      attempt.LatestEventType,
+      attempt.EventCount,
+      attempt.ElapsedMs,
+      attempt.PollingFallbackStarted,
+      attempt.PollingFallbackCompleted));
+  }
+
+  private static bool IsLifecycleSseExitReason(string reason)
+  {
+    return reason is "component-disposed" or "navigation";
   }
 
   private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
@@ -675,9 +803,47 @@
     FallbackToPolling
   }
 
+  private sealed record ConsultGenerationEventHandlingResult(
+    ConsultGenerationEventResult Result,
+    string? DiagnosticReason = null);
+
+  private sealed class SseAttemptState
+  {
+    private readonly Stopwatch stopwatch = Stopwatch.StartNew();
+
+    public SseAttemptState(string jobId, string attemptId)
+    {
+      JobId = jobId;
+      AttemptId = attemptId;
+    }
+
+    public string JobId { get; }
+    public string AttemptId { get; }
+    public string? LatestEventId { get; private set; }
+    public string? LatestEventType { get; private set; }
+    public int EventCount { get; private set; }
+    public bool PollingFallbackStarted { get; set; }
+    public bool PollingFallbackCompleted { get; set; }
+    public bool LifecycleExitReported { get; set; }
+    public long ElapsedMs => stopwatch.ElapsedMilliseconds;
+
+    public void RecordEvent(ConsultGenerationJobSseEvent jobEvent)
+    {
+      EventCount++;
+
+      if (!string.IsNullOrWhiteSpace(jobEvent.EventId))
+      {
+        LatestEventId = jobEvent.EventId;
+      }
+
+      LatestEventType = jobEvent.EventName;
+    }
+  }
+
   public ValueTask DisposeAsync()
   {
-    activeEventStreamCancellationTokenSource?.Cancel();
+    Navigation.LocationChanged -= HandleLocationChanged;
+    CancelActiveEventStream("component-disposed");
     activeEventStreamCancellationTokenSource?.Dispose();
     return ValueTask.CompletedTask;
   }

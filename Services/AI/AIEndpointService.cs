@@ -23,10 +23,11 @@ public interface IAIEndpointService
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
-    string GetConsultGenerationJobEventsUrl(string jobId);
+    string GetConsultGenerationJobEventsUrl(string jobId, string attemptId);
 
     IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
         string jobId,
+        string attemptId,
         CancellationToken cancellationToken);
 }
 
@@ -366,7 +367,7 @@ public class AIEndpointService : IAIEndpointService
         }
     }
 
-    public string GetConsultGenerationJobEventsUrl(string jobId)
+    public string GetConsultGenerationJobEventsUrl(string jobId, string attemptId)
     {
         var functionUrl = _configuration["AzureFunction:ConsultGenerationJobsUrl"];
 
@@ -376,14 +377,15 @@ public class AIEndpointService : IAIEndpointService
             throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
         }
 
-        return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events";
+        return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events?attemptId={Uri.EscapeDataString(attemptId)}";
     }
 
     public async IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
         string jobId,
+        string attemptId,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var eventsUrl = GetConsultGenerationJobEventsUrl(jobId);
+        var eventsUrl = GetConsultGenerationJobEventsUrl(jobId, attemptId);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, eventsUrl);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
@@ -391,9 +393,10 @@ public class AIEndpointService : IAIEndpointService
         request.SetBrowserResponseStreamingEnabled(true);
 
         _logger.LogInformation(
-            "Opening consult generation SSE stream at {Url}. JobId={JobId}",
+            "Opening consult generation SSE stream at {Url}. JobId={JobId}, AttemptId={AttemptId}",
             eventsUrl,
-            jobId);
+            jobId,
+            attemptId);
 
         using var response = await _httpClient.SendAsync(
             request,

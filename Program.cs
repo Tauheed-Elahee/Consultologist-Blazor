@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using BlazorWasm;
 using BlazorWasm.Services.Accounts;
 using BlazorWasm.Services.AI;
+using BlazorWasm.Services.Diagnostics;
 using Microsoft.FluentUI.AspNetCore.Components;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -28,5 +29,6 @@ builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>(client =>
 });
 
 builder.Services.AddHttpClient<IAccountEndpointService, AccountEndpointService>();
+builder.Services.AddHttpClient<ISseDiagnosticsService, SseDiagnosticsService>();
 
 await builder.Build().RunAsync();

@@ -63,6 +63,7 @@ builder.Services.AddSingleton<IAccountSettingsStore, AccountSettingsStore>();
 builder.Services.AddSingleton<IConsultGenerationJobEventStore, TableConsultGenerationJobEventStore>();
 builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
+builder.Services.AddScoped<Diagnostics>();
 builder.Services.AddScoped<ConsultGeneration>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
 builder.Services.AddScoped<GenerateConsultSectionActivity>();
