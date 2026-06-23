@@ -299,19 +299,24 @@
         attempt.RecordEvent(jobEvent);
         var eventResult = await HandleConsultGenerationJobEventAsync(jobEvent.EventName, jobEvent.Json);
 
-        if (eventResult.DiagnosticReason != null)
+        if (eventResult.ServerErrorEventSeen)
         {
-          ReportSseExit(attempt, eventResult.DiagnosticReason);
+          attempt.ServerErrorEventSeen = true;
         }
 
         if (eventResult.Result == ConsultGenerationEventResult.Completed)
         {
-          ReportSseExit(attempt, "completed-via-sse");
+          ReportSseExit(attempt, GetCompletedSseExitReason(attempt, eventResult.FinalStatus));
           return ConsultGenerationStreamResult.Completed;
         }
 
         if (eventResult.Result == ConsultGenerationEventResult.FallbackToPolling)
         {
+          if (eventResult.FallbackDiagnosticReason != null)
+          {
+            ReportSseExit(attempt, eventResult.FallbackDiagnosticReason);
+          }
+
           return ConsultGenerationStreamResult.FallbackToPolling;
         }
       }
@@ -484,7 +489,9 @@
           }
 
           await InvokeAsync(StateHasChanged);
-          return new ConsultGenerationEventHandlingResult(ConsultGenerationEventResult.Completed);
+          return new ConsultGenerationEventHandlingResult(
+            ConsultGenerationEventResult.Completed,
+            FinalStatus: final?.Status);
 
         case "error":
           var error = JsonSerializer.Deserialize<ConsultGenerationErrorEvent>(json, SseJsonOptions);
@@ -496,7 +503,7 @@
             await InvokeAsync(StateHasChanged);
             return new ConsultGenerationEventHandlingResult(
               ConsultGenerationEventResult.Continue,
-              "server-error-event");
+              ServerErrorEventSeen: true);
           }
 
           Logger.LogWarning(
@@ -505,7 +512,8 @@
 
           return new ConsultGenerationEventHandlingResult(
             ConsultGenerationEventResult.FallbackToPolling,
-            "server-error-event");
+            ServerErrorEventSeen: true,
+            FallbackDiagnosticReason: "server-error-event");
       }
 
       await InvokeAsync(StateHasChanged);
@@ -520,7 +528,7 @@
 
       return new ConsultGenerationEventHandlingResult(
         ConsultGenerationEventResult.FallbackToPolling,
-        "exception");
+        FallbackDiagnosticReason: "exception");
     }
   }
 
@@ -660,6 +668,16 @@
 
   private void ReportSseExit(SseAttemptState attempt, string reason)
   {
+    if (IsTerminalSseExitReason(reason))
+    {
+      if (attempt.TerminalExitReported)
+      {
+        return;
+      }
+
+      attempt.TerminalExitReported = true;
+    }
+
     if (IsLifecycleSseExitReason(reason))
     {
       if (attempt.LifecycleExitReported)
@@ -685,6 +703,23 @@
   private static bool IsLifecycleSseExitReason(string reason)
   {
     return reason is "component-disposed" or "navigation";
+  }
+
+  private static bool IsTerminalSseExitReason(string reason)
+  {
+    return reason is "completed-via-sse"
+      or "server-error-event"
+      or "ended-before-done"
+      or "timeout"
+      or "exception"
+      or "manual-cancel";
+  }
+
+  private static string GetCompletedSseExitReason(SseAttemptState attempt, string? finalStatus)
+  {
+    return attempt.ServerErrorEventSeen || finalStatus == "Failed"
+      ? "server-error-event"
+      : "completed-via-sse";
   }
 
   private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
@@ -805,7 +840,9 @@
 
   private sealed record ConsultGenerationEventHandlingResult(
     ConsultGenerationEventResult Result,
-    string? DiagnosticReason = null);
+    bool ServerErrorEventSeen = false,
+    string? FinalStatus = null,
+    string? FallbackDiagnosticReason = null);
 
   private sealed class SseAttemptState
   {
@@ -824,6 +861,8 @@
     public int EventCount { get; private set; }
     public bool PollingFallbackStarted { get; set; }
     public bool PollingFallbackCompleted { get; set; }
+    public bool ServerErrorEventSeen { get; set; }
+    public bool TerminalExitReported { get; set; }
     public bool LifecycleExitReported { get; set; }
     public long ElapsedMs => stopwatch.ElapsedMilliseconds;
 

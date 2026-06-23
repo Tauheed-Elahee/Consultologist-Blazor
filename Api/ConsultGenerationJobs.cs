@@ -22,6 +22,7 @@ public sealed class ConsultGenerationJobs
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
+    private const string SseExitReasonTerminalFailure = "TerminalFailure";
     private const string SseExitReasonTerminalInitialState = "TerminalInitialState";
     private const string SseExitReasonRequestAborted = "RequestAborted";
     private const string SseExitReasonServerTimeout = "ServerTimeout";
@@ -379,7 +380,9 @@ public sealed class ConsultGenerationJobs
             if (IsTerminalJobStatus(initialResponse.Status))
             {
                 terminalStatus = initialResponse.Status;
-                exitReason = SseExitReasonTerminalInitialState;
+                exitReason = initialResponse.Status == ConsultGenerationJobStatuses.Failed
+                    ? SseExitReasonTerminalFailure
+                    : SseExitReasonTerminalInitialState;
                 return;
             }
 
@@ -413,7 +416,9 @@ public sealed class ConsultGenerationJobs
                 if (IsTerminalJobStatus(latestResponse.Status))
                 {
                     terminalStatus = latestResponse.Status;
-                    exitReason = SseExitReasonCompleted;
+                    exitReason = latestResponse.Status == ConsultGenerationJobStatuses.Failed
+                        ? SseExitReasonTerminalFailure
+                        : SseExitReasonCompleted;
                     return;
                 }
 
@@ -450,7 +455,9 @@ public sealed class ConsultGenerationJobs
         }
         finally
         {
-            var logLevel = exitReason is SseExitReasonServerTimeout or SseExitReasonServerError
+            var logLevel = exitReason is SseExitReasonTerminalFailure
+                or SseExitReasonServerTimeout
+                or SseExitReasonServerError
                 ? LogLevel.Warning
                 : LogLevel.Information;
 
