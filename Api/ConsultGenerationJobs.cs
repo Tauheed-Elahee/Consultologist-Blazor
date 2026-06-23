@@ -825,20 +825,49 @@ public sealed class ConsultGenerationJobs
 
         if (IsTerminalJobStatus(response.Status))
         {
-            if (!string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+            if (response.Status == ConsultGenerationJobStatuses.Failed)
             {
-                var stage = response.RuntimeFailureStage ?? ConsultGenerationRuntimeFailure.StageName;
-                AddEventCandidate(
-                    candidates,
-                    "error",
-                    $"error:{stage}",
-                    new ConsultGenerationJobStreamError(response.JobId, response.RuntimeFailureError, stage));
+                AddTerminalFailureEventCandidate(candidates, response);
+                return candidates;
             }
 
             AddEventCandidate(candidates, "done", "done", response);
         }
 
         return candidates;
+    }
+
+    private static void AddTerminalFailureEventCandidate(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        ConsultGenerationJobResponse response)
+    {
+        if (IsAnalysisFailureStatus(response.AnalysisStatus ?? string.Empty))
+        {
+            return;
+        }
+
+        var stage = response.RuntimeFailureStage;
+        var error = response.RuntimeFailureError;
+
+        if (string.IsNullOrWhiteSpace(stage))
+        {
+            stage = response.FailedSections.Count > 0
+                ? "section-generation-failed"
+                : ConsultGenerationRuntimeFailure.StageName;
+        }
+
+        if (string.IsNullOrWhiteSpace(error))
+        {
+            error = response.FailedSections.Count > 0
+                ? "Consult generation failed because no sections were generated."
+                : "Consult generation failed while running the backend workflow. Backend workflow stopped before completion.";
+        }
+
+        AddEventCandidate(
+            candidates,
+            "error",
+            $"error:{stage}",
+            new ConsultGenerationJobStreamError(response.JobId, error, stage));
     }
 
     private static void AddAnalysisEventCandidates(

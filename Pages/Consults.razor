@@ -325,6 +325,12 @@
         "Consult generation SSE stream ended before done. JobId={JobId}",
         jobId);
 
+      if (attempt.ServerErrorEventSeen)
+      {
+        ReportSseExit(attempt, "server-error-event");
+        return ConsultGenerationStreamResult.Completed;
+      }
+
       ReportSseExit(attempt, "ended-before-done");
       return ConsultGenerationStreamResult.FallbackToPolling;
     }
