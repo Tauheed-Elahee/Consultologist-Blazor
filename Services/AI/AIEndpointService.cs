@@ -23,12 +23,13 @@ public interface IAIEndpointService
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
-    string GetConsultGenerationJobEventsUrl(string jobId, string attemptId);
+    string GetConsultGenerationJobEventsUrl(string jobId, string attemptId, string? lastEventId = null);
 
     IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
         string jobId,
         string attemptId,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? lastEventId = null);
 }
 
 public class AIEndpointService : IAIEndpointService
@@ -367,7 +368,7 @@ public class AIEndpointService : IAIEndpointService
         }
     }
 
-    public string GetConsultGenerationJobEventsUrl(string jobId, string attemptId)
+    public string GetConsultGenerationJobEventsUrl(string jobId, string attemptId, string? lastEventId = null)
     {
         var functionUrl = _configuration["AzureFunction:ConsultGenerationJobsUrl"];
 
@@ -377,15 +378,17 @@ public class AIEndpointService : IAIEndpointService
             throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
         }
 
+        // Phase 7 will transmit lastEventId as Last-Event-ID after server/CORS support is wired.
         return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events?attemptId={Uri.EscapeDataString(attemptId)}";
     }
 
     public async IAsyncEnumerable<ConsultGenerationJobSseEvent> StreamConsultGenerationJobEventsAsync(
         string jobId,
         string attemptId,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken,
+        string? lastEventId = null)
     {
-        var eventsUrl = GetConsultGenerationJobEventsUrl(jobId, attemptId);
+        var eventsUrl = GetConsultGenerationJobEventsUrl(jobId, attemptId, lastEventId);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, eventsUrl);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
@@ -393,10 +396,11 @@ public class AIEndpointService : IAIEndpointService
         request.SetBrowserResponseStreamingEnabled(true);
 
         _logger.LogInformation(
-            "Opening consult generation SSE stream at {Url}. JobId={JobId}, AttemptId={AttemptId}",
+            "Opening consult generation SSE stream at {Url}. JobId={JobId}, AttemptId={AttemptId}, ResumeCursorPresent={ResumeCursorPresent}",
             eventsUrl,
             jobId,
-            attemptId);
+            attemptId,
+            !string.IsNullOrWhiteSpace(lastEventId));
 
         using var response = await _httpClient.SendAsync(
             request,

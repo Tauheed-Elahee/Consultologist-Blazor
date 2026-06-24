@@ -149,6 +149,7 @@
 @code {
   private const string StandardsPath = "templates/consult_section_standards.md";
   private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
+  private static readonly int MaxSseReconnectAttempts = 0;
   private static readonly JsonSerializerOptions SseJsonOptions = new()
   {
     PropertyNameCaseInsensitive = true
@@ -274,9 +275,67 @@
     IReadOnlyList<SectionStandard> sectionSnapshots)
   {
     activeSectionSnapshots = sectionSnapshots;
-    var attempt = new SseAttemptState(jobId, Guid.NewGuid().ToString("D"));
-    activeSseAttempt = attempt;
+    var stream = new SseStreamState(jobId);
 
+    try
+    {
+      for (var reconnectAttempt = 0; reconnectAttempt <= MaxSseReconnectAttempts; reconnectAttempt++)
+      {
+        var attempt = stream.StartAttempt();
+        activeSseAttempt = attempt;
+        var lastEventId = reconnectAttempt == 0 ? null : stream.LatestEventId;
+
+        var attemptResult = await StreamOneSseAttemptAsync(
+          jobId,
+          sectionSnapshots,
+          stream,
+          attempt,
+          reconnectAttempt,
+          lastEventId);
+
+        if (attemptResult == ConsultGenerationAttemptResult.Completed)
+        {
+          return ConsultGenerationStreamResult.Completed;
+        }
+
+        if (attemptResult == ConsultGenerationAttemptResult.FallbackToPolling
+            || !CanReconnectSse(stream, reconnectAttempt))
+        {
+          return ConsultGenerationStreamResult.FallbackToPolling;
+        }
+
+        var reconnectBackoff = GetSseReconnectBackoff(reconnectAttempt);
+        Logger.LogInformation(
+          "Reconnecting consult generation SSE stream. JobId={JobId}, ReconnectAttempt={ReconnectAttempt}, LastEventId={LastEventId}, BackoffMs={BackoffMs}",
+          jobId,
+          reconnectAttempt + 1,
+          stream.LatestEventId,
+          reconnectBackoff.TotalMilliseconds);
+
+        await Task.Delay(reconnectBackoff);
+
+        if (!isAiRequestLoading || activeEventStreamCancellationReason != null)
+        {
+          return ConsultGenerationStreamResult.FallbackToPolling;
+        }
+      }
+
+      return ConsultGenerationStreamResult.FallbackToPolling;
+    }
+    finally
+    {
+      activeSectionSnapshots = Array.Empty<SectionStandard>();
+    }
+  }
+
+  private async Task<ConsultGenerationAttemptResult> StreamOneSseAttemptAsync(
+    string jobId,
+    IReadOnlyList<SectionStandard> sectionSnapshots,
+    SseStreamState stream,
+    SseAttemptState attempt,
+    int reconnectAttempt,
+    string? lastEventId)
+  {
     const int streamTimeoutMinutes = 10;
     using var streamCancellationTokenSource = new CancellationTokenSource();
     using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(streamTimeoutMinutes));
@@ -289,25 +348,33 @@
     try
     {
       Logger.LogInformation(
-        "Opening consult generation SSE stream. JobId={JobId}, AttemptId={AttemptId}, SectionCount={SectionCount}",
+        "Opening consult generation SSE stream. JobId={JobId}, AttemptId={AttemptId}, SectionCount={SectionCount}, ReconnectAttempt={ReconnectAttempt}, ResumeCursorPresent={ResumeCursorPresent}",
         jobId,
         attempt.AttemptId,
-        sectionSnapshots.Count);
+        sectionSnapshots.Count,
+        reconnectAttempt,
+        !string.IsNullOrWhiteSpace(lastEventId));
 
-      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(jobId, attempt.AttemptId, linkedCancellationTokenSource.Token))
+      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(
+        jobId,
+        attempt.AttemptId,
+        linkedCancellationTokenSource.Token,
+        lastEventId))
       {
         attempt.RecordEvent(jobEvent);
+        stream.RecordEvent(jobEvent);
         var eventResult = await HandleConsultGenerationJobEventAsync(jobEvent.EventName, jobEvent.Json);
 
         if (eventResult.ServerErrorEventSeen)
         {
           attempt.ServerErrorEventSeen = true;
+          stream.ServerErrorEventSeen = true;
         }
 
         if (eventResult.Result == ConsultGenerationEventResult.Completed)
         {
           ReportSseExit(attempt, GetCompletedSseExitReason(attempt, eventResult.FinalStatus));
-          return ConsultGenerationStreamResult.Completed;
+          return ConsultGenerationAttemptResult.Completed;
         }
 
         if (eventResult.Result == ConsultGenerationEventResult.FallbackToPolling)
@@ -317,22 +384,24 @@
             ReportSseExit(attempt, eventResult.FallbackDiagnosticReason);
           }
 
-          return ConsultGenerationStreamResult.FallbackToPolling;
+          return ConsultGenerationAttemptResult.FallbackToPolling;
         }
       }
 
       Logger.LogWarning(
-        "Consult generation SSE stream ended before done. JobId={JobId}",
-        jobId);
+        "Consult generation SSE stream ended before done. JobId={JobId}, AttemptId={AttemptId}, ReconnectAttempt={ReconnectAttempt}",
+        jobId,
+        attempt.AttemptId,
+        reconnectAttempt);
 
       if (attempt.ServerErrorEventSeen)
       {
         ReportSseExit(attempt, "server-error-event");
-        return ConsultGenerationStreamResult.Completed;
+        return ConsultGenerationAttemptResult.Completed;
       }
 
       ReportSseExit(attempt, "ended-before-done");
-      return ConsultGenerationStreamResult.FallbackToPolling;
+      return ConsultGenerationAttemptResult.RetrySse;
     }
     catch (OperationCanceledException) when (timeoutCancellationTokenSource.IsCancellationRequested
                                             && !streamCancellationTokenSource.IsCancellationRequested)
@@ -343,7 +412,7 @@
         streamTimeoutMinutes);
 
       ReportSseExit(attempt, "timeout");
-      return ConsultGenerationStreamResult.FallbackToPolling;
+      return ConsultGenerationAttemptResult.RetrySse;
     }
     catch (OperationCanceledException)
     {
@@ -355,7 +424,18 @@
         reason);
 
       ReportSseExit(attempt, reason);
-      return ConsultGenerationStreamResult.FallbackToPolling;
+      return ConsultGenerationAttemptResult.FallbackToPolling;
+    }
+    catch (AccessTokenNotAvailableException ex)
+    {
+      Logger.LogWarning(
+        ex,
+        "Consult generation SSE stream authorization failed. JobId={JobId}, AttemptId={AttemptId}",
+        jobId,
+        attempt.AttemptId);
+
+      ReportSseExit(attempt, "exception");
+      return ConsultGenerationAttemptResult.FallbackToPolling;
     }
     catch (Exception ex)
     {
@@ -365,7 +445,7 @@
         jobId);
 
       ReportSseExit(attempt, "exception");
-      return ConsultGenerationStreamResult.FallbackToPolling;
+      return ConsultGenerationAttemptResult.RetrySse;
     }
     finally
     {
@@ -373,8 +453,6 @@
       {
         activeEventStreamCancellationTokenSource = null;
       }
-
-      activeSectionSnapshots = Array.Empty<SectionStandard>();
     }
   }
 
@@ -728,6 +806,28 @@
       : "completed-via-sse";
   }
 
+  private static bool CanReconnectSse(SseStreamState stream, int reconnectAttempt)
+  {
+    if (MaxSseReconnectAttempts <= 0)
+    {
+      return false;
+    }
+
+    return reconnectAttempt < MaxSseReconnectAttempts
+      && !stream.TerminalEventSeen
+      && (!string.IsNullOrWhiteSpace(stream.LatestEventId) || stream.EventCount == 0);
+  }
+
+  private static TimeSpan GetSseReconnectBackoff(int reconnectAttempt)
+  {
+    return reconnectAttempt switch
+    {
+      0 => TimeSpan.FromMilliseconds(500),
+      1 => TimeSpan.FromMilliseconds(1500),
+      _ => TimeSpan.FromSeconds(3)
+    };
+  }
+
   private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
   {
     return activeSectionSnapshots.Count > 0
@@ -837,6 +937,13 @@
     FallbackToPolling
   }
 
+  private enum ConsultGenerationAttemptResult
+  {
+    Completed,
+    RetrySse,
+    FallbackToPolling
+  }
+
   private enum ConsultGenerationEventResult
   {
     Continue,
@@ -849,6 +956,43 @@
     bool ServerErrorEventSeen = false,
     string? FinalStatus = null,
     string? FallbackDiagnosticReason = null);
+
+  private sealed class SseStreamState
+  {
+    public SseStreamState(string jobId)
+    {
+      JobId = jobId;
+    }
+
+    public string JobId { get; }
+    public string? LatestEventId { get; private set; }
+    public string? LatestEventType { get; private set; }
+    public int EventCount { get; private set; }
+    public bool ServerErrorEventSeen { get; set; }
+    public bool TerminalEventSeen { get; private set; }
+
+    public SseAttemptState StartAttempt()
+    {
+      return new SseAttemptState(JobId, Guid.NewGuid().ToString("D"));
+    }
+
+    public void RecordEvent(ConsultGenerationJobSseEvent jobEvent)
+    {
+      EventCount++;
+
+      if (!string.IsNullOrWhiteSpace(jobEvent.EventId))
+      {
+        LatestEventId = jobEvent.EventId;
+      }
+
+      LatestEventType = jobEvent.EventName;
+
+      if (jobEvent.EventName is "done" or "error")
+      {
+        TerminalEventSeen = true;
+      }
+    }
+  }
 
   private sealed class SseAttemptState
   {
