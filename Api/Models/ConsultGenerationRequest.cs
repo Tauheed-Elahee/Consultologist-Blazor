@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Api.Models;
 
 public record ConsultGenerationRequest(
@@ -31,12 +33,17 @@ public record ConsultGenerationJobResponse(
     int? SchemaVersion = null,
     string? AnalysisStatus = null,
     string? AnalysisError = null,
+    [property: JsonIgnore]
     IReadOnlyList<ClinicalConcept>? PatientConcepts = null,
+    [property: JsonIgnore]
     IReadOnlyList<ClinicalConcept>? ProblemContext = null,
+    [property: JsonIgnore]
     IReadOnlyList<ClinicalConcept>? TypicalTrajectoryConcepts = null,
+    [property: JsonIgnore]
     IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
+    [property: JsonIgnore]
     IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null,
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
     string? RuntimeFailureStage = null,

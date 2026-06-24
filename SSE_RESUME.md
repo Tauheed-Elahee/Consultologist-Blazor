@@ -125,6 +125,16 @@ POST /api/Diagnostics/SseExit
 
 ### Phase 5: Implement `Last-Event-ID` Replay
 
+- Before replay work, keep replayable public payloads limited to UI state.
+- Polling responses and replayable SSE `snapshot`/`done` payloads should not expose internal preprocessing arrays:
+  - `PatientConcepts`
+  - `ProblemContext`
+  - `TypicalTrajectoryConcepts`
+  - `PatientTrajectoryConcepts`
+  - `ValidationWarnings`
+- Successful terminal jobs emit `done` with the sanitized public job response.
+- Failed terminal jobs emit `error` with a sanitized failure category/message and do not emit `done`.
+- This keeps Phase 5 replay from preserving and re-sending internal concept extraction details.
 - Parse `Last-Event-ID` from reconnecting SSE requests.
 - Validate that the event ID job portion matches the requested route job ID.
 - Authorize the caller against the job owner before replaying anything.

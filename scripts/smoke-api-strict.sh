@@ -301,12 +301,13 @@ PY
   assert_json durable_job_status 'isinstance(payload.get("AnalysisStatus"), str) and "-" in payload.get("AnalysisStatus")' "Durable job status should expose kebab-case analysis status"
   assert_json durable_job_status 'payload.get("AnalysisStatus") == "section-generation-started" or payload.get("AnalysisStatus", "").endswith("-failed")' "Durable terminal job should expose final analysis stage or preprocessing failure"
   assert_json durable_job_status 'payload.get("CompletedStageCount") in (0, 6)' "Durable terminal job should expose completed analysis stage count"
+  assert_json durable_job_status '"PatientConcepts" not in payload' "Durable public job status should not expose patient concepts"
+  assert_json durable_job_status '"ProblemContext" not in payload' "Durable public job status should not expose problem context"
+  assert_json durable_job_status '"TypicalTrajectoryConcepts" not in payload' "Durable public job status should not expose typical trajectory concepts"
+  assert_json durable_job_status '"PatientTrajectoryConcepts" not in payload' "Durable public job status should not expose patient trajectory concepts"
+  assert_json durable_job_status '"ValidationWarnings" not in payload' "Durable public job status should not expose preprocessing validation warnings"
   if [[ "$terminal_status" == "Completed" ]]; then
     assert_json durable_job_status 'payload.get("Success") is True' "Durable completed job should have Success=true"
-    assert_json durable_job_status 'isinstance(payload.get("PatientConcepts"), list) and len(payload.get("PatientConcepts")) > 0' "Durable completed job should persist patient concepts"
-    assert_json durable_job_status 'isinstance(payload.get("ProblemContext"), list) and len(payload.get("ProblemContext")) > 0' "Durable completed job should persist problem context"
-    assert_json durable_job_status 'isinstance(payload.get("TypicalTrajectoryConcepts"), list) and len(payload.get("TypicalTrajectoryConcepts")) > 0' "Durable completed job should persist typical trajectory concepts"
-    assert_json durable_job_status 'isinstance(payload.get("PatientTrajectoryConcepts"), list) and len(payload.get("PatientTrajectoryConcepts")) > 0' "Durable completed job should persist patient trajectory concepts"
     assert_json durable_job_status 'payload.get("SectionProseProgress", {}).get("history", {}).get("CompletedProseStepCount") == 3' "Durable completed job should persist completed prose step count"
     assert_json durable_job_status 'payload.get("SectionProseProgress", {}).get("history", {}).get("TotalProseStepCount") == 3' "Durable completed job should persist total prose step count"
   else
