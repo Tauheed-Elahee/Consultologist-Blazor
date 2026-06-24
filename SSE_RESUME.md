@@ -19,7 +19,7 @@ Job ownership and authorization continue to use the authenticated account and th
 - Semantic SSE events include persisted `id:` values in the form `{jobId}:{sequenceNumber}`.
 - Semantic stream events are materialized from Durable job state into an append-only Azure Table log.
 - Heartbeat events are not persisted and do not advance the semantic event sequence.
-- `Last-Event-ID` replay is not implemented yet, so true browser resume is still Phase 4 work.
+- `Last-Event-ID` replay is not implemented yet, so true browser resume is still Phase 5 work.
 
 ## Target Architecture
 
@@ -68,11 +68,12 @@ data: {...}
   - section prose steps
   - `section-completed`
   - `section-failed`
-  - `done`
-  - terminal `error`
+  - `done` for successful terminal job completion
+  - terminal `error` for failed terminal jobs
 - Do not persist heartbeat events.
 - Make event writes idempotent so retries do not duplicate sequence numbers.
 - Materialize missing semantic events from Durable job state during SSE streaming and normal polling.
+- A terminal failed job ends its stream with `error` and does not emit `done`.
 
 ### Phase 4: Stream Exit Diagnostics
 
@@ -81,10 +82,14 @@ data: {...}
 - Include `JobId`, `AttemptId`, latest event ID, latest event type, elapsed time, and emitted event counts in server logs.
 - Log one server-side stream exit record from `finally` with an explicit exit reason:
   - `Completed`
+  - `TerminalFailure`
   - `RequestAborted`
   - `ServerTimeout`
   - `ServerError`
   - `TerminalInitialState`
+  - `ChannelCompleted`
+- Use `Completed` only when the stream reaches a successful terminal job state.
+- Use `TerminalFailure` when the stream reaches a failed terminal job state.
 - Add a small authenticated diagnostics endpoint such as:
 
 ```text
@@ -114,6 +119,8 @@ POST /api/Diagnostics/SseExit
   - `navigation`
   - `polling-fallback-started`
   - `polling-fallback-completed`
+- For terminal failed jobs, the expected client diagnostic is `Reason=server-error-event` with `LatestEventType=error`.
+- For successful terminal jobs, the expected client diagnostic is `Reason=completed-via-sse` with `LatestEventType=done`.
 - Do not initially intercept or mutate SSE traffic in the service worker. Record whether a service worker controlled the page first; add service-worker fetch diagnostics later only if attempt-level correlation still leaves the cause ambiguous.
 
 ### Phase 5: Implement `Last-Event-ID` Replay
