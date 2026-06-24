@@ -15,6 +15,12 @@ public interface IConsultGenerationJobEventStore
         string appUserId,
         IReadOnlyList<ConsultGenerationJobEventCandidate> candidates,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ConsultGenerationJobStoredEvent>> ReadAfterAsync(
+        string jobId,
+        string appUserId,
+        long sequence,
+        CancellationToken cancellationToken);
 }
 
 internal sealed class TableConsultGenerationJobEventStore : IConsultGenerationJobEventStore
@@ -66,6 +72,41 @@ internal sealed class TableConsultGenerationJobEventStore : IConsultGenerationJo
         foreach (var candidate in candidates)
         {
             storedEvents.Add(await AppendOneAsync(jobId, appUserId, candidate, cancellationToken));
+        }
+
+        return storedEvents
+            .OrderBy(storedEvent => storedEvent.Sequence)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<ConsultGenerationJobStoredEvent>> ReadAfterAsync(
+        string jobId,
+        string appUserId,
+        long sequence,
+        CancellationToken cancellationToken)
+    {
+        if (sequence < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sequence), "Sequence must be greater than or equal to zero.");
+        }
+
+        await EnsureTableAsync(cancellationToken);
+        await ValidatePartitionOwnerAsync(jobId, appUserId, cancellationToken);
+
+        var minRowKey = FormatSequence(sequence);
+        var filter = TableClient.CreateQueryFilter($"PartitionKey eq {jobId} and RowKey gt {minRowKey}");
+        var storedEvents = new List<ConsultGenerationJobStoredEvent>();
+
+        await foreach (var entity in _events.QueryAsync<ConsultGenerationJobEventEntity>(
+            filter,
+            cancellationToken: cancellationToken))
+        {
+            if (!string.Equals(entity.AppUserId, appUserId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Consult generation SSE event app user mismatch. JobId={jobId}, Sequence={entity.Sequence}");
+            }
+
+            storedEvents.Add(ToStoredEvent(entity));
         }
 
         return storedEvents
@@ -222,6 +263,27 @@ internal sealed class TableConsultGenerationJobEventStore : IConsultGenerationJo
         }
 
         return ToStoredEvent(eventEntity);
+    }
+
+    private async Task ValidatePartitionOwnerAsync(
+        string jobId,
+        string appUserId,
+        CancellationToken cancellationToken)
+    {
+        var counter = await TryGetEntityAsync<ConsultGenerationJobEventSequenceEntity>(
+            jobId,
+            SequenceRowKey,
+            cancellationToken);
+
+        if (counter == null || string.IsNullOrWhiteSpace(counter.AppUserId))
+        {
+            return;
+        }
+
+        if (!string.Equals(counter.AppUserId, appUserId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"Consult generation SSE event app user mismatch. JobId={jobId}");
+        }
     }
 
     private async Task<T?> TryGetEntityAsync<T>(
