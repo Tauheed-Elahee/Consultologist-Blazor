@@ -187,6 +187,19 @@ assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers
 assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Last-Event-ID"
 pass "ConsultGenerationJobs CORS preflight returns expected platform CORS headers"
 
+request consult_generation_job_events_cors \
+  -X OPTIONS \
+  -H "Origin: $ALLOWED_ORIGIN" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: Authorization, Last-Event-ID" \
+  "$BASE_URL/api/ConsultGenerationJobs/not-found/events"
+assert_status consult_generation_job_events_cors 200
+assert_header_contains consult_generation_job_events_cors Access-Control-Allow-Origin "$ALLOWED_ORIGIN"
+assert_header_contains consult_generation_job_events_cors Access-Control-Allow-Methods "GET"
+assert_header_contains consult_generation_job_events_cors Access-Control-Allow-Headers "Authorization"
+assert_header_contains consult_generation_job_events_cors Access-Control-Allow-Headers "Last-Event-ID"
+pass "ConsultGenerationJobs events CORS preflight allows Last-Event-ID"
+
 request consult_generation_jobs_invalid \
   -X POST \
   -H "Content-Type: application/json" \
@@ -218,6 +231,22 @@ assert_status consult_generation_job_events_not_found 404
 assert_header_contains consult_generation_job_events_not_found Content-Type "application/json"
 assert_json consult_generation_job_events_not_found 'payload.get("error") == "Consult generation job was not found."' "ConsultGenerationJobs events not-found response should include exact error"
 pass "ConsultGenerationJobs events not-found lookup returns exact 404 JSON"
+
+request consult_generation_job_events_invalid_last_event_id \
+  -H "Last-Event-ID: malformed" \
+  "$BASE_URL/api/ConsultGenerationJobs/not-found/events"
+assert_status consult_generation_job_events_invalid_last_event_id 400
+assert_header_contains consult_generation_job_events_invalid_last_event_id Content-Type "application/json"
+assert_json consult_generation_job_events_invalid_last_event_id 'payload.get("error") == "Invalid Last-Event-ID header."' "ConsultGenerationJobs events invalid Last-Event-ID should return sanitized error"
+pass "ConsultGenerationJobs events rejects malformed Last-Event-ID"
+
+request consult_generation_job_events_mismatched_last_event_id \
+  -H "Last-Event-ID: other-job:000000000001" \
+  "$BASE_URL/api/ConsultGenerationJobs/not-found/events"
+assert_status consult_generation_job_events_mismatched_last_event_id 400
+assert_header_contains consult_generation_job_events_mismatched_last_event_id Content-Type "application/json"
+assert_json consult_generation_job_events_mismatched_last_event_id 'payload.get("error") == "Last-Event-ID does not match the requested job."' "ConsultGenerationJobs events mismatched Last-Event-ID should return sanitized error"
+pass "ConsultGenerationJobs events rejects mismatched Last-Event-ID"
 
 if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
   request agent_proxy_valid \
@@ -489,9 +518,127 @@ for expected_count, (event_name, payload) in enumerate(section_step_events, star
     if payload.get("TotalStepCount") != 3:
         raise SystemExit(f"Durable SSE section prose step should include TotalStepCount=3; payload={payload!r}")
 PY
+  resume_cursor="$(python3 - "$tmp_dir/durable_job_sse_stream.body" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+events = []
+current_id = None
+current_event = None
+current_data = []
+
+with open(path, "r", encoding="utf-8") as handle:
+    for raw_line in handle:
+        line = raw_line.rstrip("\n")
+        if line == "":
+            if current_event is not None:
+                events.append((current_id, current_event, "\n".join(current_data)))
+            current_id = None
+            current_event = None
+            current_data = []
+            continue
+
+        if line.startswith("id: "):
+            current_id = line.removeprefix("id: ")
+        elif line.startswith("event: "):
+            current_event = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            current_data.append(line.removeprefix("data: "))
+
+semantic_ids = [
+    event_id
+    for event_id, event_name, _ in events
+    if event_name != "heartbeat" and event_id
+]
+
+if len(semantic_ids) < 2:
+    raise SystemExit(f"Durable SSE stream needs at least two semantic events to test replay; semantic_ids={semantic_ids!r}")
+
+for event_id in semantic_ids:
+    if not re.fullmatch(r"[0-9a-f]{32}:[0-9]{12}", event_id):
+        raise SystemExit(f"Durable SSE event id should be job-scoped and zero padded; event_id={event_id!r}")
+
+print(semantic_ids[0])
+PY
+)"
+
+  request durable_job_sse_replay \
+    --max-time 60 \
+    -N \
+    -H "Last-Event-ID: $resume_cursor" \
+    "$events_url"
+  assert_status durable_job_sse_replay 200
+  assert_header_contains durable_job_sse_replay Content-Type "text/event-stream"
+
+  python3 - "$tmp_dir/durable_job_sse_replay.body" "$resume_cursor" <<'PY'
+import re
+import sys
+
+path, cursor = sys.argv[1:]
+cursor_job_id, cursor_sequence_text = cursor.rsplit(":", 1)
+cursor_sequence = int(cursor_sequence_text)
+events = []
+current_id = None
+current_event = None
+current_data = []
+
+with open(path, "r", encoding="utf-8") as handle:
+    for raw_line in handle:
+        line = raw_line.rstrip("\n")
+        if line == "":
+            if current_event is not None:
+                events.append((current_id, current_event, "\n".join(current_data)))
+            current_id = None
+            current_event = None
+            current_data = []
+            continue
+
+        if line.startswith("id: "):
+            current_id = line.removeprefix("id: ")
+        elif line.startswith("event: "):
+            current_event = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            current_data.append(line.removeprefix("data: "))
+
+semantic_events = [
+    (event_id, event_name, data)
+    for event_id, event_name, data in events
+    if event_name != "heartbeat"
+]
+
+if not semantic_events:
+    raise SystemExit("Durable SSE replay did not include semantic events")
+
+semantic_sequences = []
+for event_id, event_name, _ in semantic_events:
+    if not event_id:
+        raise SystemExit(f"Durable SSE replay semantic event should include id; event={event_name!r}")
+    if not re.fullmatch(r"[0-9a-f]{32}:[0-9]{12}", event_id):
+        raise SystemExit(f"Durable SSE replay event id should be job-scoped and zero padded; event_id={event_id!r}")
+
+    event_job_id, sequence_text = event_id.rsplit(":", 1)
+    if event_job_id != cursor_job_id:
+        raise SystemExit(f"Durable SSE replay event id should belong to cursor job; cursor={cursor!r}; event_id={event_id!r}")
+
+    sequence = int(sequence_text)
+    if sequence <= cursor_sequence:
+        raise SystemExit(f"Durable SSE replay emitted event at or before cursor; cursor={cursor!r}; event_id={event_id!r}")
+
+    semantic_sequences.append(sequence)
+
+if semantic_sequences != sorted(semantic_sequences):
+    raise SystemExit(f"Durable SSE replay semantic event ids should be monotonically increasing; sequences={semantic_sequences!r}")
+
+if len(semantic_sequences) != len(set(semantic_sequences)):
+    raise SystemExit(f"Durable SSE replay semantic event ids should not repeat; sequences={semantic_sequences!r}")
+
+if semantic_sequences[0] != cursor_sequence + 1:
+    raise SystemExit(f"Durable SSE replay should start immediately after cursor; cursor={cursor!r}; sequences={semantic_sequences!r}")
+PY
   [[ "$sse_body" == *"event: section-completed"* || "$sse_body" == *"event: section-failed"* ]] || fail "Durable SSE stream did not include a section event; body=$sse_body"
   [[ "$sse_body" == *"event: done"* ]] || fail "Durable SSE stream did not include done; body=$sse_body"
-  pass "ConsultGenerationJobs valid SSE stream emits snapshot, preprocessing stage progress, section progress, and done"
+  pass "ConsultGenerationJobs valid SSE stream emits snapshot, preprocessing stage progress, section progress, done, and resumable replay"
 else
   echo "SKIP: Durable valid SSE stream. Set RUN_VALID_DURABLE_JOB_SSE=1 to enable."
 fi
