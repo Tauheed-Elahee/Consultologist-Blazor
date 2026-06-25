@@ -19,7 +19,7 @@ Job ownership and authorization continue to use the authenticated account and th
 - Semantic SSE events include persisted `id:` values in the form `{jobId}:{sequenceNumber}`.
 - Semantic stream events are materialized from Durable job state into an append-only Azure Table log.
 - Heartbeat events are not persisted and do not advance the semantic event sequence.
-- `Last-Event-ID` replay is not implemented yet, so true browser resume is still Phase 5 work.
+- `Last-Event-ID` replay is implemented with manual `HttpClient` reconnect and one retry before polling fallback.
 
 ## Target Architecture
 
@@ -123,9 +123,40 @@ POST /api/Diagnostics/SseExit
 - For successful terminal jobs, the expected client diagnostic is `Reason=completed-via-sse` with `LatestEventType=done`.
 - Do not initially intercept or mutate SSE traffic in the service worker. Record whether a service worker controlled the page first; add service-worker fetch diagnostics later only if attempt-level correlation still leaves the cause ambiguous.
 
+### Preparation Between Phase 4 and Phase 5
+
+These items were completed before enabling `Last-Event-ID` replay:
+
+1. Validate Phase 4 diagnostics:
+   - Confirm successful streams report `Reason=completed-via-sse` with `LatestEventType=done`.
+   - Confirm terminal failed jobs report `Reason=server-error-event` and server `ExitReason=TerminalFailure`.
+   - Cover success, terminal failure, navigation/component disposal, polling fallback, and anonymous diagnostics `401` cases.
+2. Clarify stream terminal semantics:
+   - `done` means successful terminal stream completion.
+   - failed terminal jobs emit `error` and do not emit `done`.
+   - server exit reasons include `TerminalFailure`.
+3. Clean public response payloads:
+   - replayable polling/SSE payloads no longer expose internal concept extraction arrays or validation warning internals.
+   - replay stores only sanitized UI-facing event payloads.
+4. Add event-store replay support:
+   - `IConsultGenerationJobEventStore` supports reading stored events after a sequence with `ReadAfterAsync(jobId, appUserId, sequence)`.
+5. Choose client reconnect design:
+   - keep the existing Blazor `HttpClient` streaming implementation.
+   - add manual reconnect logic in `Pages/Consults.razor`.
+   - keep one opaque `attemptId` per physical SSE connection.
+6. Choose cursor transport:
+   - use the SSE-standard `Last-Event-ID` header for the replay cursor.
+   - keep `attemptId` in the query string for diagnostics.
+   - allow `Last-Event-ID` through CORS.
+7. Stage replay activation:
+   - parse and validate the cursor server-side.
+   - authorize by bearer token and job ownership before replaying anything.
+   - replay stored events after the requested sequence, then continue live streaming.
+   - enable one manual reconnect attempt before falling back to polling.
+
 ### Phase 5: Implement `Last-Event-ID` Replay
 
-- Before replay work, keep replayable public payloads limited to UI state.
+- Replayable public payloads are limited to UI state.
 - Polling responses and replayable SSE `snapshot`/`done` payloads should not expose internal preprocessing arrays:
   - `PatientConcepts`
   - `ProblemContext`
@@ -134,7 +165,7 @@ POST /api/Diagnostics/SseExit
   - `ValidationWarnings`
 - Successful terminal jobs emit `done` with the sanitized public job response.
 - Failed terminal jobs emit `error` with a sanitized failure category/message and do not emit `done`.
-- This keeps Phase 5 replay from preserving and re-sending internal concept extraction details.
+- This keeps replay from preserving and re-sending internal concept extraction details.
 - Parse `Last-Event-ID` from reconnecting SSE requests.
 - Validate that the event ID job portion matches the requested route job ID.
 - Authorize the caller against the job owner before replaying anything.
