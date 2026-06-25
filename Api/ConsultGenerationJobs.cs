@@ -19,6 +19,7 @@ namespace Api;
 
 public sealed class ConsultGenerationJobs
 {
+    private const string LastEventIdHeaderName = "Last-Event-ID";
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
@@ -285,6 +286,12 @@ public sealed class ConsultGenerationJobs
             return new ForbidResult();
         }
 
+        if (!TryGetResumeAfterSequence(req, jobId, out var resumeAfterSequence, out var lastEventIdError))
+        {
+            FunctionCors.Apply(req, req.HttpContext.Response);
+            return new BadRequestObjectResult(new { error = lastEventIdError });
+        }
+
         var initialResponse = await WaitForInitialJobResponseAsync(
             client,
             jobId,
@@ -302,6 +309,7 @@ public sealed class ConsultGenerationJobs
             jobId,
             account.AppUserId,
             attemptId,
+            resumeAfterSequence,
             initialResponse,
             cancellationToken);
 
@@ -313,6 +321,7 @@ public sealed class ConsultGenerationJobs
         string jobId,
         string appUserId,
         string attemptId,
+        long resumeAfterSequence,
         ConsultGenerationJobResponse initialResponse,
         CancellationToken cancellationToken)
     {
@@ -322,7 +331,15 @@ public sealed class ConsultGenerationJobs
             SingleWriter = true
         });
 
-        _ = WriteConsultGenerationJobEventsAsync(client, jobId, appUserId, attemptId, initialResponse, channel.Writer, cancellationToken);
+        _ = WriteConsultGenerationJobEventsAsync(
+            client,
+            jobId,
+            appUserId,
+            attemptId,
+            resumeAfterSequence,
+            initialResponse,
+            channel.Writer,
+            cancellationToken);
 
         return channel.Reader.ReadAllAsync(cancellationToken);
     }
@@ -332,15 +349,17 @@ public sealed class ConsultGenerationJobs
         string jobId,
         string appUserId,
         string attemptId,
+        long resumeAfterSequence,
         ConsultGenerationJobResponse initialResponse,
         ChannelWriter<SseItem<string>> writer,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         var initialEventCount = 0;
+        var replayEventCount = 0;
         var liveEventCount = 0;
         var heartbeatCount = 0;
-        var highestEmittedSequence = 0L;
+        var highestEmittedSequence = resumeAfterSequence;
         var latestEventId = (string?)null;
         var latestEventType = (string?)null;
         var terminalStatus = (string?)null;
@@ -351,15 +370,39 @@ public sealed class ConsultGenerationJobs
         try
         {
             _logger.LogInformation(
-                "Consult generation SSE stream connected. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}",
+                "Consult generation SSE stream connected. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, ResumeAfterSequence={ResumeAfterSequence}",
                 jobId,
                 appUserId,
-                attemptId);
+                attemptId,
+                resumeAfterSequence);
+
+            if (resumeAfterSequence > 0)
+            {
+                var replayWriteResult = await WriteReplayedEventsAsync(
+                    writer,
+                    jobId,
+                    appUserId,
+                    resumeAfterSequence,
+                    cancellationToken);
+                highestEmittedSequence = replayWriteResult.HighestEmittedSequence;
+                replayEventCount += replayWriteResult.EventCount;
+                latestEventId = replayWriteResult.LatestEventId ?? latestEventId;
+                latestEventType = replayWriteResult.LatestEventType ?? latestEventType;
+
+                _logger.LogInformation(
+                    "Consult generation SSE replay events sent. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, ResumeAfterSequence={ResumeAfterSequence}, ReplayEventCount={ReplayEventCount}, HighestEmittedSequence={HighestEmittedSequence}",
+                    jobId,
+                    appUserId,
+                    attemptId,
+                    resumeAfterSequence,
+                    replayEventCount,
+                    highestEmittedSequence);
+            }
 
             var initialWriteResult = await WriteMaterializedEventsAsync(
                 writer,
                 initialResponse,
-                0,
+                highestEmittedSequence,
                 cancellationToken);
             highestEmittedSequence = initialWriteResult.HighestEmittedSequence;
             initialEventCount += initialWriteResult.EventCount;
@@ -463,12 +506,14 @@ public sealed class ConsultGenerationJobs
 
             _logger.Log(
                 logLevel,
-                "Consult generation SSE stream exited. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, ExitReason={ExitReason}, ElapsedMs={ElapsedMs}, InitialEventCount={InitialEventCount}, LiveEventCount={LiveEventCount}, HeartbeatCount={HeartbeatCount}, LatestEventId={LatestEventId}, LatestEventType={LatestEventType}, TerminalStatus={TerminalStatus}, LatestStatus={LatestStatus}, ServerErrorType={ServerErrorType}",
+                "Consult generation SSE stream exited. JobId={JobId}, AppUserId={AppUserId}, AttemptId={AttemptId}, ExitReason={ExitReason}, ElapsedMs={ElapsedMs}, ResumeAfterSequence={ResumeAfterSequence}, ReplayEventCount={ReplayEventCount}, InitialEventCount={InitialEventCount}, LiveEventCount={LiveEventCount}, HeartbeatCount={HeartbeatCount}, LatestEventId={LatestEventId}, LatestEventType={LatestEventType}, TerminalStatus={TerminalStatus}, LatestStatus={LatestStatus}, ServerErrorType={ServerErrorType}",
                 jobId,
                 appUserId,
                 attemptId,
                 exitReason,
                 stopwatch.ElapsedMilliseconds,
+                resumeAfterSequence,
+                replayEventCount,
                 initialEventCount,
                 liveEventCount,
                 heartbeatCount,
@@ -687,6 +732,72 @@ public sealed class ConsultGenerationJobs
             : InvalidSseAttemptId;
     }
 
+    private static bool TryGetResumeAfterSequence(
+        HttpRequest req,
+        string jobId,
+        out long resumeAfterSequence,
+        out string? error)
+    {
+        resumeAfterSequence = 0;
+        error = null;
+
+        if (!req.Headers.TryGetValue(LastEventIdHeaderName, out var headerValues))
+        {
+            return true;
+        }
+
+        var values = new List<string>();
+
+        foreach (var value in headerValues)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value.Trim());
+            }
+        }
+
+        if (values.Count == 0)
+        {
+            return true;
+        }
+
+        if (values.Count != 1)
+        {
+            error = "Invalid Last-Event-ID header.";
+            return false;
+        }
+
+        var lastEventId = values[0];
+        var separatorIndex = lastEventId.IndexOf(':', StringComparison.Ordinal);
+
+        if (separatorIndex <= 0
+            || separatorIndex != lastEventId.LastIndexOf(':')
+            || separatorIndex == lastEventId.Length - 1)
+        {
+            error = "Invalid Last-Event-ID header.";
+            return false;
+        }
+
+        var eventJobId = lastEventId[..separatorIndex];
+        var sequenceText = lastEventId[(separatorIndex + 1)..];
+
+        if (!string.Equals(eventJobId, jobId, StringComparison.Ordinal))
+        {
+            error = "Last-Event-ID does not match the requested job.";
+            return false;
+        }
+
+        if (sequenceText.Length != 12
+            || sequenceText.Any(character => character is < '0' or > '9')
+            || !long.TryParse(sequenceText, out resumeAfterSequence))
+        {
+            error = "Invalid Last-Event-ID header.";
+            return false;
+        }
+
+        return true;
+    }
+
     private static HttpResponseData CreateEmptyResponse(HttpRequestData req, HttpStatusCode statusCode)
     {
         var response = req.CreateResponse(statusCode);
@@ -704,6 +815,41 @@ public sealed class ConsultGenerationJobs
         FunctionCors.Apply(req, response);
         await response.WriteAsJsonAsync(payload, cancellationToken);
         return response;
+    }
+
+    private async Task<SseMaterializedWriteResult> WriteReplayedEventsAsync(
+        ChannelWriter<SseItem<string>> writer,
+        string jobId,
+        string appUserId,
+        long resumeAfterSequence,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ConsultGenerationJobStoredEvent> storedEvents;
+
+        try
+        {
+            storedEvents = await _eventStore.ReadAfterAsync(
+                jobId,
+                appUserId,
+                resumeAfterSequence,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Consult generation SSE replay read failed. JobId={JobId}, ResumeAfterSequence={ResumeAfterSequence}",
+                jobId,
+                resumeAfterSequence);
+
+            throw;
+        }
+
+        return await WriteStoredEventsAsync(
+            writer,
+            storedEvents,
+            resumeAfterSequence,
+            cancellationToken);
     }
 
     private async Task<SseMaterializedWriteResult> WriteMaterializedEventsAsync(
@@ -733,6 +879,19 @@ public sealed class ConsultGenerationJobs
             throw;
         }
 
+        return await WriteStoredEventsAsync(
+            writer,
+            storedEvents,
+            highestEmittedSequence,
+            cancellationToken);
+    }
+
+    private static async Task<SseMaterializedWriteResult> WriteStoredEventsAsync(
+        ChannelWriter<SseItem<string>> writer,
+        IReadOnlyList<ConsultGenerationJobStoredEvent> storedEvents,
+        long highestEmittedSequence,
+        CancellationToken cancellationToken)
+    {
         var eventCount = 0;
         var latestEventId = (string?)null;
         var latestEventType = (string?)null;

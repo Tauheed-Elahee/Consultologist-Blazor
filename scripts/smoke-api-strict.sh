@@ -163,26 +163,28 @@ request consult_generation_cors \
   -X OPTIONS \
   -H "Origin: $ALLOWED_ORIGIN" \
   -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type, Authorization" \
+  -H "Access-Control-Request-Headers: Content-Type, Authorization, Last-Event-ID" \
   "$BASE_URL/api/ConsultGeneration"
 assert_status consult_generation_cors 204
 assert_header_contains consult_generation_cors Access-Control-Allow-Origin "$ALLOWED_ORIGIN"
 assert_header_contains consult_generation_cors Access-Control-Allow-Methods "POST"
 assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Content-Type"
 assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Authorization"
+assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Last-Event-ID"
 pass "ConsultGeneration CORS preflight returns expected platform CORS headers"
 
 request consult_generation_jobs_cors \
   -X OPTIONS \
   -H "Origin: $ALLOWED_ORIGIN" \
   -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type, Authorization" \
+  -H "Access-Control-Request-Headers: Content-Type, Authorization, Last-Event-ID" \
   "$BASE_URL/api/ConsultGenerationJobs"
 assert_status consult_generation_jobs_cors 204
 assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Origin "$ALLOWED_ORIGIN"
 assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Methods "POST"
 assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Content-Type"
 assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Authorization"
+assert_header_contains consult_generation_jobs_cors Access-Control-Allow-Headers "Last-Event-ID"
 pass "ConsultGenerationJobs CORS preflight returns expected platform CORS headers"
 
 request consult_generation_jobs_invalid \

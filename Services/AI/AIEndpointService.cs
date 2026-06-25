@@ -378,7 +378,6 @@ public class AIEndpointService : IAIEndpointService
             throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
         }
 
-        // Phase 7 will transmit lastEventId as Last-Event-ID after server/CORS support is wired.
         return $"{functionUrl.TrimEnd('/')}/{Uri.EscapeDataString(jobId)}/events?attemptId={Uri.EscapeDataString(attemptId)}";
     }
 
@@ -392,6 +391,11 @@ public class AIEndpointService : IAIEndpointService
 
         using var request = new HttpRequestMessage(HttpMethod.Get, eventsUrl);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        if (!string.IsNullOrWhiteSpace(lastEventId))
+        {
+            request.Headers.TryAddWithoutValidation("Last-Event-ID", lastEventId);
+        }
+
         await AddAuthorizationAsync(request);
         request.SetBrowserResponseStreamingEnabled(true);
 
