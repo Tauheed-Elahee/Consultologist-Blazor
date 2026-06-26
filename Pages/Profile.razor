@@ -74,75 +74,6 @@
             </section>
         }
 
-        <section class="content-card">
-            <div class="form-stack">
-                <h2 class="panel-title">Recent consult jobs</h2>
-
-                <p class="panel-description">
-                    Consult generation jobs started by this account, most recent first.
-                </p>
-
-                @if (jobsLoading && jobs.Count == 0)
-                {
-                    <div class="loading-state">
-                        <FluentProgressRing />
-                        <span>Loading job history...</span>
-                    </div>
-                }
-                else if (!string.IsNullOrWhiteSpace(jobsErrorMessage))
-                {
-                    <FluentMessageBar Intent="MessageIntent.Error">@jobsErrorMessage</FluentMessageBar>
-                }
-                else if (jobs.Count == 0)
-                {
-                    <p class="muted-text">No consult jobs found.</p>
-                }
-                else
-                {
-                    <div class="job-history-list">
-                        @foreach (var job in jobs)
-                        {
-                            <div class="state-panel job-history-item">
-                                <div class="job-history-item__status">
-                                    <span class="job-status-badge job-status-badge--@job.Status.ToLowerInvariant()">
-                                        @job.Status
-                                    </span>
-                                </div>
-                                <div class="job-history-item__meta">
-                                    <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
-                                    <span class="muted-text">@job.CompletedSectionCount / @job.TotalSectionCount sections</span>
-                                    @if (job.FailedSectionCount > 0)
-                                    {
-                                        <span class="muted-text">@job.FailedSectionCount failed</span>
-                                    }
-                                </div>
-                                <div class="job-history-item__id">
-                                    <span class="muted-text">@job.JobId[..8]&hellip;</span>
-                                </div>
-                            </div>
-                        }
-                    </div>
-
-                    @if (jobsContinuationToken != null)
-                    {
-                        <FluentButton
-                            Appearance="Appearance.Outline"
-                            Disabled="@jobsLoading"
-                            OnClick="LoadMoreJobsAsync">
-                            @if (jobsLoading)
-                            {
-                                <FluentProgressRing style="width: 16px; height: 16px;" />
-                                <span>Loading&hellip;</span>
-                            }
-                            else
-                            {
-                                <span>Load more</span>
-                            }
-                        </FluentButton>
-                    }
-                }
-            </div>
-        </section>
     </Authorized>
 </AuthorizeView>
 
@@ -152,11 +83,6 @@
 
     private AccountMeResponse? account;
     private string? accountErrorMessage;
-
-    private List<AccountJobSummaryResponse> jobs = new();
-    private string? jobsContinuationToken;
-    private bool jobsLoading;
-    private string? jobsErrorMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -168,7 +94,7 @@
             return;
         }
 
-        await Task.WhenAll(LoadAccountAsync(), LoadJobsAsync());
+        await LoadAccountAsync();
     }
 
     private async Task LoadAccountAsync()
@@ -187,66 +113,4 @@
         }
     }
 
-    private async Task LoadJobsAsync()
-    {
-        jobsLoading = true;
-        jobsErrorMessage = null;
-
-        try
-        {
-            var result = await AccountService.GetJobsAsync(limit: 20);
-            jobs.AddRange(result.Jobs);
-            jobsContinuationToken = result.ContinuationToken;
-        }
-        catch (AccessTokenNotAvailableException exception)
-        {
-            exception.Redirect();
-        }
-        catch (Exception ex)
-        {
-            jobsErrorMessage = $"Unable to load job history: {ex.Message}";
-        }
-        finally
-        {
-            jobsLoading = false;
-        }
-    }
-
-    private async Task LoadMoreJobsAsync()
-    {
-        if (jobsLoading || jobsContinuationToken == null)
-        {
-            return;
-        }
-
-        jobsLoading = true;
-        StateHasChanged();
-
-        try
-        {
-            var result = await AccountService.GetJobsAsync(limit: 20, continuationToken: jobsContinuationToken);
-            jobs.AddRange(result.Jobs);
-            jobsContinuationToken = result.ContinuationToken;
-        }
-        catch (Exception ex)
-        {
-            jobsErrorMessage = $"Unable to load more jobs: {ex.Message}";
-        }
-        finally
-        {
-            jobsLoading = false;
-            StateHasChanged();
-        }
-    }
-
-    private static string FormatDate(DateTimeOffset date)
-    {
-        var ago = DateTimeOffset.UtcNow - date;
-
-        return ago.TotalMinutes < 1 ? "just now"
-            : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago"
-            : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago"
-            : ago.TotalDays < 7 ? $"{(int)ago.TotalDays}d ago"
-            : date.ToLocalTime().ToString("MMM d, yyyy");
-    }
 }
