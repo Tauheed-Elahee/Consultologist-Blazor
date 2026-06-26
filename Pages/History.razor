@@ -90,8 +90,8 @@
                                         <ol class="job-event-list">
                                             @foreach (var entry in DeriveTimeline(detail))
                                             {
-                                                <li class="job-event-item job-event-item--@(entry.Success ? "success" : "failure")">
-                                                    <span class="job-event-icon">@(entry.Success ? "✓" : "✗")</span>
+                                                <li class="job-event-item job-event-item--@EntryKindClass(entry.Kind)">
+                                                    <span class="job-event-icon">@EntryIcon(entry.Kind)</span>
                                                     <div class="job-event-content">
                                                         <span class="job-event-label">@entry.Label</span>
                                                         @if (!string.IsNullOrWhiteSpace(entry.Detail))
@@ -246,41 +246,72 @@
 
             if (stage != null)
             {
-                entries.Add(new JobTimelineEntry(true, GetStageLabel(stage), null));
+                entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Success, GetStageLabel(stage), null));
             }
         }
 
         if (!string.IsNullOrWhiteSpace(response.AnalysisStatus)
             && response.AnalysisStatus.EndsWith("-failed", StringComparison.Ordinal))
         {
-            entries.Add(new JobTimelineEntry(false, GetStageLabel(response.AnalysisStatus), response.AnalysisError));
+            entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Failure, GetStageLabel(response.AnalysisStatus), response.AnalysisError));
+
+            for (var i = completedStages + 2; i <= totalStages; i++)
+            {
+                var stage = GetStageNameByCount(i);
+                if (stage != null)
+                    entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Skipped, GetStageLabel(stage), null));
+            }
+
+            AddSkippedSections(entries, response);
             return entries;
         }
 
         foreach (var section in response.GeneratedSections.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            entries.Add(new JobTimelineEntry(true, $"Section completed: {GetSectionName(response, section.Key)}", null));
+            entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Success, $"Section completed: {GetSectionName(response, section.Key)}", null));
         }
 
         foreach (var section in response.FailedSections.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            entries.Add(new JobTimelineEntry(false, $"Section failed: {GetSectionName(response, section.Key)}", section.Value));
+            entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Failure, $"Section failed: {GetSectionName(response, section.Key)}", section.Value));
         }
 
         if (response.Status == "Completed")
         {
-            entries.Add(new JobTimelineEntry(true, "Done", null));
-        }
-        else if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.RuntimeFailureError))
-        {
-            entries.Add(new JobTimelineEntry(false, "Failed", response.RuntimeFailureError));
+            entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Success, "Done", null));
         }
         else if (response.Status == "Failed")
         {
-            entries.Add(new JobTimelineEntry(false, "Failed", null));
+            var error = string.IsNullOrWhiteSpace(response.RuntimeFailureError) ? null : response.RuntimeFailureError;
+            entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Failure, "Failed", error));
+            AddSkippedSections(entries, response);
         }
 
         return entries;
+    }
+
+    private static void AddSkippedSections(List<JobTimelineEntry> entries, ConsultGenerationJobResponse response)
+    {
+        var completed = response.GeneratedSections.Keys.ToHashSet();
+        var failed = response.FailedSections.Keys.ToHashSet();
+
+        if (response.SectionProseProgress != null && response.SectionProseProgress.Count > 0)
+        {
+            foreach (var (id, progress) in response.SectionProseProgress
+                .Where(p => !completed.Contains(p.Key) && !failed.Contains(p.Key))
+                .OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                var name = !string.IsNullOrWhiteSpace(progress.SectionName) ? progress.SectionName : id;
+                entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Skipped, $"Section not reached: {name}", null));
+            }
+        }
+        else
+        {
+            var skipped = response.TotalSectionCount - completed.Count - failed.Count;
+            if (skipped > 0)
+                entries.Add(new JobTimelineEntry(JobTimelineEntryKind.Skipped,
+                    $"{skipped} section{(skipped == 1 ? "" : "s")} not reached", null));
+        }
     }
 
     private static string GetSectionName(ConsultGenerationJobResponse response, string sectionId)
@@ -327,5 +358,21 @@
             : date.ToLocalTime().ToString("MMM d, yyyy");
     }
 
-    private sealed record JobTimelineEntry(bool Success, string Label, string? Detail);
+    private enum JobTimelineEntryKind { Success, Failure, Skipped }
+
+    private sealed record JobTimelineEntry(JobTimelineEntryKind Kind, string Label, string? Detail);
+
+    private static string EntryKindClass(JobTimelineEntryKind kind) => kind switch
+    {
+        JobTimelineEntryKind.Success => "success",
+        JobTimelineEntryKind.Failure => "failure",
+        _ => "skipped"
+    };
+
+    private static string EntryIcon(JobTimelineEntryKind kind) => kind switch
+    {
+        JobTimelineEntryKind.Success => "✓",
+        JobTimelineEntryKind.Failure => "✗",
+        _ => "○"
+    };
 }

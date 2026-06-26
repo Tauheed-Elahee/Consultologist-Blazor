@@ -157,3 +157,16 @@
 	font-size: 0.8rem;
 	overflow-wrap: break-word;
 }
+
+.job-event-item--skipped {
+	padding-left: 1rem;
+}
+
+.job-event-item--skipped .job-event-icon {
+	color: var(--consultologist-text-muted);
+}
+
+.job-event-item--skipped .job-event-label {
+	color: var(--consultologist-text-muted);
+	font-style: italic;
+}
