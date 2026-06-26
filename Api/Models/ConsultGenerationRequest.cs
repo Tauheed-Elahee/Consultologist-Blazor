@@ -47,7 +47,10 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null,
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
     string? RuntimeFailureStage = null,
-    string? RuntimeFailureError = null);
+    string? RuntimeFailureError = null,
+    DateTimeOffset? CreatedAtUtc = null,
+    DateTimeOffset? StartedAtUtc = null,
+    DateTimeOffset? CompletedAtUtc = null);
 
 public record SectionGenerationResult(
     string SectionId,

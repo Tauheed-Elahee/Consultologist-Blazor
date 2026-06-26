@@ -2105,35 +2105,51 @@ public static class ConsultGenerationConceptFormatter
 
 public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJobState>
 {
-    public void Initialize(ConsultGenerationJobInitialize input)
+    private readonly IConsultGenerationJobIndexStore _indexStore;
+
+    public ConsultGenerationJobEntity(IConsultGenerationJobIndexStore indexStore)
+    {
+        _indexStore = indexStore;
+    }
+
+    public async Task Initialize(ConsultGenerationJobInitialize input)
     {
         if (State == null || State.Sections.Count == 0)
         {
             State = ConsultGenerationJobState.Create(input.JobId, input.AppUserId, input.Sections);
-            return;
         }
-
-        State.JobId = string.IsNullOrWhiteSpace(State.JobId) ? input.JobId : State.JobId;
-        State.AppUserId = string.IsNullOrWhiteSpace(State.AppUserId) ? input.AppUserId : State.AppUserId;
-
-        if (State.CreatedAtUtc == default)
+        else
         {
-            State.CreatedAtUtc = DateTimeOffset.UtcNow;
+            State.JobId = string.IsNullOrWhiteSpace(State.JobId) ? input.JobId : State.JobId;
+            State.AppUserId = string.IsNullOrWhiteSpace(State.AppUserId) ? input.AppUserId : State.AppUserId;
+
+            if (State.CreatedAtUtc == default)
+            {
+                State.CreatedAtUtc = DateTimeOffset.UtcNow;
+            }
+
+            if (State.TotalSectionCount == 0)
+            {
+                State.TotalSectionCount = input.Sections.Count;
+            }
+
+            foreach (var section in input.Sections)
+            {
+                State.GetOrAddSection(section.Id, section.Name);
+            }
         }
 
-        foreach (var section in input.Sections)
-        {
-            State.GetOrAddSection(section.Id, section.Name);
-        }
+        await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
 
-    public void MarkRunning()
+    public async Task MarkRunning()
     {
         var state = EnsureState();
         state.Status = ConsultGenerationJobStatuses.Running;
         state.StartedAtUtc ??= DateTimeOffset.UtcNow;
-
         State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
     public void MarkAnalysisStage(ConsultGenerationAnalysisUpdate input)
@@ -2156,16 +2172,18 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State = state;
     }
 
-    public void MarkAnalysisFailed(ConsultGenerationAnalysisUpdate input)
+    public async Task MarkAnalysisFailed(ConsultGenerationAnalysisUpdate input)
     {
         var state = EnsureState();
         ApplyAnalysisUpdate(state, input);
         state.Status = ConsultGenerationJobStatuses.Failed;
         state.CompletedAtUtc = DateTimeOffset.UtcNow;
         State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public void CompleteSection(SectionGenerationResult result)
+    public async Task CompleteSection(SectionGenerationResult result)
     {
         var state = EnsureState();
         var section = state.GetOrAddSection(result.SectionId, result.SectionName);
@@ -2174,9 +2192,11 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         section.Error = null;
         section.CompletedAtUtc = DateTimeOffset.UtcNow;
         State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public void FailSection(SectionGenerationResult result)
+    public async Task FailSection(SectionGenerationResult result)
     {
         var state = EnsureState();
         var section = state.GetOrAddSection(result.SectionId, result.SectionName);
@@ -2185,6 +2205,8 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         section.Error = string.IsNullOrWhiteSpace(result.Error) ? "Section generation failed." : result.Error;
         section.CompletedAtUtc = DateTimeOffset.UtcNow;
         State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
     public void MarkSectionProseStep(ConsultGenerationSectionProseStepUpdate input)
@@ -2197,12 +2219,14 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State = state;
     }
 
-    public void FinalizeJob(ConsultGenerationJobFinalize input)
+    public async Task FinalizeJob(ConsultGenerationJobFinalize input)
     {
         var state = EnsureState();
         state.Status = input.Status;
         state.CompletedAtUtc = DateTimeOffset.UtcNow;
         State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
     [Function(nameof(ConsultGenerationJobEntity))]
@@ -2326,6 +2350,7 @@ public sealed class ConsultGenerationJobState
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
+    public int TotalSectionCount { get; set; }
     public int SchemaVersion { get; set; } = 1;
     public string? AnalysisStatus { get; set; }
     public string? AnalysisError { get; set; }
@@ -2349,6 +2374,7 @@ public sealed class ConsultGenerationJobState
             AppUserId = appUserId,
             Status = ConsultGenerationJobStatuses.Queued,
             CreatedAtUtc = DateTimeOffset.UtcNow,
+            TotalSectionCount = sections.Count,
             Sections = sections.ToDictionary(
                 section => section.Id,
                 section => new ConsultGenerationSectionState
@@ -2358,6 +2384,20 @@ public sealed class ConsultGenerationJobState
                     Status = ConsultGenerationSectionStatuses.Pending
                 })
         };
+    }
+
+    public ConsultGenerationJobIndexEntry ToIndexEntry()
+    {
+        return new ConsultGenerationJobIndexEntry(
+            JobId,
+            AppUserId,
+            Status,
+            CreatedAtUtc,
+            StartedAtUtc,
+            CompletedAtUtc,
+            TotalSectionCount,
+            Sections.Values.Count(s => s.Status == ConsultGenerationSectionStatuses.Completed),
+            Sections.Values.Count(s => s.Status == ConsultGenerationSectionStatuses.Failed));
     }
 
     public ConsultGenerationSectionState GetOrAddSection(string sectionId, string sectionName)
@@ -2417,7 +2457,10 @@ public sealed class ConsultGenerationJobState
             CompletedStageCount,
             TotalStageCount,
             ValidationWarnings,
-            sectionProseProgress);
+            sectionProseProgress,
+            CreatedAtUtc: CreatedAtUtc,
+            StartedAtUtc: StartedAtUtc,
+            CompletedAtUtc: CompletedAtUtc);
     }
 }
 

@@ -11,17 +11,24 @@ public sealed class Account
     private const int MaxSettingKeyLength = 128;
     private const int MaxSettingValueLength = 32_000;
     private const int MaxContentTypeLength = 128;
+    private const int DefaultJobsLimit = 20;
+    private const int MaxJobsLimit = 50;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
     private readonly IAccountAuthorizer _authorizer;
     private readonly IAccountSettingsStore _settingsStore;
+    private readonly IConsultGenerationJobIndexStore _jobIndexStore;
 
-    public Account(IAccountAuthorizer authorizer, IAccountSettingsStore settingsStore)
+    public Account(
+        IAccountAuthorizer authorizer,
+        IAccountSettingsStore settingsStore,
+        IConsultGenerationJobIndexStore jobIndexStore)
     {
         _authorizer = authorizer;
         _settingsStore = settingsStore;
+        _jobIndexStore = jobIndexStore;
     }
 
     [Function("AccountMe")]
@@ -59,6 +66,58 @@ public sealed class Account
                 account.Status,
                 account.CurrentIdentity,
                 account.LinkedIdentities),
+            cancellationToken);
+
+        return response;
+    }
+
+    [Function("AccountJobsList")]
+    public async Task<HttpResponseData> GetJobsAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "Account/Jobs")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        var (limit, continuationToken) = ParseJobsQueryParams(req.Url);
+
+        var (jobs, nextToken) = await _jobIndexStore.ListAsync(
+            account.AppUserId,
+            limit,
+            continuationToken,
+            cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(
+            new AccountJobsResponse(
+                jobs.Select(j => new AccountJobSummaryResponse(
+                    j.JobId,
+                    j.Status,
+                    j.CreatedAtUtc,
+                    j.StartedAtUtc,
+                    j.CompletedAtUtc,
+                    j.TotalSectionCount,
+                    j.CompletedSectionCount,
+                    j.FailedSectionCount)).ToArray(),
+                nextToken),
             cancellationToken);
 
         return response;
@@ -205,6 +264,35 @@ public sealed class Account
         return CreateOptionsResponse(req);
     }
 
+    private static (int Limit, string? ContinuationToken) ParseJobsQueryParams(Uri url)
+    {
+        var query = url.Query.TrimStart('?');
+        var limit = DefaultJobsLimit;
+        string? continuationToken = null;
+
+        foreach (var segment in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = segment.IndexOf('=');
+            if (eq < 0) continue;
+
+            var key = Uri.UnescapeDataString(segment[..eq]);
+            var value = Uri.UnescapeDataString(segment[(eq + 1)..]);
+
+            if (string.Equals(key, "limit", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(value, out var parsed))
+            {
+                limit = Math.Clamp(parsed, 1, MaxJobsLimit);
+            }
+            else if (string.Equals(key, "continuationToken", StringComparison.OrdinalIgnoreCase) &&
+                     !string.IsNullOrWhiteSpace(value))
+            {
+                continuationToken = value;
+            }
+        }
+
+        return (limit, continuationToken);
+    }
+
     private static string? ValidateSettingKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -257,3 +345,17 @@ public sealed class Account
         return response;
     }
 }
+
+public sealed record AccountJobSummaryResponse(
+    string JobId,
+    string Status,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    int TotalSectionCount,
+    int CompletedSectionCount,
+    int FailedSectionCount);
+
+public sealed record AccountJobsResponse(
+    IReadOnlyList<AccountJobSummaryResponse> Jobs,
+    string? ContinuationToken);

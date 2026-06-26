@@ -6,4 +6,5 @@ public interface IAccountEndpointService
     Task<AccountSettingResponse?> GetSettingAsync(string key);
     Task SaveSettingAsync(string key, string value, string contentType);
     Task DeleteSettingAsync(string key);
+    Task<AccountJobsResponse> GetJobsAsync(int limit = 20, string? continuationToken = null);
 }

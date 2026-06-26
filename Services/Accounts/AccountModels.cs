@@ -24,3 +24,17 @@ public sealed record AccountSettingResponse(
 public sealed record SaveAccountSettingRequest(
     string Value,
     string ContentType);
+
+public sealed record AccountJobSummaryResponse(
+    string JobId,
+    string Status,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    int TotalSectionCount,
+    int CompletedSectionCount,
+    int FailedSectionCount);
+
+public sealed record AccountJobsResponse(
+    IReadOnlyList<AccountJobSummaryResponse> Jobs,
+    string? ContinuationToken);

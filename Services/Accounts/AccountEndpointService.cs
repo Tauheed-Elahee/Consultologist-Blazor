@@ -124,6 +124,36 @@ public sealed class AccountEndpointService : IAccountEndpointService
         }
     }
 
+    public async Task<AccountJobsResponse> GetJobsAsync(int limit = 20, string? continuationToken = null)
+    {
+        var jobsUrl = GetJobsUrl();
+        var query = $"?limit={limit}";
+
+        if (!string.IsNullOrEmpty(continuationToken))
+        {
+            query += $"&continuationToken={Uri.EscapeDataString(continuationToken)}";
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, jobsUrl + query);
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "Account jobs endpoint failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"Account jobs endpoint failed: {response.StatusCode}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<AccountJobsResponse>()
+            ?? throw new InvalidOperationException("Failed to deserialize account jobs response.");
+    }
+
     private async Task AddAuthorizationAsync(HttpRequestMessage request)
     {
         var apiScope = _configuration["AzureFunction:ApiScope"];
@@ -148,6 +178,18 @@ public sealed class AccountEndpointService : IAccountEndpointService
 
     private string GetSettingUrl(string key)
     {
+        var accountUrl = GetAccountBaseUrl();
+        return accountUrl + "/Settings/" + Uri.EscapeDataString(key);
+    }
+
+    private string GetJobsUrl()
+    {
+        var accountUrl = GetAccountBaseUrl();
+        return accountUrl + "/Jobs";
+    }
+
+    private string GetAccountBaseUrl()
+    {
         var accountUrl = _configuration["AzureFunction:AccountMeUrl"];
 
         if (string.IsNullOrWhiteSpace(accountUrl))
@@ -155,10 +197,8 @@ public sealed class AccountEndpointService : IAccountEndpointService
             throw new InvalidOperationException("AzureFunction:AccountMeUrl is not configured.");
         }
 
-        var settingsBaseUrl = accountUrl.EndsWith("/Me", StringComparison.OrdinalIgnoreCase)
-            ? accountUrl[..^"/Me".Length] + "/Settings/"
-            : accountUrl.TrimEnd('/') + "/Settings/";
-
-        return settingsBaseUrl + Uri.EscapeDataString(key);
+        return accountUrl.EndsWith("/Me", StringComparison.OrdinalIgnoreCase)
+            ? accountUrl[..^"/Me".Length]
+            : accountUrl.TrimEnd('/');
     }
 }
