@@ -1,0 +1,159 @@
+.job-history-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.job-item {
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-md);
+	background: var(--consultologist-surface);
+	overflow: hidden;
+}
+
+.job-item__summary {
+	display: flex;
+	align-items: center;
+	gap: 0.875rem;
+	cursor: pointer;
+	padding: 0.875rem 1rem;
+	list-style: none;
+	user-select: none;
+}
+
+.job-item__summary::-webkit-details-marker {
+	display: none;
+}
+
+.job-item__summary::marker {
+	display: none;
+}
+
+.job-item__summary:hover {
+	background: var(--consultologist-surface-muted);
+}
+
+.job-item__chevron {
+	flex: 0 0 auto;
+	color: var(--consultologist-text-muted);
+	font-size: 1.1em;
+	line-height: 1;
+	display: inline-block;
+	transition: transform 0.15s ease;
+}
+
+.job-item[open] .job-item__chevron {
+	transform: rotate(90deg);
+}
+
+.job-history-item__status {
+	flex: 0 0 auto;
+}
+
+.job-history-item__meta {
+	flex: 1 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 1rem;
+	min-width: 0;
+}
+
+.job-history-item__id {
+	flex: 0 0 auto;
+	font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+	font-size: 0.8rem;
+}
+
+.job-status-badge {
+	display: inline-flex;
+	align-items: center;
+	font-size: 0.7rem;
+	font-weight: 700;
+	padding: 0.2em 0.65em;
+	border-radius: 999px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+
+.job-status-badge--completed {
+	background: rgba(16, 124, 16, 0.12);
+	color: #107c10;
+}
+
+.job-status-badge--failed {
+	background: rgba(164, 38, 44, 0.12);
+	color: #a4262c;
+}
+
+.job-status-badge--running {
+	background: var(--consultologist-accent-soft);
+	color: var(--consultologist-accent);
+}
+
+.job-status-badge--queued {
+	background: rgba(93, 106, 124, 0.12);
+	color: var(--consultologist-text-muted);
+}
+
+.job-item__detail {
+	padding: 0 1rem 1rem;
+	border-top: 1px solid var(--consultologist-border);
+}
+
+.job-item__detail .loading-state {
+	padding-top: 0.875rem;
+}
+
+.job-event-list {
+	list-style: none;
+	margin: 0.875rem 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.job-event-item {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	font-size: 0.875rem;
+	line-height: 1.4;
+}
+
+.job-event-icon {
+	flex: 0 0 1rem;
+	text-align: center;
+	font-size: 0.75rem;
+	font-weight: 700;
+}
+
+.job-event-item--success .job-event-icon {
+	color: #107c10;
+}
+
+.job-event-item--failure .job-event-icon {
+	color: #a4262c;
+}
+
+.job-event-content {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	min-width: 0;
+}
+
+.job-event-label {
+	color: var(--consultologist-text);
+}
+
+.job-event-item--failure .job-event-label {
+	color: #a4262c;
+}
+
+.job-event-detail {
+	color: var(--consultologist-text-muted);
+	font-size: 0.8rem;
+	overflow-wrap: break-word;
+}

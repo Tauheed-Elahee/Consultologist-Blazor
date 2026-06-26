@@ -1,6 +1,8 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using BlazorWasm.Services.AI
 @inject IAccountEndpointService AccountService
+@inject IAIEndpointService AIService
 @attribute [Authorize]
 
 @page "/history"
@@ -43,24 +45,66 @@
                     <div class="job-history-list">
                         @foreach (var job in jobs)
                         {
-                            <div class="state-panel job-history-item">
-                                <div class="job-history-item__status">
-                                    <span class="job-status-badge job-status-badge--@job.Status.ToLowerInvariant()">
-                                        @job.Status
-                                    </span>
-                                </div>
-                                <div class="job-history-item__meta">
-                                    <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
-                                    <span class="muted-text">@job.CompletedSectionCount / @job.TotalSectionCount sections</span>
-                                    @if (job.FailedSectionCount > 0)
+                            <details class="job-item">
+                                <summary class="job-item__summary" @onclick="async () => await EnsureDetailsLoadedAsync(job.JobId)">
+                                    <span class="job-item__chevron" aria-hidden="true">&#x203A;</span>
+                                    <div class="job-history-item__status">
+                                        <span class="job-status-badge job-status-badge--@job.Status.ToLowerInvariant()">
+                                            @job.Status
+                                        </span>
+                                    </div>
+                                    <div class="job-history-item__meta">
+                                        <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
+                                        <span class="muted-text">@job.CompletedSectionCount / @job.TotalSectionCount sections</span>
+                                        @if (job.FailedSectionCount > 0)
+                                        {
+                                            <span class="muted-text">@job.FailedSectionCount failed</span>
+                                        }
+                                    </div>
+                                    <div class="job-history-item__id">
+                                        <span class="muted-text">@job.JobId[..8]&hellip;</span>
+                                    </div>
+                                </summary>
+                                <div class="job-item__detail">
+                                    @{
+                                        var hasStartedLoad = _jobDetails.TryGetValue(job.JobId, out var detail);
+                                        _jobDetailErrors.TryGetValue(job.JobId, out var detailError);
+                                    }
+                                    @if (!hasStartedLoad)
                                     {
-                                        <span class="muted-text">@job.FailedSectionCount failed</span>
+                                        @* Rendered but empty until first expand *@
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(detailError))
+                                    {
+                                        <FluentMessageBar Intent="MessageIntent.Error">@detailError</FluentMessageBar>
+                                    }
+                                    else if (detail == null)
+                                    {
+                                        <div class="loading-state">
+                                            <FluentProgressRing />
+                                            <span>Loading job events&hellip;</span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <ol class="job-event-list">
+                                            @foreach (var entry in DeriveTimeline(detail))
+                                            {
+                                                <li class="job-event-item job-event-item--@(entry.Success ? "success" : "failure")">
+                                                    <span class="job-event-icon">@(entry.Success ? "✓" : "✗")</span>
+                                                    <div class="job-event-content">
+                                                        <span class="job-event-label">@entry.Label</span>
+                                                        @if (!string.IsNullOrWhiteSpace(entry.Detail))
+                                                        {
+                                                            <span class="job-event-detail">@entry.Detail</span>
+                                                        }
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ol>
                                     }
                                 </div>
-                                <div class="job-history-item__id">
-                                    <span class="muted-text">@job.JobId[..8]&hellip;</span>
-                                </div>
-                            </div>
+                            </details>
                         }
                     </div>
 
@@ -92,6 +136,9 @@
     private string? jobsContinuationToken;
     private bool jobsLoading;
     private string? jobsErrorMessage;
+
+    private Dictionary<string, ConsultGenerationJobResponse?> _jobDetails = new();
+    private Dictionary<string, string?> _jobDetailErrors = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -150,6 +197,125 @@
         }
     }
 
+    private async Task EnsureDetailsLoadedAsync(string jobId)
+    {
+        if (_jobDetails.ContainsKey(jobId))
+        {
+            return;
+        }
+
+        _jobDetails[jobId] = null;
+        _jobDetailErrors.Remove(jobId);
+
+        try
+        {
+            var detail = await AIService.GetConsultGenerationJobAsync(jobId);
+            _jobDetails[jobId] = detail;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            _jobDetailErrors[jobId] = $"Unable to load job events: {ex.Message}";
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static readonly string[] OrderedAnalysisStages =
+    [
+        "analysis-started",
+        "concepts-extracted",
+        "problem-identified",
+        "typical-trajectory-created",
+        "patient-trajectory-created",
+        "section-generation-started"
+    ];
+
+    private static IReadOnlyList<JobTimelineEntry> DeriveTimeline(ConsultGenerationJobResponse response)
+    {
+        var entries = new List<JobTimelineEntry>();
+        var completedStages = response.CompletedStageCount ?? 0;
+        var totalStages = response.TotalStageCount ?? OrderedAnalysisStages.Length;
+
+        for (var i = 1; i <= Math.Min(completedStages, totalStages); i++)
+        {
+            var stage = GetStageNameByCount(i);
+
+            if (stage != null)
+            {
+                entries.Add(new JobTimelineEntry(true, GetStageLabel(stage), null));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.AnalysisStatus)
+            && response.AnalysisStatus.EndsWith("-failed", StringComparison.Ordinal))
+        {
+            entries.Add(new JobTimelineEntry(false, GetStageLabel(response.AnalysisStatus), response.AnalysisError));
+            return entries;
+        }
+
+        foreach (var section in response.GeneratedSections.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            entries.Add(new JobTimelineEntry(true, $"Section completed: {GetSectionName(response, section.Key)}", null));
+        }
+
+        foreach (var section in response.FailedSections.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            entries.Add(new JobTimelineEntry(false, $"Section failed: {GetSectionName(response, section.Key)}", section.Value));
+        }
+
+        if (response.Status == "Completed")
+        {
+            entries.Add(new JobTimelineEntry(true, "Done", null));
+        }
+        else if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+        {
+            entries.Add(new JobTimelineEntry(false, "Failed", response.RuntimeFailureError));
+        }
+        else if (response.Status == "Failed")
+        {
+            entries.Add(new JobTimelineEntry(false, "Failed", null));
+        }
+
+        return entries;
+    }
+
+    private static string GetSectionName(ConsultGenerationJobResponse response, string sectionId)
+    {
+        if (response.SectionProseProgress != null
+            && response.SectionProseProgress.TryGetValue(sectionId, out var progress)
+            && !string.IsNullOrWhiteSpace(progress.SectionName))
+        {
+            return progress.SectionName;
+        }
+
+        return sectionId;
+    }
+
+    private static string? GetStageNameByCount(int count)
+    {
+        var index = count - 1;
+        return index >= 0 && index < OrderedAnalysisStages.Length ? OrderedAnalysisStages[index] : null;
+    }
+
+    private static string GetStageLabel(string stage) => stage switch
+    {
+        "analysis-started" => "Analysis started",
+        "concepts-extracted" => "Concepts extracted",
+        "concept-extraction-failed" => "Concept extraction failed",
+        "problem-identified" => "Primary problem identified",
+        "problem-identification-failed" => "Problem identification failed",
+        "typical-trajectory-created" => "Reference trajectory created",
+        "typical-trajectory-failed" => "Reference trajectory failed",
+        "patient-trajectory-created" => "Patient trajectory created",
+        "patient-trajectory-failed" => "Patient trajectory failed",
+        "section-generation-started" => "Section generation started",
+        _ => stage
+    };
+
     private static string FormatDate(DateTimeOffset date)
     {
         var ago = DateTimeOffset.UtcNow - date;
@@ -160,4 +326,6 @@
             : ago.TotalDays < 7 ? $"{(int)ago.TotalDays}d ago"
             : date.ToLocalTime().ToString("MMM d, yyyy");
     }
+
+    private sealed record JobTimelineEntry(bool Success, string Label, string? Detail);
 }

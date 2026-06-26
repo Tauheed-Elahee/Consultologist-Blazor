@@ -1244,16 +1244,9 @@ public sealed class ConsultGenerationJobs
 
     private static string? GetAnalysisStageByCompletedCount(int completedStageCount)
     {
-        return completedStageCount switch
-        {
-            1 => ConsultGenerationAnalysisStatuses.AnalysisStarted,
-            2 => ConsultGenerationAnalysisStatuses.ConceptsExtracted,
-            3 => ConsultGenerationAnalysisStatuses.ProblemIdentified,
-            4 => ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated,
-            5 => ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated,
-            6 => ConsultGenerationAnalysisStatuses.SectionGenerationStarted,
-            _ => null
-        };
+        var index = completedStageCount - 1;
+        var stages = ConsultGenerationAnalysisStatuses.OrderedStages;
+        return index >= 0 && index < stages.Length ? stages[index] : null;
     }
 
     private static string? GetSectionProseStepByCompletedCount(int completedStepCount)
@@ -2494,7 +2487,6 @@ public static class ConsultGenerationActivityNames
 
 public static class ConsultGenerationAnalysisStatuses
 {
-    public const int TotalStageCount = 6;
     public const string AnalysisStarted = "analysis-started";
     public const string ConceptsExtracted = "concepts-extracted";
     public const string ProblemIdentified = "problem-identified";
@@ -2505,6 +2497,18 @@ public static class ConsultGenerationAnalysisStatuses
     public const string ProblemIdentificationFailed = "problem-identification-failed";
     public const string TypicalTrajectoryFailed = "typical-trajectory-failed";
     public const string PatientTrajectoryFailed = "patient-trajectory-failed";
+
+    public static readonly string[] OrderedStages =
+    [
+        AnalysisStarted,
+        ConceptsExtracted,
+        ProblemIdentified,
+        TypicalTrajectoryCreated,
+        PatientTrajectoryCreated,
+        SectionGenerationStarted
+    ];
+
+    public static int TotalStageCount => OrderedStages.Length;
 }
 
 public static class ConsultGenerationSectionProseSteps
