@@ -1,10 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Smoke tests for the Consultologist API.
+#
+# Usage:
+#   ./scripts/smoke-api-strict.sh
+#
+# All tests that do not require a live AI call or authenticated session run
+# unconditionally. Tests that need a bearer token or a real AI call are gated
+# on optional environment variables described below.
+#
+# Required for all runs (defaults point to production):
+#   BASE_URL        Base URL of the deployed API.
+#                   Default: https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net
+#   ALLOWED_ORIGIN  Origin sent in CORS preflight requests.
+#                   Default: https://app.consultologist.ai
+#
+# Optional — authenticated tests:
+#   BEARER_TOKEN    A valid bearer token for an active Consultologist account.
+#                   When set, the Account/Jobs list test runs automatically.
+#                   When unset, that test is skipped.
+#
+# Optional — live AI call tests (each defaults to 0; set to 1 to enable):
+#   RUN_VALID_AGENT_PROXY      Run a real AgentProxy section generation call.
+#   RUN_VALID_DURABLE_JOB      Create a real durable job and poll it to terminal state.
+#   RUN_VALID_DURABLE_JOB_SSE  Create a real durable job, stream it via SSE, and verify replay.
+#                              Also requires a job to reach a terminal state; may take up to 2 minutes.
+#
+# Optional — override the clinical content used by live AI call tests:
+#   VALID_CONSULT_DRAFT     Consult draft text sent to the AI.
+#   VALID_SECTION_STANDARD  Section standard instruction sent to the AI.
+#
+# Example — run all tests including authenticated and live AI calls:
+#   BEARER_TOKEN=<token> \
+#   RUN_VALID_AGENT_PROXY=1 \
+#   RUN_VALID_DURABLE_JOB=1 \
+#   RUN_VALID_DURABLE_JOB_SSE=1 \
+#   ./scripts/smoke-api-strict.sh
+
 BASE_URL="${BASE_URL:-https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net}"
 ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://app.consultologist.ai}"
 VALID_CONSULT_DRAFT="${VALID_CONSULT_DRAFT:-62-year-old woman with newly diagnosed invasive ductal carcinoma of the left breast. Core biopsy shows ER positive, PR positive, HER2 negative breast cancer. She has fatigue but no documented metastatic disease.}"
 VALID_SECTION_STANDARD="${VALID_SECTION_STANDARD:-Write one concise clinical history sentence using only documented patient facts.}"
+BEARER_TOKEN="${BEARER_TOKEN:-}"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -641,4 +679,54 @@ PY
   pass "ConsultGenerationJobs valid SSE stream emits snapshot, preprocessing stage progress, section progress, done, and resumable replay"
 else
   echo "SKIP: Durable valid SSE stream. Set RUN_VALID_DURABLE_JOB_SSE=1 to enable."
+fi
+
+if [[ -n "$BEARER_TOKEN" ]]; then
+  request account_jobs_list \
+    -H "Authorization: Bearer $BEARER_TOKEN" \
+    "$BASE_URL/api/Account/Jobs?limit=5"
+  assert_status account_jobs_list 200
+  assert_header_contains account_jobs_list Content-Type "application/json"
+  assert_json account_jobs_list 'isinstance(payload.get("Jobs"), list)' "Account/Jobs should return a Jobs array"
+  assert_json account_jobs_list '"ContinuationToken" in payload' "Account/Jobs should include ContinuationToken field"
+  pass "Account/Jobs returns paginated job list for authenticated user"
+
+  jobs_count="$(python3 - "$tmp_dir/account_jobs_list.body" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+print(len(payload.get("Jobs", [])))
+PY
+)"
+
+  if [[ "$jobs_count" -gt 0 ]]; then
+    python3 - "$tmp_dir/account_jobs_list.body" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+for job in payload["Jobs"]:
+    if not isinstance(job.get("JobId"), str) or not job["JobId"]:
+        raise SystemExit(f"Account/Jobs entry should include non-empty JobId; job={job!r}")
+    if job.get("Status") not in ("Queued", "Running", "Completed", "Failed"):
+        raise SystemExit(f"Account/Jobs entry should have a known Status; job={job!r}")
+    if not isinstance(job.get("CreatedAtUtc"), str):
+        raise SystemExit(f"Account/Jobs entry should include CreatedAtUtc; job={job!r}")
+    if not isinstance(job.get("TotalSectionCount"), int):
+        raise SystemExit(f"Account/Jobs entry should include integer TotalSectionCount; job={job!r}")
+    if not isinstance(job.get("CompletedSectionCount"), int):
+        raise SystemExit(f"Account/Jobs entry should include integer CompletedSectionCount; job={job!r}")
+    if not isinstance(job.get("FailedSectionCount"), int):
+        raise SystemExit(f"Account/Jobs entry should include integer FailedSectionCount; job={job!r}")
+PY
+    pass "Account/Jobs entries include required fields: JobId, Status, CreatedAtUtc, section counts"
+  else
+    echo "NOTE: Account/Jobs returned an empty list; field validation skipped."
+  fi
+else
+  echo "SKIP: Account/Jobs authenticated list. Set BEARER_TOKEN=<token> to enable."
 fi
