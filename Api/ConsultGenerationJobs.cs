@@ -670,8 +670,41 @@ public sealed class ConsultGenerationJobs
         {
             Status = MapRuntimeStatus(instance.RuntimeStatus),
             RuntimeFailureStage = runtimeFailure?.Stage,
-            RuntimeFailureError = runtimeFailure?.Error
+            RuntimeFailureError = runtimeFailure?.Error,
+            History = AugmentHistoryForRuntimeFailure(response, runtimeFailure)
         };
+    }
+
+    private static IReadOnlyList<JobHistoryEvent>? AugmentHistoryForRuntimeFailure(
+        ConsultGenerationJobResponse response,
+        ConsultGenerationRuntimeFailure? runtimeFailure)
+    {
+        if (response.History == null || response.History.Count == 0)
+        {
+            return response.History;
+        }
+
+        var additional = new List<JobHistoryEvent>
+        {
+            new("failure", "Failed", runtimeFailure?.Error, DateTimeOffset.UtcNow)
+        };
+
+        var finishedIds = response.GeneratedSections.Keys
+            .Concat(response.FailedSections.Keys)
+            .ToHashSet();
+
+        if (response.SectionProseProgress != null)
+        {
+            foreach (var (_, progress) in response.SectionProseProgress
+                .Where(p => !finishedIds.Contains(p.Key))
+                .OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                var name = !string.IsNullOrWhiteSpace(progress.SectionName) ? progress.SectionName : progress.SectionId;
+                additional.Add(new JobHistoryEvent("skipped", $"Section not reached: {name}", null, DateTimeOffset.UtcNow));
+            }
+        }
+
+        return [.. response.History, .. additional];
     }
 
     private static bool IsTerminalJobStatus(string status)
@@ -2168,7 +2201,23 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     public async Task MarkAnalysisFailed(ConsultGenerationAnalysisUpdate input)
     {
         var state = EnsureState();
+        var completedBeforeFailure = state.CompletedStageCount;
         ApplyAnalysisUpdate(state, input);
+
+        for (var i = completedBeforeFailure + 1; i < ConsultGenerationAnalysisStatuses.OrderedStages.Length; i++)
+        {
+            state.History.Add(new JobHistoryEvent(
+                "skipped",
+                GetStageHistoryLabel(ConsultGenerationAnalysisStatuses.OrderedStages[i]),
+                null,
+                DateTimeOffset.UtcNow));
+        }
+
+        foreach (var section in state.Sections.Values.OrderBy(s => s.Id, StringComparer.Ordinal))
+        {
+            state.History.Add(new JobHistoryEvent("skipped", $"Section not reached: {section.Name}", null, DateTimeOffset.UtcNow));
+        }
+
         state.Status = ConsultGenerationJobStatuses.Failed;
         state.CompletedAtUtc = DateTimeOffset.UtcNow;
         State = state;
@@ -2184,6 +2233,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         section.GeneratedText = result.GeneratedText ?? string.Empty;
         section.Error = null;
         section.CompletedAtUtc = DateTimeOffset.UtcNow;
+        state.History.Add(new JobHistoryEvent("success", $"Section completed: {result.SectionName}", null, DateTimeOffset.UtcNow));
         State = state;
 
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
@@ -2197,6 +2247,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         section.GeneratedText = null;
         section.Error = string.IsNullOrWhiteSpace(result.Error) ? "Section generation failed." : result.Error;
         section.CompletedAtUtc = DateTimeOffset.UtcNow;
+        state.History.Add(new JobHistoryEvent("failure", $"Section failed: {result.SectionName}", section.Error, DateTimeOffset.UtcNow));
         State = state;
 
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
@@ -2217,6 +2268,28 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         var state = EnsureState();
         state.Status = input.Status;
         state.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        if (input.Status == ConsultGenerationJobStatuses.Completed)
+        {
+            state.History.Add(new JobHistoryEvent("success", "Done", null, DateTimeOffset.UtcNow));
+        }
+        else if (input.Status == ConsultGenerationJobStatuses.Failed)
+        {
+            state.History.Add(new JobHistoryEvent("failure", "Failed", null, DateTimeOffset.UtcNow));
+
+            var finishedIds = state.Sections.Values
+                .Where(s => s.Status is ConsultGenerationSectionStatuses.Completed or ConsultGenerationSectionStatuses.Failed)
+                .Select(s => s.Id)
+                .ToHashSet();
+
+            foreach (var section in state.Sections.Values
+                .Where(s => !finishedIds.Contains(s.Id))
+                .OrderBy(s => s.Id, StringComparer.Ordinal))
+            {
+                state.History.Add(new JobHistoryEvent("skipped", $"Section not reached: {section.Name}", null, DateTimeOffset.UtcNow));
+            }
+        }
+
         State = state;
 
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
@@ -2265,7 +2338,29 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         {
             state.ValidationWarnings.AddRange(input.ValidationWarnings);
         }
+
+        var isFailure = input.AnalysisStatus.EndsWith("-failed", StringComparison.Ordinal);
+        state.History.Add(new JobHistoryEvent(
+            isFailure ? "failure" : "success",
+            GetStageHistoryLabel(input.AnalysisStatus),
+            isFailure ? input.AnalysisError : null,
+            DateTimeOffset.UtcNow));
     }
+
+    private static string GetStageHistoryLabel(string stage) => stage switch
+    {
+        ConsultGenerationAnalysisStatuses.AnalysisStarted => "Analysis started",
+        ConsultGenerationAnalysisStatuses.ConceptsExtracted => "Concepts extracted",
+        ConsultGenerationAnalysisStatuses.ConceptExtractionFailed => "Concept extraction failed",
+        ConsultGenerationAnalysisStatuses.ProblemIdentified => "Primary problem identified",
+        ConsultGenerationAnalysisStatuses.ProblemIdentificationFailed => "Problem identification failed",
+        ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated => "Reference trajectory created",
+        ConsultGenerationAnalysisStatuses.TypicalTrajectoryFailed => "Reference trajectory failed",
+        ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated => "Patient trajectory created",
+        ConsultGenerationAnalysisStatuses.PatientTrajectoryFailed => "Patient trajectory failed",
+        ConsultGenerationAnalysisStatuses.SectionGenerationStarted => "Section generation started",
+        _ => stage
+    };
 }
 
 public sealed record ConsultGenerationActivityInput(
@@ -2355,6 +2450,7 @@ public sealed class ConsultGenerationJobState
     public int TotalStageCount { get; set; } = ConsultGenerationAnalysisStatuses.TotalStageCount;
     public List<ConsultGenerationValidationWarning> ValidationWarnings { get; set; } = new();
     public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
+    public List<JobHistoryEvent> History { get; set; } = new();
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -2453,7 +2549,8 @@ public sealed class ConsultGenerationJobState
             sectionProseProgress,
             CreatedAtUtc: CreatedAtUtc,
             StartedAtUtc: StartedAtUtc,
-            CompletedAtUtc: CompletedAtUtc);
+            CompletedAtUtc: CompletedAtUtc,
+            History: History.Count > 0 ? History.AsReadOnly() : null);
     }
 }
 

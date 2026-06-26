@@ -50,7 +50,10 @@ public record ConsultGenerationJobResponse(
     string? RuntimeFailureError = null,
     DateTimeOffset? CreatedAtUtc = null,
     DateTimeOffset? StartedAtUtc = null,
-    DateTimeOffset? CompletedAtUtc = null);
+    DateTimeOffset? CompletedAtUtc = null,
+    IReadOnlyList<JobHistoryEvent>? History = null);
+
+public record JobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
 public record SectionGenerationResult(
     string SectionId,

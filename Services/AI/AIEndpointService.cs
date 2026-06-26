@@ -478,7 +478,10 @@ public record ConsultGenerationJobResponse(
     int? TotalStageCount = null,
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
     string? RuntimeFailureStage = null,
-    string? RuntimeFailureError = null);
+    string? RuntimeFailureError = null,
+    IReadOnlyList<ConsultGenerationJobHistoryEvent>? History = null);
+
+public record ConsultGenerationJobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
 public record ConsultGenerationSectionProseProgress(
     string SectionId,
