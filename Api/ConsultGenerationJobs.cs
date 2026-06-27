@@ -1380,6 +1380,9 @@ public sealed class ConsultGenerationOrchestrator
         var request = input.Request;
 
         var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), context.InstanceId);
+
+        try
+        {
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.Initialize),
@@ -1600,6 +1603,23 @@ public sealed class ConsultGenerationOrchestrator
             completedSectionCount,
             failedSectionCount
         });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            try
+            {
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.FinalizeJob),
+                    new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Failed, ex.Message));
+            }
+            catch
+            {
+                // Entity may be uninitialized; runtime failure detection is the fallback
+            }
+
+            throw;
+        }
     }
 
     private static async Task FailPreprocessingAsync(
@@ -2275,7 +2295,8 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         }
         else if (input.Status == ConsultGenerationJobStatuses.Failed)
         {
-            state.History.Add(new JobHistoryEvent("failure", "Failed", null, DateTimeOffset.UtcNow));
+            state.FailureError = input.Error;
+            state.History.Add(new JobHistoryEvent("failure", "Failed", input.Error, DateTimeOffset.UtcNow));
 
             var finishedIds = state.Sections.Values
                 .Where(s => s.Status is ConsultGenerationSectionStatuses.Completed or ConsultGenerationSectionStatuses.Failed)
@@ -2378,7 +2399,7 @@ public sealed record ConsultGenerationJobInitialize(
     string AppUserId,
     IReadOnlyList<ConsultGenerationSectionRequest> Sections);
 
-public sealed record ConsultGenerationJobFinalize(string Status);
+public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
 
 public sealed record ConsultGenerationSectionProseStepUpdate(
     string SectionId,
@@ -2451,6 +2472,7 @@ public sealed class ConsultGenerationJobState
     public List<ConsultGenerationValidationWarning> ValidationWarnings { get; set; } = new();
     public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
     public List<JobHistoryEvent> History { get; set; } = new();
+    public string? FailureError { get; set; }
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -2550,6 +2572,7 @@ public sealed class ConsultGenerationJobState
             CreatedAtUtc: CreatedAtUtc,
             StartedAtUtc: StartedAtUtc,
             CompletedAtUtc: CompletedAtUtc,
+            RuntimeFailureError: FailureError,
             History: History.Count > 0 ? History.AsReadOnly() : null);
     }
 }
