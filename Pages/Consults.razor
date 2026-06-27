@@ -91,6 +91,35 @@
                             </div>
                         }
 
+                        @if (isAiRequestLoading && (completedAnalysisStageCount > 0 || completedSectionCount > 0))
+                        {
+                            var stageTotal = totalAnalysisStageCount > 0 ? totalAnalysisStageCount : 6;
+                            <div class="job-progress">
+                                <ol class="job-progress__stages">
+                                    @for (var i = 1; i <= stageTotal; i++)
+                                    {
+                                        var stepNum = i;
+                                        var done = completedAnalysisStageCount >= stepNum;
+                                        var current = !done && completedAnalysisStageCount == stepNum - 1;
+                                        <li class="job-progress__stage @(done ? "job-progress__stage--completed" : current ? "job-progress__stage--current" : "job-progress__stage--pending")">
+                                            <span class="job-progress__stage-icon" aria-hidden="true">@(done ? "✓" : "○")</span>
+                                            <span class="job-progress__stage-label">@GetAnalysisStageLabel(stepNum)</span>
+                                        </li>
+                                    }
+                                </ol>
+                                @if (completedAnalysisStageCount >= stageTotal && totalSectionCount > 0)
+                                {
+                                    var pct = completedSectionCount * 100 / totalSectionCount;
+                                    <div class="job-progress__sections">
+                                        <div class="job-progress__section-bar" role="progressbar" aria-valuenow="@completedSectionCount" aria-valuemax="@totalSectionCount">
+                                            <div class="job-progress__section-fill" style="width: @(pct)%"></div>
+                                        </div>
+                                        <span class="muted-text">@completedSectionCount / @totalSectionCount sections</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+
                         @if (!string.IsNullOrEmpty(standardsLoadError))
                         {
                             <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
@@ -166,6 +195,8 @@
   private string? aiProgressNotice;
   private int completedSectionCount;
   private int totalSectionCount;
+  private int completedAnalysisStageCount;
+  private int totalAnalysisStageCount;
   private CancellationTokenSource? activeEventStreamCancellationTokenSource;
   private string? activeEventStreamCancellationReason;
   private SseAttemptState? activeSseAttempt;
@@ -215,6 +246,8 @@
     failedSectionErrors = new();
     completedSectionCount = 0;
     totalSectionCount = 0;
+    completedAnalysisStageCount = 0;
+    totalAnalysisStageCount = 0;
 
     if (string.IsNullOrWhiteSpace(consultDraft))
     {
@@ -545,6 +578,8 @@
         case "section-generation-started":
           var stage = JsonSerializer.Deserialize<ConsultGenerationStageEvent>(json, SseJsonOptions);
           aiProgressNotice = GetConsultGenerationProgressLabel(stage?.Stage ?? eventName);
+          completedAnalysisStageCount = stage?.CompletedStageCount ?? completedAnalysisStageCount;
+          totalAnalysisStageCount = stage?.TotalStageCount ?? totalAnalysisStageCount;
           break;
 
         case "section-standard-draft-created":
@@ -632,6 +667,11 @@
       aiProgressNotice = GetConsultGenerationProgressLabel(response.AnalysisStatus);
     }
 
+    if (response.CompletedStageCount.HasValue)
+      completedAnalysisStageCount = response.CompletedStageCount.Value;
+    if (response.TotalStageCount.HasValue)
+      totalAnalysisStageCount = response.TotalStageCount.Value;
+
     if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.AnalysisError))
     {
       aiProgressNotice = null;
@@ -668,6 +708,17 @@
       _ => "Generating consult"
     };
   }
+
+  private static string GetAnalysisStageLabel(int stageIndex) => stageIndex switch
+  {
+    1 => "Analysis",
+    2 => "Clinical concepts",
+    3 => "Primary problem",
+    4 => "Reference trajectory",
+    5 => "Patient trajectory",
+    6 => "Section generation",
+    _ => $"Stage {stageIndex}"
+  };
 
   private static string GetSectionProseStepProgressLabel(string step)
   {

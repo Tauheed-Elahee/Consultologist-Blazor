@@ -61,6 +61,67 @@ details.raw-response summary {
 	padding: clamp(1rem, 2vw, 1.5rem);
 }
 
+.job-progress {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.job-progress__stages {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.job-progress__stage {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.85rem;
+}
+
+.job-progress__stage--completed .job-progress__stage-icon,
+.job-progress__stage--completed .job-progress__stage-label {
+	color: var(--consultologist-text-muted);
+}
+
+.job-progress__stage--current .job-progress__stage-icon {
+	color: var(--accent-fill-rest);
+}
+
+.job-progress__stage--current .job-progress__stage-label {
+	font-weight: 600;
+}
+
+.job-progress__stage--pending .job-progress__stage-icon,
+.job-progress__stage--pending .job-progress__stage-label {
+	color: var(--consultologist-text-muted);
+	opacity: 0.5;
+}
+
+.job-progress__sections {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.job-progress__section-bar {
+	height: 4px;
+	background: var(--consultologist-border);
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.job-progress__section-fill {
+	height: 100%;
+	background: var(--accent-fill-rest);
+	border-radius: 2px;
+	transition: width 0.3s ease;
+}
+
 @media (max-width: 760px) {
 	.consult-builder {
 		grid-template-columns: 1fr;
