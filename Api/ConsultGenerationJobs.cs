@@ -1378,6 +1378,7 @@ public sealed class ConsultGenerationOrchestrator
         var input = context.GetInput<ConsultGenerationOrchestrationInput>()
             ?? throw new InvalidOperationException("Consult generation request input is required.");
         var request = input.Request;
+        var logger = context.CreateReplaySafeLogger(nameof(ConsultGenerationOrchestrator));
 
         var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), context.InstanceId);
 
@@ -1389,6 +1390,12 @@ public sealed class ConsultGenerationOrchestrator
             new ConsultGenerationJobInitialize(context.InstanceId, input.AppUserId, request.Sections));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
+
+        logger.LogInformation(
+            "ConsultGenerationOrchestrator started. JobId={JobId}, AppUserId={AppUserId}, SectionCount={SectionCount}",
+            context.InstanceId,
+            input.AppUserId,
+            request.Sections.Count);
 
         var totalSectionCount = request.Sections.Count;
         var completedSectionCount = 0;
@@ -1420,7 +1427,8 @@ public sealed class ConsultGenerationOrchestrator
                 "The consult could not be processed because clinical concepts could not be extracted from the draft.",
                 totalSectionCount,
                 completedSectionCount,
-                failedSectionCount);
+                failedSectionCount,
+                logger);
             return;
         }
 
@@ -1449,7 +1457,8 @@ public sealed class ConsultGenerationOrchestrator
                 "No valid disease or problem concept was identified.",
                 totalSectionCount,
                 completedSectionCount,
-                failedSectionCount);
+                failedSectionCount,
+                logger);
             return;
         }
 
@@ -1478,7 +1487,8 @@ public sealed class ConsultGenerationOrchestrator
                 "No valid typical trajectory concepts were generated.",
                 totalSectionCount,
                 completedSectionCount,
-                failedSectionCount);
+                failedSectionCount,
+                logger);
             return;
         }
 
@@ -1507,7 +1517,8 @@ public sealed class ConsultGenerationOrchestrator
                 "No valid patient trajectory concepts were generated.",
                 totalSectionCount,
                 completedSectionCount,
-                failedSectionCount);
+                failedSectionCount,
+                logger);
             return;
         }
 
@@ -1527,6 +1538,11 @@ public sealed class ConsultGenerationOrchestrator
             entityId,
             nameof(ConsultGenerationJobEntity.MarkSectionGenerationStarted),
             ConsultGenerationAnalysisUpdate.Stage(ConsultGenerationAnalysisStatuses.SectionGenerationStarted, 6));
+
+        logger.LogInformation(
+            "ConsultGenerationOrchestrator section generation started. JobId={JobId}, SectionCount={SectionCount}",
+            context.InstanceId,
+            totalSectionCount);
 
         var pendingTasks = new List<Task<SectionGenerationResult>>();
         var taskSections = new Dictionary<Task<SectionGenerationResult>, ConsultGenerationSectionRequest>();
@@ -1591,10 +1607,22 @@ public sealed class ConsultGenerationOrchestrator
             ? ConsultGenerationJobStatuses.Completed
             : ConsultGenerationJobStatuses.Failed;
 
+        logger.LogInformation(
+            "ConsultGenerationOrchestrator section generation completed. JobId={JobId}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
+            context.InstanceId,
+            completedSectionCount,
+            failedSectionCount,
+            totalSectionCount);
+
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus));
+
+        logger.LogInformation(
+            "ConsultGenerationOrchestrator finalized. JobId={JobId}, Status={Status}",
+            context.InstanceId,
+            finalStatus);
 
         context.SetCustomStatus(new
         {
@@ -1606,6 +1634,13 @@ public sealed class ConsultGenerationOrchestrator
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            logger.LogError(
+                ex,
+                "ConsultGenerationOrchestrator unhandled exception. JobId={JobId}, ExceptionType={ExceptionType}, Message={Message}",
+                context.InstanceId,
+                ex.GetType().FullName,
+                ex.Message);
+
             try
             {
                 await context.Entities.CallEntityAsync(
@@ -1613,9 +1648,14 @@ public sealed class ConsultGenerationOrchestrator
                     nameof(ConsultGenerationJobEntity.FinalizeJob),
                     new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Failed, ex.Message));
             }
-            catch
+            catch (Exception cleanupEx)
             {
-                // Entity may be uninitialized; runtime failure detection is the fallback
+                logger.LogWarning(
+                    cleanupEx,
+                    "ConsultGenerationOrchestrator FinalizeJob cleanup failed. JobId={JobId}, ExceptionType={ExceptionType}, Message={Message}",
+                    context.InstanceId,
+                    cleanupEx.GetType().FullName,
+                    cleanupEx.Message);
             }
 
             throw;
@@ -1629,8 +1669,15 @@ public sealed class ConsultGenerationOrchestrator
         string analysisError,
         int totalSectionCount,
         int completedSectionCount,
-        int failedSectionCount)
+        int failedSectionCount,
+        ILogger logger)
     {
+        logger.LogWarning(
+            "Consult generation preprocessing failed. JobId={JobId}, Stage={Stage}, Reason={Reason}",
+            context.InstanceId,
+            analysisStatus,
+            analysisError);
+
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.MarkAnalysisFailed),
