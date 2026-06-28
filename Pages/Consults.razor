@@ -61,20 +61,13 @@
             <div class="consult-builder__output">
                 <section class="workflow-panel">
                     <div class="form-stack">
-                        <h2 class="panel-title">Section standards</h2>
-                        <p class="panel-description">
-                            The active standards are loaded from your account, with bundled defaults as the fallback.
-                        </p>
+                        <h2 class="panel-title">Progress</h2>
 
                         <div class="state-panel">
-                            <span class="muted-text">Sections loaded</span>
+                            <span class="muted-text">Sections generated</span>
                             <strong>@generatedSections.Count/@sectionStandards.Count</strong>
                         </div>
-                    </div>
-                </section>
 
-                <section class="result-panel consult-builder__result">
-                    <div class="consult-status">
                         @if (isStandardsLoading)
                         {
                             <div class="loading-state">
@@ -134,41 +127,43 @@
                         {
                             <FluentMessageBar Intent="MessageIntent.Info">@aiProgressNotice</FluentMessageBar>
                         }
-
-                        @if (generatedSections.Count > 0)
-                        {
-                            <div>
-                                <div class="result-header">
-                                    <h2 class="panel-title">Consultation note</h2>
-                                    <FluentBadge Appearance="Appearance.Accent">
-                                        @generatedSections.Count sections
-                                    </FluentBadge>
-                                </div>
-
-                                <article class="note-preview generated-note">
-                                    @foreach (var standard in sectionStandards)
-                                    {
-                                        if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
-                                        {
-                                            <section class="note-section">
-                                                <h3>@standard.Name</h3>
-                                                <p>@prose</p>
-                                            </section>
-                                        }
-                                    }
-                                </article>
-                            </div>
-                        }
-                        else if (!isStandardsLoading && !isAiRequestLoading && string.IsNullOrEmpty(standardsLoadError) && string.IsNullOrEmpty(aiRequestError))
-                        {
-                            <div class="empty-note-state">
-                                <h2 class="panel-title">Consultation note</h2>
-                                <p class="panel-description">
-                                    Generated consult sections will appear here after you enter a draft and create the consult.
-                                </p>
-                            </div>
-                        }
                     </div>
+                </section>
+
+                <section class="result-panel consult-builder__result">
+                    @if (generatedSections.Count > 0)
+                    {
+                        <div>
+                            <div class="result-header">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <FluentBadge Appearance="Appearance.Accent">
+                                    @generatedSections.Count sections
+                                </FluentBadge>
+                            </div>
+
+                            <article class="note-preview generated-note">
+                                @foreach (var standard in sectionStandards)
+                                {
+                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                    {
+                                        <section class="note-section">
+                                            <h3>@standard.Name</h3>
+                                            <p>@prose</p>
+                                        </section>
+                                    }
+                                }
+                            </article>
+                        </div>
+                    }
+                    else if (!isStandardsLoading && !isAiRequestLoading)
+                    {
+                        <div class="empty-note-state">
+                            <h2 class="panel-title">Consultation note</h2>
+                            <p class="panel-description">
+                                Generated consult sections will appear here after you enter a draft and create the consult.
+                            </p>
+                        </div>
+                    }
                 </section>
             </div>
         </div>

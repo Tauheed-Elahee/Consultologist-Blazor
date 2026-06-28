@@ -24,12 +24,6 @@
 	min-width: 0;
 }
 
-.consult-status {
-	display: flex;
-	flex-direction: column;
-	gap: 0.75rem;
-	min-height: 24rem;
-}
 
 .result-header {
 	display: flex;
