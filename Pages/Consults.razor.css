@@ -133,6 +133,24 @@ details.raw-response summary {
 	color: var(--error-foreground, var(--consultologist-text-muted));
 }
 
+.job-progress__sub-stages {
+	list-style: none;
+	margin: 0.4rem 0 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.job-progress__sub-stages .job-progress__stage {
+	font-size: 0.78rem;
+}
+
+.job-progress__stage--failed .job-progress__stage-icon,
+.job-progress__stage--failed .job-progress__stage-label {
+	color: var(--error-foreground, var(--consultologist-text-muted));
+}
+
 @media (max-width: 1024px) {
 	.consult-builder {
 		grid-template-columns: 1fr;

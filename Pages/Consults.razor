@@ -108,14 +108,29 @@
 
                         @{
                             var stageTotal = totalAnalysisStageCount > 0 ? totalAnalysisStageCount : 6;
+                            var stdsDone = !isStandardsLoading && string.IsNullOrEmpty(standardsLoadError);
+                            var submitDone = totalSectionCount > 0;
                         }
                         <div class="job-progress">
                             <ol class="job-progress__stages">
+                                <li class="job-progress__stage @(stdsDone ? "job-progress__stage--completed" : isStandardsLoading ? "job-progress__stage--current" : "job-progress__stage--pending")">
+                                    <span class="job-progress__stage-icon" aria-hidden="true">@(stdsDone ? "✓" : "○")</span>
+                                    <span class="job-progress__stage-text">
+                                        <span class="job-progress__stage-label">Section standards</span>
+                                    </span>
+                                </li>
+                                <li class="job-progress__stage @(submitDone ? "job-progress__stage--completed" : "job-progress__stage--pending")">
+                                    <span class="job-progress__stage-icon" aria-hidden="true">@(submitDone ? "✓" : "○")</span>
+                                    <span class="job-progress__stage-text">
+                                        <span class="job-progress__stage-label">Sending consult</span>
+                                    </span>
+                                </li>
                                 @for (var i = 1; i <= stageTotal; i++)
                                 {
                                     var stepNum = i;
                                     var done = completedAnalysisStageCount >= stepNum;
-                                    var current = !done && completedAnalysisStageCount == stepNum - 1;
+                                    var current = !done && completedAnalysisStageCount == stepNum - 1 && isAiRequestLoading;
+                                    var showSubStages = stepNum == stageTotal && (done || current);
                                     <li class="job-progress__stage @(done ? "job-progress__stage--completed" : current ? "job-progress__stage--current" : "job-progress__stage--pending")">
                                         <span class="job-progress__stage-icon" aria-hidden="true">@(done ? "✓" : "○")</span>
                                         <span class="job-progress__stage-text">
@@ -123,6 +138,22 @@
                                             @if (current && !string.IsNullOrEmpty(aiProgressNotice))
                                             {
                                                 <span class="job-progress__stage-caption">@aiProgressNotice</span>
+                                            }
+                                            @if (showSubStages)
+                                            {
+                                                <ol class="job-progress__sub-stages">
+                                                    @foreach (var sec in sectionStandards)
+                                                    {
+                                                        var secDone = generatedSections.ContainsKey(sec.Id);
+                                                        var secFailed = failedSectionErrors.ContainsKey(sec.Id);
+                                                        <li class="job-progress__stage @(secDone ? "job-progress__stage--completed" : secFailed ? "job-progress__stage--failed" : "job-progress__stage--pending")">
+                                                            <span class="job-progress__stage-icon" aria-hidden="true">@(secDone ? "✓" : secFailed ? "✗" : "○")</span>
+                                                            <span class="job-progress__stage-text">
+                                                                <span class="job-progress__stage-label">@sec.Name</span>
+                                                            </span>
+                                                        </li>
+                                                    }
+                                                </ol>
                                             }
                                         </span>
                                     </li>
