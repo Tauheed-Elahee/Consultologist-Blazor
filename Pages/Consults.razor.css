@@ -1,19 +1,12 @@
 .consult-builder {
 	display: grid;
-	grid-template-columns: minmax(320px, 0.82fr) minmax(0, 1.18fr);
+	grid-template-columns: minmax(280px, 1fr) minmax(0, 1.6fr) minmax(220px, 1fr);
 	gap: var(--section-gap);
 	align-items: start;
 	min-width: 0;
 }
 
 .consult-builder__input {
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-	min-width: 0;
-}
-
-.consult-builder__output {
 	display: flex;
 	flex-direction: column;
 	gap: 1rem;
@@ -116,7 +109,7 @@ details.raw-response summary {
 	transition: width 0.3s ease;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1024px) {
 	.consult-builder {
 		grid-template-columns: 1fr;
 	}

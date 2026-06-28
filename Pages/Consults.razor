@@ -58,7 +58,42 @@
                 </section>
             </div>
 
-            <div class="consult-builder__output">
+                <section class="result-panel consult-builder__result">
+                    @if (generatedSections.Count > 0)
+                    {
+                        <div>
+                            <div class="result-header">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <FluentBadge Appearance="Appearance.Accent">
+                                    @generatedSections.Count sections
+                                </FluentBadge>
+                            </div>
+
+                            <article class="note-preview generated-note">
+                                @foreach (var standard in sectionStandards)
+                                {
+                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                    {
+                                        <section class="note-section">
+                                            <h3>@standard.Name</h3>
+                                            <p>@prose</p>
+                                        </section>
+                                    }
+                                }
+                            </article>
+                        </div>
+                    }
+                    else if (!isStandardsLoading && !isAiRequestLoading)
+                    {
+                        <div class="empty-note-state">
+                            <h2 class="panel-title">Consultation note</h2>
+                            <p class="panel-description">
+                                Generated consult sections will appear here after you enter a draft and create the consult.
+                            </p>
+                        </div>
+                    }
+                </section>
+
                 <section class="workflow-panel">
                     <div class="form-stack">
                         <h2 class="panel-title">Progress</h2>
@@ -129,43 +164,6 @@
                         }
                     </div>
                 </section>
-
-                <section class="result-panel consult-builder__result">
-                    @if (generatedSections.Count > 0)
-                    {
-                        <div>
-                            <div class="result-header">
-                                <h2 class="panel-title">Consultation note</h2>
-                                <FluentBadge Appearance="Appearance.Accent">
-                                    @generatedSections.Count sections
-                                </FluentBadge>
-                            </div>
-
-                            <article class="note-preview generated-note">
-                                @foreach (var standard in sectionStandards)
-                                {
-                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
-                                    {
-                                        <section class="note-section">
-                                            <h3>@standard.Name</h3>
-                                            <p>@prose</p>
-                                        </section>
-                                    }
-                                }
-                            </article>
-                        </div>
-                    }
-                    else if (!isStandardsLoading && !isAiRequestLoading)
-                    {
-                        <div class="empty-note-state">
-                            <h2 class="panel-title">Consultation note</h2>
-                            <p class="panel-description">
-                                Generated consult sections will appear here after you enter a draft and create the consult.
-                            </p>
-                        </div>
-                    }
-                </section>
-            </div>
         </div>
     </Authorized>
 </AuthorizeView>
