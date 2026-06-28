@@ -65,9 +65,20 @@ details.raw-response summary {
 
 .job-progress__stage {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 0.5rem;
 	font-size: 0.85rem;
+}
+
+.job-progress__stage-text {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+}
+
+.job-progress__stage-caption {
+	font-size: 0.75rem;
+	color: var(--consultologist-text-muted);
 }
 
 .job-progress__stage--completed .job-progress__stage-icon,
@@ -109,13 +120,22 @@ details.raw-response summary {
 	transition: width 0.3s ease;
 }
 
+.job-completion {
+	font-size: 0.85rem;
+	color: var(--consultologist-text-muted);
+}
+
+.job-completion--success {
+	color: var(--success-foreground, var(--consultologist-text-muted));
+}
+
+.job-completion--failed {
+	color: var(--error-foreground, var(--consultologist-text-muted));
+}
+
 @media (max-width: 1024px) {
 	.consult-builder {
 		grid-template-columns: 1fr;
-	}
-
-	.consult-status {
-		min-height: 0;
 	}
 
 	.empty-note-state {
