@@ -1,130 +1,84 @@
----
-# Metadata required by https://docs.microsoft.com/samples/browse/
-# Metadata properties: https://review.docs.microsoft.com/help/contribute/samples/process/onboarding?branch=main#add-metadata-to-readme
-languages:
-- csharp
-page_type: sample
-name: ASP.NET Core 10.0 Blazor WebAssembly that accesses Microsoft Graph
-description: This ASP.NET Core 10.0 Blazor WebAssembly app signs in and contacts Microsoft Graph on behalf of the user.
-products:
-- azure
-- entra-id
-- ms-graph
-urlFragment: ms-identity-docs-code-spa-blazor-wasm-csharp
----
+# Consultologist
 
-# ASP.NET Core 10.0 Blazor WebAssembly | standalone app | user sign-in, protected web API access (Microsoft Graph) | Microsoft identity platform
+A clinical consult-note generation app. The frontend is a standalone ASP.NET Core Blazor
+WebAssembly PWA (Fluent UI, Microsoft Entra ID sign-in via MSAL); the backend is a .NET 10
+isolated Azure Functions app that runs durable consult-generation jobs against Azure AI
+Foundry agents and streams progress to the browser over server-sent events (SSE).
 
-The standalone app in this scenario targets ASP.NET Core 10.0 Blazor WebAssembly and allows sign-in with a Microsoft Entra account. It uses the [Microsoft.Authentication.WebAssembly.MSAL](https://www.nuget.org/packages/Microsoft.Authentication.WebAssembly.Msal) package to authenticate users and obtain tokens for calling protected APIs. In other words, the app adds an authentication layer that allows users to sign in with their Work and school accounts and make web API calls to protected resources on their behalf.
-
-The API project targets .NET 10 isolated Azure Functions on Azure Functions v4. The production Function App should remain on a Linux Flex Consumption-compatible runtime, not Linux Consumption.
-
-> Note: This code sample uses the Microsoft.Authentication.WebAssembly.MSAL package, which is a modified version of the Microsoft.Identity.Client library.
-
-![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
+![The app after sign-in.](./media/app-signedin.png)
 
 ## Repository layout
 
 ```
 /
+├── Consultologist.sln           solution covering all three projects
 ├── src/
 │   ├── BlazorWasm/              Blazor WASM frontend (Pages/, Shared/, Services/, wwwroot/)
 │   └── Api/                     Azure Functions backend (deployed separately)
 ├── tests/                       xUnit tests for the API project
 ├── docs/                        design docs and research notes — see docs/README.md
 ├── scripts/                     smoke-test scripts
+├── build/                       centralized bin/obj output (gitignored)
 └── .github/workflows/           frontend deploy, API deploy, tests
 ```
 
-Design and operations documentation lives in [`docs/`](./docs/README.md).
-
 ## Prerequisites
 
-- An Azure account with an active subscription. If you don't already have one, [Create an account for free](https://azure.microsoft.com/free/?WT.mc_id=A261C142F).
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- The WebAssembly build tools: `dotnet workload install wasm-tools`
+- An Azure subscription with a Microsoft Entra tenant (for sign-in and deployment)
 
 ## Setup
 
-<a name='1-register-the-web-api-application-in-your-azure-active-directory'></a>
+### 1. Register the app in Microsoft Entra ID
 
-### 1. Register the web API application in your Microsoft Entra ID
+Follow [Register an application with the Microsoft identity platform](https://learn.microsoft.com/entra/identity-platform/quickstart-register-app) with:
 
-First, complete the steps in [Register an application with the Microsoft identity platform](https://docs.microsoft.com/azure/active-directory/develop/quickstart-register-app) to register the sample app.
+| Setting | Value |
+|---|---|
+| **Supported account types** | Accounts in this organizational directory only (single tenant) |
+| **Platform type** | Single-page application |
+| **Redirect URI** | `http://localhost:5000/authentication/login-callback` |
 
-Use the following settings for your app registration:
+### 2. Configure the frontend
 
-| App registration <br/> setting | Value for this sample app                              | Notes                                                                                                       |
-|:------------------------------:|:-------------------------------------------------------|:------------------------------------------------------------------------------------------------------------|
-| **Name**                       | `identity-client-app`                                  | Suggested value for this sample. <br/> You can change the app name at any time.                             |
-| **Supported account types**    | **Accounts in this organizational directory only (Default Directory only - Single tenant)** | Required for this sample. <br/> Support for the Single tenant.                                              |
-| **Platform type**              | `Single-page application`                              | Required value for this sample. <br/> Enables the required and optional settings for the app type.          |
-| **Redirect URIs**              | `http://localhost:5000/authentication/login-callback` | Required value for this sample. <br/> You can change that later in your own implementation.                 |
+In `src/BlazorWasm/wwwroot/appsettings.json`, set the values from your app registration:
 
-> :information_source: **Bold text** in the table matches (or is similar to) a UI element in the Microsoft Entra admin center, while `code formatting` indicates a value you enter into a text box or select in the Microsoft Entra admin center.
+```json
+"Authority": "https://login.microsoftonline.com/<tenant ID>",
+"ClientId": "<client ID>",
+```
 
-### 2. Configure the web app
+## Run
 
-1. Open the `src/BlazorWasm/BlazorWasm.csproj` project in your code editor.
-1. Open the `src/BlazorWasm/wwwroot/appsettings.json` file and modify the following code:
+```bash
+# Frontend (serves on http://localhost:5000)
+dotnet run --project src/BlazorWasm
 
-    ```JSON
-    "Authority": "https://login.microsoftonline.com/Enter the tenant ID obtained from the Microsoft Entra admin center",
-    "ClientId": "Enter the client ID obtained from the Microsoft Entra admin center",
-    ```
+# Backend (Azure Functions Core Tools; or use the VS Code build/run tasks)
+cd src/Api && func start
+```
 
-### 3. Install the tooling for ASP.NET Core Blazor
+Sign in with an Entra account, then sign out from the header when done.
 
-1. Install .NET WebAssembly build tools
+![The app signed out.](./media/app-signedout.png)
 
-   ```bash
-   dotnet workload install wasm-tools
-   ```
+## Tests
 
-For more information, please refer to [.NET WebAssembly build tools](https://learn.microsoft.com/en-us/aspnet/core/blazor/tooling?view=aspnetcore-10.0&pivots=linux#net-webassembly-build-tools)
+```bash
+dotnet test
+```
 
-## Run the application
+## Deployment
 
-### 1. Run the webapp
+Three GitHub Actions workflows under `.github/workflows/`:
 
-1. Execute the following command to get the app up and running:
+- **Azure Static Web Apps** — builds and deploys `src/BlazorWasm` on pushes to `main` (with PR preview environments).
+- **Azure Function App** — builds and deploys `src/Api` on pushes to `main` that touch it.
+- **Tests** — runs the xUnit suite on pushes and pull requests.
 
-   ```bash
-   dotnet run --project src/BlazorWasm
-   ```
+## Documentation
 
-### 2. Sign in and sign out the web app
-
-1. Once the web app is listening, navigate to `https://localhost:5001` and enter your credentials. We recommend using a private browser window to avoid conflicts with your current session.
-
-![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
-
-1. Select Logout to sign-out. Once signed out, you can close the browser.
-
-![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application indicating the user signed-out and allowing click "Login" to signin again.](./media/app-signedout.png)
-
-## About the code
-
-This ASP.NET Core Web App is created using .NET Blazor WebAssembly. The app has two main routes, one is public while the another one is requiring the user to be authenticated in Microsoft Entra ID.
-
-When a user logs out, their browser is redirected to a public route confirming the user signed-out. After signing in, and if they've not previously done so, the user is asked to consent to the app's request for permission to access their data.
-
-## Reporting problems
-
-### Sample app not working?
-
-If you can't get the sample working, you've checked [Stack Overflow](http://stackoverflow.com/questions/tagged/msal), and you've already searched the issues in this sample's repository, open an issue report the problem.
-
-1. Search the [GitHub issues](../../issues) in the repository - your problem might already have been reported or have an answer.
-1. Nothing similar? [Open an issue](../../issues/new) that clearly explains the problem you're having running the sample app.
-
-### All other issues
-
-> :warning: WARNING: Any issue _not_ limited to running this or another sample app will be closed without being addressed.
-
-For all other requests, see [Support and help options for developers | Microsoft identity platform](https://learn.microsoft.com/azure/active-directory/develop/developer-support-help-options).
-
-## Contributing
-
-If you'd like to contribute to this sample, see [CONTRIBUTING.MD](/CONTRIBUTING.md).
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information, see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+Design and operations notes live in [`docs/`](./docs/README.md) — consult generation
+workflow and events, durable jobs, SSE design, accounts and auth, storage, and research
+notes.
