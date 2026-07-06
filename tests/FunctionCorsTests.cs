@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace Api.Tests;
+namespace Consultologist.Api.Tests;
 
 public class FunctionCorsTests
 {

@@ -8,11 +8,11 @@ on:
     branches:
       - main
     paths:
-      - "src/Api/**" # Only run when API code changes
+      - "src/Consultologist.Api/**" # Only run when API code changes
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: "src/Api" # Path to Azure Function project
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: "src/Consultologist.Api" # Path to Azure Function project
   DOTNET_VERSION: "10.0.x" # set this to the dotnet version to use
 
 jobs:

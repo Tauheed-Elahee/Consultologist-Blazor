@@ -1,0 +1,1109 @@
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using Microsoft.AspNetCore.Components.Routing
+@using System.Diagnostics
+@using System.Text
+@using System.Text.Json
+@using Consultologist.Web.Services.AI
+@using Consultologist.Web.Services.Diagnostics
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IAIEndpointService AIService
+@inject ISseDiagnosticsService SseDiagnostics
+@inject ILogger<Consults> Logger
+@inject IAccountEndpointService AccountService
+@attribute [Authorize]
+@implements IAsyncDisposable
+
+@page "/consults"
+
+<PageTitle>Consults</PageTitle>
+
+<section class="page-header">
+    <div class="page-header__content">
+        <span class="section-eyebrow">Consults</span>
+        <h1 class="page-title">Draft and review specialist consult notes.</h1>
+        <p class="page-description">
+            Paste the source consult draft and generate each note section from the active writing standards.
+        </p>
+    </div>
+</section>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="consult-builder">
+            <div class="consult-builder__input">
+                <section class="workflow-panel">
+                    <div class="form-stack">
+                        <h2 class="panel-title">Consult details</h2>
+                        <p class="panel-description">
+                            Paste the referral, history, or draft note. Each output section uses this draft as the source of truth.
+                        </p>
+
+                        <label class="input-field">
+                            <span>Consult draft</span>
+                            <FluentTextArea @bind-Value="consultDraft"
+                                            Placeholder="Enter referral details, clinical context, and the consult question..."
+                                            Rows="16" />
+                        </label>
+
+                        <div class="action-row">
+                            <FluentButton Appearance="Appearance.Accent"
+                                          @onclick="CreateConsultAsync"
+                                          Disabled="@(isStandardsLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || sectionStandards.Count == 0)">
+                                Create consult
+                            </FluentButton>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+                <section class="result-panel consult-builder__result">
+                    @if (generatedSections.Count > 0)
+                    {
+                        <div>
+                            <div class="result-header">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <FluentBadge Appearance="Appearance.Accent">
+                                    @generatedSections.Count sections
+                                </FluentBadge>
+                            </div>
+
+                            <article class="note-preview generated-note">
+                                @foreach (var standard in sectionStandards)
+                                {
+                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                    {
+                                        <section class="note-section">
+                                            <h3>@standard.Name</h3>
+                                            <p>@prose</p>
+                                        </section>
+                                    }
+                                }
+                            </article>
+                        </div>
+                    }
+                    else if (!isStandardsLoading && !isAiRequestLoading)
+                    {
+                        <div class="empty-note-state">
+                            <h2 class="panel-title">Consultation note</h2>
+                            <p class="panel-description">
+                                Generated consult sections will appear here after you enter a draft and create the consult.
+                            </p>
+                        </div>
+                    }
+                </section>
+
+                <section class="workflow-panel">
+                    <div class="form-stack">
+                        <h2 class="panel-title">Progress</h2>
+
+                        @if (isStandardsLoading)
+                        {
+                            <div class="loading-state">
+                                <FluentProgressRing />
+                                <span>Loading section standards...</span>
+                            </div>
+                        }
+
+                        @{
+                            var stageTotal = totalAnalysisStageCount > 0 ? totalAnalysisStageCount : 6;
+                            var stdsDone = !isStandardsLoading && string.IsNullOrEmpty(standardsLoadError);
+                            var submitDone = totalSectionCount > 0;
+                        }
+                        <div class="job-progress">
+                            <ol class="job-progress__stages">
+                                <li class="job-progress__stage @(stdsDone ? "job-progress__stage--completed" : isStandardsLoading ? "job-progress__stage--current" : "job-progress__stage--pending")">
+                                    <span class="job-progress__stage-icon" aria-hidden="true">@(stdsDone ? "✓" : "○")</span>
+                                    <span class="job-progress__stage-text">
+                                        <span class="job-progress__stage-label">Section standards</span>
+                                    </span>
+                                </li>
+                                <li class="job-progress__stage @(submitDone ? "job-progress__stage--completed" : "job-progress__stage--pending")">
+                                    <span class="job-progress__stage-icon" aria-hidden="true">@(submitDone ? "✓" : "○")</span>
+                                    <span class="job-progress__stage-text">
+                                        <span class="job-progress__stage-label">Sending consult</span>
+                                    </span>
+                                </li>
+                                @for (var i = 1; i <= stageTotal; i++)
+                                {
+                                    var stepNum = i;
+                                    var done = completedAnalysisStageCount >= stepNum;
+                                    var current = !done && completedAnalysisStageCount == stepNum - 1 && isAiRequestLoading;
+                                    var showSubStages = stepNum == stageTotal && (done || current);
+                                    <li class="job-progress__stage @(done ? "job-progress__stage--completed" : current ? "job-progress__stage--current" : "job-progress__stage--pending")">
+                                        <span class="job-progress__stage-icon" aria-hidden="true">@(done ? "✓" : "○")</span>
+                                        <span class="job-progress__stage-text">
+                                            <span class="job-progress__stage-label">@GetAnalysisStageLabel(stepNum)</span>
+                                            @if (current && !string.IsNullOrEmpty(aiProgressNotice))
+                                            {
+                                                <span class="job-progress__stage-caption">@aiProgressNotice</span>
+                                            }
+                                            @if (showSubStages)
+                                            {
+                                                <ol class="job-progress__sub-stages">
+                                                    @foreach (var sec in sectionStandards)
+                                                    {
+                                                        var secDone = generatedSections.ContainsKey(sec.Id);
+                                                        var secFailed = failedSectionErrors.ContainsKey(sec.Id);
+                                                        <li class="job-progress__stage @(secDone ? "job-progress__stage--completed" : secFailed ? "job-progress__stage--failed" : "job-progress__stage--pending")">
+                                                            <span class="job-progress__stage-icon" aria-hidden="true">@(secDone ? "✓" : secFailed ? "✗" : "○")</span>
+                                                            <span class="job-progress__stage-text">
+                                                                <span class="job-progress__stage-label">@sec.Name</span>
+                                                            </span>
+                                                        </li>
+                                                    }
+                                                </ol>
+                                            }
+                                        </span>
+                                    </li>
+                                }
+                            </ol>
+                            @if (completedAnalysisStageCount >= stageTotal && totalSectionCount > 0)
+                            {
+                                var pct = completedSectionCount * 100 / totalSectionCount;
+                                <div class="job-progress__sections">
+                                    <div class="job-progress__section-bar" role="progressbar" aria-valuenow="@completedSectionCount" aria-valuemax="@totalSectionCount">
+                                        <div class="job-progress__section-fill" style="width: @(pct)%"></div>
+                                    </div>
+                                    <span class="muted-text">@completedSectionCount / @totalSectionCount sections</span>
+                                </div>
+                            }
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(standardsLoadError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                        }
+
+                        @if (!string.IsNullOrEmpty(aiRequestError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
+                        }
+
+                        @if (!isAiRequestLoading && totalSectionCount > 0)
+                        {
+                            var jobSucceeded = string.IsNullOrEmpty(aiRequestError);
+                            <p class="job-completion @(jobSucceeded ? "job-completion--success" : "job-completion--failed")">
+                                @(jobSucceeded ? "Completed" : "Failed") · @generatedSections.Count/@totalSectionCount sections
+                            </p>
+                        }
+                    </div>
+                </section>
+        </div>
+    </Authorized>
+</AuthorizeView>
+
+@code {
+  private const string StandardsPath = "templates/consult_section_standards.md";
+  private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
+  private static readonly int MaxSseReconnectAttempts = 1;
+  private static readonly JsonSerializerOptions SseJsonOptions = new()
+  {
+    PropertyNameCaseInsensitive = true
+  };
+
+  private string consultDraft = string.Empty;
+  private List<SectionStandard> sectionStandards = new();
+  private Dictionary<string, string> generatedSections = new();
+  private Dictionary<string, string> failedSectionErrors = new();
+  private bool isStandardsLoading;
+  private string? standardsLoadError;
+  private bool isAiRequestLoading;
+  private string? aiRequestError;
+  private string? aiProgressNotice;
+  private int completedSectionCount;
+  private int totalSectionCount;
+  private int completedAnalysisStageCount;
+  private int totalAnalysisStageCount;
+  private CancellationTokenSource? activeEventStreamCancellationTokenSource;
+  private string? activeEventStreamCancellationReason;
+  private SseAttemptState? activeSseAttempt;
+  private IReadOnlyList<SectionStandard> activeSectionSnapshots = Array.Empty<SectionStandard>();
+
+  protected override async Task OnInitializedAsync()
+  {
+    Navigation.LocationChanged += HandleLocationChanged;
+    await LoadSectionStandardsAsync();
+  }
+
+  private async Task LoadSectionStandardsAsync()
+  {
+    isStandardsLoading = true;
+    standardsLoadError = null;
+
+    try
+    {
+      var defaultMarkdown = await LoadBundledStandardsAsync();
+      var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
+      var markdown = string.IsNullOrWhiteSpace(savedSetting?.Value)
+        ? defaultMarkdown
+        : savedSetting.Value;
+
+      sectionStandards = ParseStandards(markdown);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
+    }
+    catch (Exception ex)
+    {
+      sectionStandards = new();
+      standardsLoadError = $"Unable to load section standards: {ex.Message}";
+    }
+    finally
+    {
+      isStandardsLoading = false;
+    }
+  }
+
+  private async Task CreateConsultAsync()
+  {
+    aiRequestError = null;
+    aiProgressNotice = null;
+    generatedSections = new();
+    failedSectionErrors = new();
+    completedSectionCount = 0;
+    totalSectionCount = 0;
+    completedAnalysisStageCount = 0;
+    totalAnalysisStageCount = 0;
+
+    if (string.IsNullOrWhiteSpace(consultDraft))
+    {
+      aiRequestError = "Consult draft is required.";
+      return;
+    }
+
+    if (sectionStandards.Count == 0)
+    {
+      aiRequestError = "No section standards are available.";
+      return;
+    }
+
+    try
+    {
+      isAiRequestLoading = true;
+      var draftSnapshot = consultDraft;
+      var sectionSnapshots = sectionStandards.ToList();
+      totalSectionCount = sectionSnapshots.Count;
+      await InvokeAsync(StateHasChanged);
+
+      var requestSections = sectionSnapshots
+        .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
+        .ToList();
+
+      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
+      var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+
+      if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
+      {
+        Logger.LogWarning(
+          "Consult generation falling back to polling. JobId={JobId}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, TotalCount={TotalCount}",
+          job.JobId,
+          generatedSections.Count,
+          failedSectionErrors.Count,
+          totalSectionCount);
+
+        aiProgressNotice = "Live updates paused; checking status periodically.";
+        MarkPollingFallbackStarted();
+        await InvokeAsync(StateHasChanged);
+        await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      }
+    }
+    catch (Exception ex)
+    {
+      aiRequestError = $"Error calling agent: {ex.Message}";
+    }
+    finally
+    {
+      isAiRequestLoading = false;
+      activeSseAttempt = null;
+      activeEventStreamCancellationReason = null;
+    }
+  }
+
+  private async Task<ConsultGenerationStreamResult> StreamConsultGenerationJobAsync(
+    string jobId,
+    IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    activeSectionSnapshots = sectionSnapshots;
+    var stream = new SseStreamState(jobId);
+
+    try
+    {
+      for (var reconnectAttempt = 0; reconnectAttempt <= MaxSseReconnectAttempts; reconnectAttempt++)
+      {
+        var attempt = stream.StartAttempt();
+        activeSseAttempt = attempt;
+        var lastEventId = reconnectAttempt == 0 ? null : stream.LatestEventId;
+
+        var attemptResult = await StreamOneSseAttemptAsync(
+          jobId,
+          sectionSnapshots,
+          stream,
+          attempt,
+          reconnectAttempt,
+          lastEventId);
+
+        if (attemptResult == ConsultGenerationAttemptResult.Completed)
+        {
+          return ConsultGenerationStreamResult.Completed;
+        }
+
+        if (attemptResult == ConsultGenerationAttemptResult.FallbackToPolling
+            || !CanReconnectSse(stream, reconnectAttempt))
+        {
+          return ConsultGenerationStreamResult.FallbackToPolling;
+        }
+
+        var reconnectBackoff = GetSseReconnectBackoff(reconnectAttempt);
+        Logger.LogInformation(
+          "Reconnecting consult generation SSE stream. JobId={JobId}, ReconnectAttempt={ReconnectAttempt}, LastEventId={LastEventId}, BackoffMs={BackoffMs}",
+          jobId,
+          reconnectAttempt + 1,
+          stream.LatestEventId,
+          reconnectBackoff.TotalMilliseconds);
+
+        await Task.Delay(reconnectBackoff);
+
+        if (!isAiRequestLoading || activeEventStreamCancellationReason != null)
+        {
+          return ConsultGenerationStreamResult.FallbackToPolling;
+        }
+      }
+
+      return ConsultGenerationStreamResult.FallbackToPolling;
+    }
+    finally
+    {
+      activeSectionSnapshots = Array.Empty<SectionStandard>();
+    }
+  }
+
+  private async Task<ConsultGenerationAttemptResult> StreamOneSseAttemptAsync(
+    string jobId,
+    IReadOnlyList<SectionStandard> sectionSnapshots,
+    SseStreamState stream,
+    SseAttemptState attempt,
+    int reconnectAttempt,
+    string? lastEventId)
+  {
+    const int streamTimeoutMinutes = 10;
+    using var streamCancellationTokenSource = new CancellationTokenSource();
+    using var timeoutCancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(streamTimeoutMinutes));
+    using var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+      streamCancellationTokenSource.Token,
+      timeoutCancellationTokenSource.Token);
+    activeEventStreamCancellationTokenSource = streamCancellationTokenSource;
+    activeEventStreamCancellationReason = null;
+
+    try
+    {
+      Logger.LogInformation(
+        "Opening consult generation SSE stream. JobId={JobId}, AttemptId={AttemptId}, SectionCount={SectionCount}, ReconnectAttempt={ReconnectAttempt}, ResumeCursorPresent={ResumeCursorPresent}",
+        jobId,
+        attempt.AttemptId,
+        sectionSnapshots.Count,
+        reconnectAttempt,
+        !string.IsNullOrWhiteSpace(lastEventId));
+
+      await foreach (var jobEvent in AIService.StreamConsultGenerationJobEventsAsync(
+        jobId,
+        attempt.AttemptId,
+        linkedCancellationTokenSource.Token,
+        lastEventId))
+      {
+        attempt.RecordEvent(jobEvent);
+        stream.RecordEvent(jobEvent);
+        var eventResult = await HandleConsultGenerationJobEventAsync(jobEvent.EventName, jobEvent.Json);
+
+        if (eventResult.ServerErrorEventSeen)
+        {
+          attempt.ServerErrorEventSeen = true;
+          stream.ServerErrorEventSeen = true;
+        }
+
+        if (eventResult.Result == ConsultGenerationEventResult.Completed)
+        {
+          ReportSseExit(attempt, GetCompletedSseExitReason(attempt, eventResult.FinalStatus));
+          return ConsultGenerationAttemptResult.Completed;
+        }
+
+        if (eventResult.Result == ConsultGenerationEventResult.FallbackToPolling)
+        {
+          if (eventResult.FallbackDiagnosticReason != null)
+          {
+            ReportSseExit(attempt, eventResult.FallbackDiagnosticReason);
+          }
+
+          return ConsultGenerationAttemptResult.FallbackToPolling;
+        }
+      }
+
+      Logger.LogWarning(
+        "Consult generation SSE stream ended before done. JobId={JobId}, AttemptId={AttemptId}, ReconnectAttempt={ReconnectAttempt}",
+        jobId,
+        attempt.AttemptId,
+        reconnectAttempt);
+
+      if (attempt.ServerErrorEventSeen)
+      {
+        ReportSseExit(attempt, "server-error-event");
+        return ConsultGenerationAttemptResult.Completed;
+      }
+
+      ReportSseExit(attempt, "ended-before-done");
+      return ConsultGenerationAttemptResult.RetrySse;
+    }
+    catch (OperationCanceledException) when (timeoutCancellationTokenSource.IsCancellationRequested
+                                            && !streamCancellationTokenSource.IsCancellationRequested)
+    {
+      Logger.LogWarning(
+        "Consult generation SSE stream timed out before completion. JobId={JobId}, TimeoutMinutes={TimeoutMinutes}",
+        jobId,
+        streamTimeoutMinutes);
+
+      ReportSseExit(attempt, "timeout");
+      return ConsultGenerationAttemptResult.RetrySse;
+    }
+    catch (OperationCanceledException)
+    {
+      var reason = activeEventStreamCancellationReason ?? "manual-cancel";
+      Logger.LogWarning(
+        "Consult generation SSE stream canceled. JobId={JobId}, AttemptId={AttemptId}, Reason={Reason}",
+        jobId,
+        attempt.AttemptId,
+        reason);
+
+      ReportSseExit(attempt, reason);
+      return ConsultGenerationAttemptResult.FallbackToPolling;
+    }
+    catch (AccessTokenNotAvailableException ex)
+    {
+      Logger.LogWarning(
+        ex,
+        "Consult generation SSE stream authorization failed. JobId={JobId}, AttemptId={AttemptId}",
+        jobId,
+        attempt.AttemptId);
+
+      ReportSseExit(attempt, "exception");
+      return ConsultGenerationAttemptResult.FallbackToPolling;
+    }
+    catch (Exception ex)
+    {
+      Logger.LogWarning(
+        ex,
+        "Consult generation SSE stream setup failed. JobId={JobId}",
+        jobId);
+
+      ReportSseExit(attempt, "exception");
+      return ConsultGenerationAttemptResult.RetrySse;
+    }
+    finally
+    {
+      if (ReferenceEquals(activeEventStreamCancellationTokenSource, streamCancellationTokenSource))
+      {
+        activeEventStreamCancellationTokenSource = null;
+      }
+    }
+  }
+
+  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    try
+    {
+      while (isAiRequestLoading)
+      {
+        var response = await AIService.GetConsultGenerationJobAsync(jobId);
+
+        ApplyConsultGenerationJobResponse(response, sectionSnapshots);
+        await InvokeAsync(StateHasChanged);
+
+        if (response.Status is "Completed" or "Failed")
+        {
+          aiProgressNotice = null;
+          MarkPollingFallbackCompleted();
+          return;
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+      }
+    }
+    catch (Exception ex)
+    {
+      aiProgressNotice = null;
+      aiRequestError = $"Error checking consult generation status: {ex.Message}";
+    }
+  }
+
+  private async Task<ConsultGenerationEventHandlingResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
+  {
+    try
+    {
+      switch (eventName)
+      {
+        case "snapshot":
+          var snapshot = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
+          if (snapshot != null)
+          {
+            Logger.LogInformation(
+              "Consult generation SSE snapshot received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+              snapshot.JobId,
+              snapshot.Status,
+              snapshot.TotalSectionCount,
+              snapshot.CompletedSectionCount,
+              snapshot.FailedSectionCount);
+
+            ApplyConsultGenerationJobResponse(snapshot, GetActiveSectionSnapshots());
+          }
+          break;
+
+        case "section-completed":
+          var completed = JsonSerializer.Deserialize<ConsultGenerationSectionCompletedEvent>(json, SseJsonOptions);
+          if (completed != null)
+          {
+            generatedSections = new Dictionary<string, string>(generatedSections)
+            {
+              [completed.SectionId] = completed.Text
+            };
+            var nextFailedSections = new Dictionary<string, string>(failedSectionErrors);
+            nextFailedSections.Remove(completed.SectionId);
+            failedSectionErrors = nextFailedSections;
+            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+          }
+          break;
+
+        case "section-failed":
+          var failed = JsonSerializer.Deserialize<ConsultGenerationSectionFailedEvent>(json, SseJsonOptions);
+          if (failed != null)
+          {
+            failedSectionErrors = new Dictionary<string, string>(failedSectionErrors)
+            {
+              [failed.SectionId] = failed.Error
+            };
+            var nextGeneratedSections = new Dictionary<string, string>(generatedSections);
+            nextGeneratedSections.Remove(failed.SectionId);
+            generatedSections = nextGeneratedSections;
+            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+            UpdateFailedSectionError(GetActiveSectionSnapshots());
+          }
+          break;
+
+        case "analysis-started":
+        case "concepts-extracted":
+        case "problem-identified":
+        case "typical-trajectory-created":
+        case "patient-trajectory-created":
+        case "section-generation-started":
+          var stage = JsonSerializer.Deserialize<ConsultGenerationStageEvent>(json, SseJsonOptions);
+          aiProgressNotice = GetConsultGenerationProgressLabel(stage?.Stage ?? eventName);
+          completedAnalysisStageCount = stage?.CompletedStageCount ?? completedAnalysisStageCount;
+          totalAnalysisStageCount = stage?.TotalStageCount ?? totalAnalysisStageCount;
+          break;
+
+        case "section-standard-draft-created":
+        case "section-patient-draft-created":
+        case "section-instructions-applied":
+          var sectionStep = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(json, SseJsonOptions);
+          if (sectionStep != null)
+          {
+            aiProgressNotice = $"{GetSectionProseStepProgressLabel(sectionStep.Step)}: {sectionStep.SectionName}";
+          }
+          break;
+
+        case "done":
+          var final = JsonSerializer.Deserialize<ConsultGenerationJobResponse>(json, SseJsonOptions);
+          if (final != null)
+          {
+            Logger.LogInformation(
+              "Consult generation SSE done received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
+              final.JobId,
+              final.Status,
+              final.TotalSectionCount,
+              final.CompletedSectionCount,
+              final.FailedSectionCount);
+
+            ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
+          }
+
+          await InvokeAsync(StateHasChanged);
+          return new ConsultGenerationEventHandlingResult(
+            ConsultGenerationEventResult.Completed,
+            FinalStatus: final?.Status);
+
+        case "error":
+          var error = JsonSerializer.Deserialize<ConsultGenerationErrorEvent>(json, SseJsonOptions);
+          if (error != null && IsPreprocessingFailureStage(error.Stage))
+          {
+            aiProgressNotice = null;
+            aiRequestError = error.Error;
+            isAiRequestLoading = false;
+            await InvokeAsync(StateHasChanged);
+            return new ConsultGenerationEventHandlingResult(
+              ConsultGenerationEventResult.Continue,
+              ServerErrorEventSeen: true);
+          }
+
+          Logger.LogWarning(
+            "Consult generation SSE error event received. PayloadLength={PayloadLength}",
+            json.Length);
+
+          return new ConsultGenerationEventHandlingResult(
+            ConsultGenerationEventResult.FallbackToPolling,
+            ServerErrorEventSeen: true,
+            FallbackDiagnosticReason: "server-error-event");
+      }
+
+      await InvokeAsync(StateHasChanged);
+      return new ConsultGenerationEventHandlingResult(ConsultGenerationEventResult.Continue);
+    }
+    catch
+    {
+      Logger.LogWarning(
+        "Consult generation SSE event handling failed. EventName={EventName}, PayloadLength={PayloadLength}",
+        eventName,
+        json.Length);
+
+      return new ConsultGenerationEventHandlingResult(
+        ConsultGenerationEventResult.FallbackToPolling,
+        FallbackDiagnosticReason: "exception");
+    }
+  }
+
+  private void ApplyConsultGenerationJobResponse(
+    ConsultGenerationJobResponse response,
+    IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    generatedSections = response.GeneratedSections;
+    failedSectionErrors = response.FailedSections;
+    totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
+    completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
+
+    if (!string.IsNullOrWhiteSpace(response.AnalysisStatus)
+        && response.Status != "Failed"
+        && !IsPreprocessingFailureStage(response.AnalysisStatus))
+    {
+      aiProgressNotice = GetConsultGenerationProgressLabel(response.AnalysisStatus);
+    }
+
+    if (response.CompletedStageCount.HasValue)
+      completedAnalysisStageCount = response.CompletedStageCount.Value;
+    if (response.TotalStageCount.HasValue)
+      totalAnalysisStageCount = response.TotalStageCount.Value;
+
+    if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.AnalysisError))
+    {
+      aiProgressNotice = null;
+      aiRequestError = response.AnalysisError;
+      return;
+    }
+
+    if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.RuntimeFailureError))
+    {
+      aiProgressNotice = null;
+      aiRequestError = response.RuntimeFailureError;
+      return;
+    }
+
+    UpdateFailedSectionError(sectionSnapshots);
+  }
+
+  private static bool IsPreprocessingFailureStage(string? stage)
+  {
+    return !string.IsNullOrWhiteSpace(stage)
+      && stage.EndsWith("-failed", StringComparison.Ordinal);
+  }
+
+  private static string GetConsultGenerationProgressLabel(string stage)
+  {
+    return stage switch
+    {
+      "analysis-started" => "Analyzing draft",
+      "concepts-extracted" => "Extracting clinical concepts",
+      "problem-identified" => "Identifying primary problem",
+      "typical-trajectory-created" => "Building reference trajectory",
+      "patient-trajectory-created" => "Building patient trajectory",
+      "section-generation-started" => "Generating sections",
+      _ => "Generating consult"
+    };
+  }
+
+  private static string GetAnalysisStageLabel(int stageIndex) => stageIndex switch
+  {
+    1 => "Analysis",
+    2 => "Clinical concepts",
+    3 => "Primary problem",
+    4 => "Reference trajectory",
+    5 => "Patient trajectory",
+    6 => "Section generation",
+    _ => $"Stage {stageIndex}"
+  };
+
+  private static string GetSectionProseStepProgressLabel(string step)
+  {
+    return step switch
+    {
+      "section-standard-draft-created" => "Drafting section",
+      "section-patient-draft-created" => "Applying patient information",
+      "section-instructions-applied" => "Applying section instructions",
+      _ => "Generating section"
+    };
+  }
+
+  private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
+  {
+    if (failedSectionErrors.Count == 0)
+    {
+      if (aiRequestError?.StartsWith("Unable to generate:", StringComparison.Ordinal) == true)
+      {
+        aiRequestError = null;
+      }
+
+      return;
+    }
+
+    var failedSectionNames = sectionSnapshots
+      .Where(section => failedSectionErrors.ContainsKey(section.Id))
+      .Select(section => section.Name);
+
+    aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
+  }
+
+  private void MarkPollingFallbackStarted()
+  {
+    if (activeSseAttempt == null)
+    {
+      return;
+    }
+
+    activeSseAttempt.PollingFallbackStarted = true;
+    ReportSseExit(activeSseAttempt, "polling-fallback-started");
+  }
+
+  private void MarkPollingFallbackCompleted()
+  {
+    if (activeSseAttempt == null)
+    {
+      return;
+    }
+
+    activeSseAttempt.PollingFallbackStarted = true;
+    activeSseAttempt.PollingFallbackCompleted = true;
+    ReportSseExit(activeSseAttempt, "polling-fallback-completed");
+  }
+
+  private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+  {
+    CancelActiveEventStream("navigation");
+  }
+
+  private void CancelActiveEventStream(string reason)
+  {
+    activeEventStreamCancellationReason ??= reason;
+
+    if (IsLifecycleSseExitReason(reason))
+    {
+      isAiRequestLoading = false;
+    }
+
+    if (activeSseAttempt != null)
+    {
+      ReportSseExit(activeSseAttempt, reason);
+    }
+
+    try
+    {
+      activeEventStreamCancellationTokenSource?.Cancel();
+    }
+    catch (ObjectDisposedException)
+    {
+    }
+  }
+
+  private void ReportSseExit(SseAttemptState attempt, string reason)
+  {
+    if (IsTerminalSseExitReason(reason))
+    {
+      if (attempt.TerminalExitReported)
+      {
+        return;
+      }
+
+      attempt.TerminalExitReported = true;
+    }
+
+    if (IsLifecycleSseExitReason(reason))
+    {
+      if (attempt.LifecycleExitReported)
+      {
+        return;
+      }
+
+      attempt.LifecycleExitReported = true;
+    }
+
+    _ = SseDiagnostics.ReportSseExitAsync(new SseExitDiagnostic(
+      attempt.JobId,
+      attempt.AttemptId,
+      reason,
+      attempt.LatestEventId,
+      attempt.LatestEventType,
+      attempt.EventCount,
+      attempt.ElapsedMs,
+      attempt.PollingFallbackStarted,
+      attempt.PollingFallbackCompleted));
+  }
+
+  private static bool IsLifecycleSseExitReason(string reason)
+  {
+    return reason is "component-disposed" or "navigation";
+  }
+
+  private static bool IsTerminalSseExitReason(string reason)
+  {
+    return reason is "completed-via-sse"
+      or "server-error-event"
+      or "ended-before-done"
+      or "timeout"
+      or "exception"
+      or "manual-cancel";
+  }
+
+  private static string GetCompletedSseExitReason(SseAttemptState attempt, string? finalStatus)
+  {
+    return attempt.ServerErrorEventSeen || finalStatus == "Failed"
+      ? "server-error-event"
+      : "completed-via-sse";
+  }
+
+  private static bool CanReconnectSse(SseStreamState stream, int reconnectAttempt)
+  {
+    if (MaxSseReconnectAttempts <= 0)
+    {
+      return false;
+    }
+
+    return reconnectAttempt < MaxSseReconnectAttempts
+      && !stream.TerminalEventSeen
+      && (!string.IsNullOrWhiteSpace(stream.LatestEventId) || stream.EventCount == 0);
+  }
+
+  private static TimeSpan GetSseReconnectBackoff(int reconnectAttempt)
+  {
+    return reconnectAttempt switch
+    {
+      0 => TimeSpan.FromMilliseconds(500),
+      1 => TimeSpan.FromMilliseconds(1500),
+      _ => TimeSpan.FromSeconds(3)
+    };
+  }
+
+  private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
+  {
+    return activeSectionSnapshots.Count > 0
+      ? activeSectionSnapshots
+      : sectionStandards;
+  }
+
+  private async Task<string> LoadBundledStandardsAsync()
+  {
+    var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
+    return await Http.GetStringAsync(standardsUri);
+  }
+
+  private static List<SectionStandard> ParseStandards(string markdown)
+  {
+    var sections = new List<SectionStandard>();
+    SectionStandard? current = null;
+    var content = new StringBuilder();
+
+    foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
+    {
+      if (line.StartsWith("## ", StringComparison.Ordinal))
+      {
+        if (current != null)
+        {
+          current.Standard = content.ToString().Trim();
+          sections.Add(current);
+          content.Clear();
+        }
+
+        var heading = line[3..].Trim();
+        var separatorIndex = heading.IndexOf(':');
+        var id = separatorIndex >= 0 ? heading[..separatorIndex].Trim() : CreateId(heading);
+        var name = separatorIndex >= 0 ? heading[(separatorIndex + 1)..].Trim() : heading;
+        current = new SectionStandard(id, name, string.Empty);
+        continue;
+      }
+
+      if (current != null)
+      {
+        content.AppendLine(line);
+      }
+    }
+
+    if (current != null)
+    {
+      current.Standard = content.ToString().Trim();
+      sections.Add(current);
+    }
+
+    return sections;
+  }
+
+  private static string CreateId(string value)
+  {
+    return value.Trim().ToLowerInvariant().Replace(' ', '_');
+  }
+
+  private sealed class SectionStandard
+  {
+    public SectionStandard(string id, string name, string standard)
+    {
+      Id = id;
+      Name = name;
+      Standard = standard;
+    }
+
+    public string Id { get; }
+    public string Name { get; }
+    public string Standard { get; set; }
+  }
+
+  private sealed record ConsultGenerationSectionCompletedEvent(
+    string JobId,
+    string SectionId,
+    string Text);
+
+  private sealed record ConsultGenerationSectionFailedEvent(
+    string JobId,
+    string SectionId,
+    string Error);
+
+  private sealed record ConsultGenerationStageEvent(
+    string JobId,
+    string Stage,
+    string Message,
+    int CompletedStageCount,
+    int TotalStageCount);
+
+  private sealed record ConsultGenerationSectionProseStepEvent(
+    string JobId,
+    string SectionId,
+    string SectionName,
+    string Step,
+    string Message,
+    int CompletedStepCount,
+    int TotalStepCount);
+
+  private sealed record ConsultGenerationErrorEvent(
+    string JobId,
+    string Error,
+    string? Stage);
+
+  private enum ConsultGenerationStreamResult
+  {
+    Completed,
+    FallbackToPolling
+  }
+
+  private enum ConsultGenerationAttemptResult
+  {
+    Completed,
+    RetrySse,
+    FallbackToPolling
+  }
+
+  private enum ConsultGenerationEventResult
+  {
+    Continue,
+    Completed,
+    FallbackToPolling
+  }
+
+  private sealed record ConsultGenerationEventHandlingResult(
+    ConsultGenerationEventResult Result,
+    bool ServerErrorEventSeen = false,
+    string? FinalStatus = null,
+    string? FallbackDiagnosticReason = null);
+
+  private sealed class SseStreamState
+  {
+    public SseStreamState(string jobId)
+    {
+      JobId = jobId;
+    }
+
+    public string JobId { get; }
+    public string? LatestEventId { get; private set; }
+    public string? LatestEventType { get; private set; }
+    public int EventCount { get; private set; }
+    public bool ServerErrorEventSeen { get; set; }
+    public bool TerminalEventSeen { get; private set; }
+
+    public SseAttemptState StartAttempt()
+    {
+      return new SseAttemptState(JobId, Guid.NewGuid().ToString("D"));
+    }
+
+    public void RecordEvent(ConsultGenerationJobSseEvent jobEvent)
+    {
+      EventCount++;
+
+      if (!string.IsNullOrWhiteSpace(jobEvent.EventId))
+      {
+        LatestEventId = jobEvent.EventId;
+      }
+
+      LatestEventType = jobEvent.EventName;
+
+      if (jobEvent.EventName is "done" or "error")
+      {
+        TerminalEventSeen = true;
+      }
+    }
+  }
+
+  private sealed class SseAttemptState
+  {
+    private readonly Stopwatch stopwatch = Stopwatch.StartNew();
+
+    public SseAttemptState(string jobId, string attemptId)
+    {
+      JobId = jobId;
+      AttemptId = attemptId;
+    }
+
+    public string JobId { get; }
+    public string AttemptId { get; }
+    public string? LatestEventId { get; private set; }
+    public string? LatestEventType { get; private set; }
+    public int EventCount { get; private set; }
+    public bool PollingFallbackStarted { get; set; }
+    public bool PollingFallbackCompleted { get; set; }
+    public bool ServerErrorEventSeen { get; set; }
+    public bool TerminalExitReported { get; set; }
+    public bool LifecycleExitReported { get; set; }
+    public long ElapsedMs => stopwatch.ElapsedMilliseconds;
+
+    public void RecordEvent(ConsultGenerationJobSseEvent jobEvent)
+    {
+      EventCount++;
+
+      if (!string.IsNullOrWhiteSpace(jobEvent.EventId))
+      {
+        LatestEventId = jobEvent.EventId;
+      }
+
+      LatestEventType = jobEvent.EventName;
+    }
+  }
+
+  public ValueTask DisposeAsync()
+  {
+    Navigation.LocationChanged -= HandleLocationChanged;
+    CancelActiveEventStream("component-disposed");
+    activeEventStreamCancellationTokenSource?.Dispose();
+    return ValueTask.CompletedTask;
+  }
+}

@@ -13,8 +13,8 @@ Foundry agents and streams progress to the browser over server-sent events (SSE)
 /
 ├── Consultologist.sln           solution covering all three projects
 ├── src/
-│   ├── BlazorWasm/              Blazor WASM frontend (Pages/, Shared/, Services/, wwwroot/)
-│   └── Api/                     Azure Functions backend (deployed separately)
+│   ├── Consultologist.Web/      Blazor WASM frontend (Pages/, Shared/, Services/, wwwroot/)
+│   └── Consultologist.Api/      Azure Functions backend (deployed separately)
 ├── tests/                       xUnit tests for the API project
 ├── docs/                        design docs and research notes — see docs/README.md
 ├── scripts/                     smoke-test scripts
@@ -42,7 +42,7 @@ Follow [Register an application with the Microsoft identity platform](https://le
 
 ### 2. Configure the frontend
 
-In `src/BlazorWasm/wwwroot/appsettings.json`, set the values from your app registration:
+In `src/Consultologist.Web/wwwroot/appsettings.json`, set the values from your app registration:
 
 ```json
 "Authority": "https://login.microsoftonline.com/<tenant ID>",
@@ -53,10 +53,10 @@ In `src/BlazorWasm/wwwroot/appsettings.json`, set the values from your app regis
 
 ```bash
 # Frontend (serves on http://localhost:5000)
-dotnet run --project src/BlazorWasm
+dotnet run --project src/Consultologist.Web
 
 # Backend (Azure Functions Core Tools; or use the VS Code build/run tasks)
-cd src/Api && func start
+cd src/Consultologist.Api && func start
 ```
 
 Sign in with an Entra account, then sign out from the header when done.
@@ -73,8 +73,8 @@ dotnet test
 
 Three GitHub Actions workflows under `.github/workflows/`:
 
-- **Azure Static Web Apps** — builds and deploys `src/BlazorWasm` on pushes to `main` (with PR preview environments).
-- **Azure Function App** — builds and deploys `src/Api` on pushes to `main` that touch it.
+- **Azure Static Web Apps** — builds and deploys `src/Consultologist.Web` on pushes to `main` (with PR preview environments).
+- **Azure Function App** — builds and deploys `src/Consultologist.Api` on pushes to `main` that touch it.
 - **Tests** — runs the xUnit suite on pushes and pull requests.
 
 ## Documentation

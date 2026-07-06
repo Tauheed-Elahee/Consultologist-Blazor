@@ -1,8 +1,8 @@
-using Api.Auth;
+using Consultologist.Api.Auth;
 using Microsoft.AspNetCore.Http;
 using NSubstitute;
 
-namespace Api.Tests;
+namespace Consultologist.Api.Tests;
 
 public class AccountAuthorizerTests
 {

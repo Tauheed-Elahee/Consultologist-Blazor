@@ -102,7 +102,7 @@ Azure AI Foundry Agent
 Expanded structure:
 
 ```text
-BlazorWasm
+Consultologist.Web
 ├─ Pages/Consults.razor
 │  └─ calls GenerateConsultAsync once per consult
 │
@@ -396,7 +396,7 @@ The major conceptual change is that HTTP stops being the unit of work. In Phase 
 
 ```bash
 dotnet build Api/Api.csproj --no-restore
-dotnet build BlazorWasm.csproj --no-restore
+dotnet build src/Consultologist.Web/Consultologist.Web.csproj --no-restore
 ```
 
 ## Assumptions
