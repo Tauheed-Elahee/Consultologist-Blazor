@@ -1,0 +1,26 @@
+# Top-most EditorConfig file for the Consultologist repo
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,razor}]
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,targets,sln}]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Existing web assets and VS Code configs use tabs; keep them as-is
+[*.{html,json,js,css}]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
