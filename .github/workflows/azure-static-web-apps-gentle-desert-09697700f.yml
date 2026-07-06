@@ -6,6 +6,10 @@ on:
       - main
     paths-ignore:
       - "Api/**" # Don't rebuild static web app when only API changes
+      - "tests/**" # ...or when only tests change
+      - "docs/**" # ...or when only documentation changes
+      - "*.md"
+      - ".github/workflows/tests.yml"
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:
