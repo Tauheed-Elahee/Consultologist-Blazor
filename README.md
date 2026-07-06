@@ -82,3 +82,8 @@ Three GitHub Actions workflows under `.github/workflows/`:
 Design and operations notes live in [`docs/`](./docs/README.md) — consult generation
 workflow and events, durable jobs, SSE design, accounts and auth, storage, and research
 notes.
+
+## License
+
+[PolyForm Strict License 1.0.0](./LICENSE.md) — noncommercial use only; no distribution
+or derivative works.
