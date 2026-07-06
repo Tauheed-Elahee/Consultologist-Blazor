@@ -27,9 +27,9 @@ The API project targets .NET 10 isolated Azure Functions on Azure Functions v4. 
 
 ```
 /
-├── Pages/, Shared/, Services/   Blazor WASM frontend (BlazorWasm.csproj)
-├── wwwroot/                     static assets, JSON schemas, prompt templates
-├── Api/                         Azure Functions backend (Api.csproj, deployed separately)
+├── src/
+│   ├── BlazorWasm/              Blazor WASM frontend (Pages/, Shared/, Services/, wwwroot/)
+│   └── Api/                     Azure Functions backend (deployed separately)
 ├── tests/                       xUnit tests for the API project
 ├── docs/                        design docs and research notes — see docs/README.md
 ├── scripts/                     smoke-test scripts
@@ -64,8 +64,8 @@ Use the following settings for your app registration:
 
 ### 2. Configure the web app
 
-1. Open the `BlazorWasm.csproj` under the the `sign-in-blazorwasm` folder in your code editor.
-1. Open the `./wwwroot/appsettings.json` file and modify the following code:
+1. Open the `src/BlazorWasm/BlazorWasm.csproj` project in your code editor.
+1. Open the `src/BlazorWasm/wwwroot/appsettings.json` file and modify the following code:
 
     ```JSON
     "Authority": "https://login.microsoftonline.com/Enter the tenant ID obtained from the Microsoft Entra admin center",
@@ -89,7 +89,7 @@ For more information, please refer to [.NET WebAssembly build tools](https://lea
 1. Execute the following command to get the app up and running:
 
    ```bash
-   dotnet run
+   dotnet run --project src/BlazorWasm
    ```
 
 ### 2. Sign in and sign out the web app

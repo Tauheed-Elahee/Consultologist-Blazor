@@ -70,6 +70,9 @@ StyleCopReport.xml
 # Files built by Visual Studio
 obj
 bin
+
+# Centralized build output (Directory.Build.props)
+/build/
 *_i.c
 *_p.c
 *_h.h

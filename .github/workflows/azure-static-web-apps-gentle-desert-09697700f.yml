@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths-ignore:
-      - "Api/**" # Don't rebuild static web app when only API changes
+      - "src/Api/**" # Don't rebuild static web app when only API changes
       - "tests/**" # ...or when only tests change
       - "docs/**" # ...or when only documentation changes
       - "*.md"
@@ -58,7 +58,7 @@ jobs:
           action: "upload"
           ###### Repository/Build Configurations - These values can be configured to match your app requirements. ######
           # For more information regarding Static Web App workflow configurations, please visit: https://aka.ms/swaworkflowconfig
-          app_location: "." # App source code path (root directory for standalone Blazor WASM)
+          app_location: "src/BlazorWasm" # App source code path for the standalone Blazor WASM project
           api_location: "" # Empty - Azure Functions deployed separately
           output_location: "output/wwwroot" # Built app content directory after publish
           app_build_command: "dotnet publish -c Release -o output" # Explicit .NET build command

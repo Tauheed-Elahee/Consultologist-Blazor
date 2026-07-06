@@ -22,14 +22,4 @@
     <ServiceWorker Include="wwwroot\service-worker.js" PublishedContent="wwwroot\service-worker.published.js" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Exclude Azure Function and test files from Blazor project -->
-    <Compile Remove="Api/**/*.cs" />
-    <Content Remove="Api/**/*" />
-    <None Remove="Api/**/*" />
-    <Compile Remove="tests/**/*.cs" />
-    <Content Remove="tests/**/*" />
-    <None Remove="tests/**/*" />
-  </ItemGroup>
-
 </Project>
