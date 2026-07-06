@@ -23,6 +23,21 @@ The API project targets .NET 10 isolated Azure Functions on Azure Functions v4. 
 
 ![A screenshot of an ASP.NET Core 10.0 Blazor WebAssembly application displaying a response from Microsoft Graph.](./media/app-signedin.png)
 
+## Repository layout
+
+```
+/
+├── Pages/, Shared/, Services/   Blazor WASM frontend (BlazorWasm.csproj)
+├── wwwroot/                     static assets, JSON schemas, prompt templates
+├── Api/                         Azure Functions backend (Api.csproj, deployed separately)
+├── tests/                       xUnit tests for the API project
+├── docs/                        design docs and research notes — see docs/README.md
+├── scripts/                     smoke-test scripts
+└── .github/workflows/           frontend deploy, API deploy, tests
+```
+
+Design and operations documentation lives in [`docs/`](./docs/README.md).
+
 ## Prerequisites
 
 - An Azure account with an active subscription. If you don't already have one, [Create an account for free](https://azure.microsoft.com/free/?WT.mc_id=A261C142F).

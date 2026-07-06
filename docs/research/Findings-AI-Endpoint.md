@@ -161,7 +161,7 @@ Replace REST API calls with Azure AI Foundry Agent SDK which abstracts the versi
    ```
 
 ### Documentation
-4. **`/Research/Migration-Azure-Foundry.md`** - Update with correct ID format
+4. **`/docs/research/Migration-Azure-Foundry.md`** - Update with correct ID format
 
 ### Code (No changes needed for Options 1 & 2)
 - **`/Api/AgentProxy.cs`** is already correct - it reads from configuration
@@ -365,8 +365,8 @@ I queried the Azure API to find the correct assistant ID:
 ### Files Updated
 1. ✅ `Api/local.settings.json` - Updated with correct assistant ID
 2. ✅ `.env` - Updated with correct assistant ID
-3. ✅ `Research/Findings-AI-Endpoint.md` - Created comprehensive investigation report
-4. ✅ `Research/Migration-Azure-Foundry.md` - Added resolution notice
+3. ✅ `docs/research/Findings-AI-Endpoint.md` - Created comprehensive investigation report
+4. ✅ `docs/research/Migration-Azure-Foundry.md` - Added resolution notice
 
 ### Test Results
 ✅ **Successfully tested locally** - HTTP 200, complete workflow executed:
@@ -389,7 +389,7 @@ I queried the Azure API to find the correct assistant ID:
 
 3. Then commit and push your changes:
    ```bash
-   git add Api/local.settings.json .env Research/
+   git add Api/local.settings.json .env docs/research/
    git commit -m "Fix: Update agent ID to OpenAI-compatible format"
    git push
    ```
