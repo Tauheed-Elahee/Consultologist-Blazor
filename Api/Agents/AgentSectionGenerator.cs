@@ -8,7 +8,7 @@ using OpenAI.Responses;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 
-namespace Api;
+namespace Api.Agents;
 
 public sealed class AgentSectionGenerator
 {

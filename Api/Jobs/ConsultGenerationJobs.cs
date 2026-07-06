@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using System.Net.ServerSentEvents;
+using Api.Agents;
 using Api.Auth;
 using Api.Models;
 using Microsoft.AspNetCore.Http;
@@ -15,7 +16,7 @@ using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Logging;
 
-namespace Api;
+namespace Api.Jobs;
 
 public sealed class ConsultGenerationJobs
 {

@@ -1,7 +1,10 @@
 extern alias AzureIdentity;
 
 using Api;
+using Api.Agents;
 using Api.Auth;
+using Api.Jobs;
+using Api.Probes;
 using Azure.Core;
 using AzureIdentity::Azure.Identity;
 using Microsoft.Azure.Functions.Worker;

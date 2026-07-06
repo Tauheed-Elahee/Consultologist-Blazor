@@ -6,7 +6,7 @@ using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace Api;
+namespace Api.Jobs;
 
 public interface IConsultGenerationJobEventStore
 {

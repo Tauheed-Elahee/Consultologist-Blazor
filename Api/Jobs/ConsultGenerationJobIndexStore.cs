@@ -4,7 +4,7 @@ using Azure;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 
-namespace Api;
+namespace Api.Jobs;
 
 public interface IConsultGenerationJobIndexStore
 {

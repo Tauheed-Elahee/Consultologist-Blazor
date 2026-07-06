@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Api.Auth;
+using Api.Jobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 
