@@ -30,6 +30,18 @@ jobs:
           submodules: true
           lfs: false
 
+      - name: Install OIDC Client from Core Package
+        run: npm install @actions/core@1.6.0 @actions/http-client
+
+      - name: Get Id Token
+        uses: actions/github-script@v8
+        id: idtoken
+        with:
+          script: |
+            const coredemo = require('@actions/core')
+            return await coredemo.getIDToken()
+          result-encoding: string
+
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
@@ -44,6 +56,7 @@ jobs:
           app_location: "src/Consultologist.Web" # App source code path for the standalone Blazor WASM project
           api_location: "" # Empty - Azure Functions deployed separately
           output_location: "wwwroot" # Blazor static content within the publish output
+          github_id_token: ${{ steps.idtoken.outputs.result }} # Required: this SWA uses GitHub OIDC deployment authorization (the "unexpected input" warning is benign)
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:
