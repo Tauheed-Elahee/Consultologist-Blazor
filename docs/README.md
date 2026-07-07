@@ -10,6 +10,7 @@ point-in-time investigations and migration plans.
 - [DURABLE_JOBS.md](DURABLE_JOBS.md) — durable jobs, server-sent events, and .NET version notes
 - [PARALLEL_AGENTS.md](PARALLEL_AGENTS.md) — parallel section calls, backend parallelism, async jobs
 - [NEW_AGENTS.md](NEW_AGENTS.md) — new Azure AI Foundry agents
+- [SNOMED_TOOL_FAILURES.md](SNOMED_TOOL_FAILURES.md) — diagnosis and fix options for `search_concepts` tool failures (250-character Snowstorm term limit)
 
 ## Server-sent events (SSE)
 
