@@ -1373,6 +1373,20 @@ public sealed record ConsultGenerationRuntimeFailure(
 
 public sealed class ConsultGenerationOrchestrator
 {
+    // Agent activity calls are nondeterministic: a retry re-runs the same prompt and the
+    // agent issues fresh tool calls, so a transient tool failure (e.g. a rejected SNOMED
+    // search) rarely repeats. Configuration errors (InvalidOperationException from
+    // AgentSectionGenerator) are excluded so they fail fast instead of burning retries.
+    // See docs/SNOMED_TOOL_FAILURES.md.
+    private static readonly TaskOptions AgentActivityRetryOptions = TaskOptions.FromRetryPolicy(
+        new RetryPolicy(
+            maxNumberOfAttempts: 3,
+            firstRetryInterval: TimeSpan.FromSeconds(5),
+            backoffCoefficient: 2.0)
+        {
+            HandleFailure = failure => !failure.IsCausedBy<InvalidOperationException>()
+        });
+
     [Function(nameof(ConsultGenerationOrchestrator))]
     public async Task RunAsync([OrchestrationTrigger] TaskOrchestrationContext context)
     {
@@ -1417,7 +1431,8 @@ public sealed class ConsultGenerationOrchestrator
 
         var patientConcepts = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(ExtractPatientConceptsActivity),
-            new ConsultGenerationConceptActivityInput(request.ConsultDraft));
+            new ConsultGenerationConceptActivityInput(request.ConsultDraft),
+            AgentActivityRetryOptions);
 
         if (patientConcepts.Concepts.Count == 0)
         {
@@ -1447,7 +1462,8 @@ public sealed class ConsultGenerationOrchestrator
 
         var problemContext = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(IdentifyProblemActivity),
-            new ConsultGenerationProblemActivityInput(patientConcepts.Concepts));
+            new ConsultGenerationProblemActivityInput(patientConcepts.Concepts),
+            AgentActivityRetryOptions);
 
         if (problemContext.Concepts.Count == 0)
         {
@@ -1477,7 +1493,8 @@ public sealed class ConsultGenerationOrchestrator
 
         var typicalTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(CreateTypicalTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, Array.Empty<ClinicalConcept>()));
+            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, Array.Empty<ClinicalConcept>()),
+            AgentActivityRetryOptions);
 
         if (typicalTrajectory.Concepts.Count == 0)
         {
@@ -1507,7 +1524,8 @@ public sealed class ConsultGenerationOrchestrator
 
         var patientTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(CreatePatientTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, typicalTrajectory.Concepts));
+            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, typicalTrajectory.Concepts),
+            AgentActivityRetryOptions);
 
         if (patientTrajectory.Concepts.Count == 0)
         {
@@ -1709,7 +1727,8 @@ public sealed class ConsultGenerationOrchestrator
         {
             var standardDraft = await context.CallActivityAsync<string>(
                 ConsultGenerationActivityNames.GenerateStandardSectionDraft,
-                input);
+                input,
+                AgentActivityRetryOptions);
 
             await context.Entities.CallEntityAsync(
                 entityId,
@@ -1723,7 +1742,8 @@ public sealed class ConsultGenerationOrchestrator
             stepName = ConsultGenerationSectionProseSteps.PatientDraftCreated;
             var patientDraft = await context.CallActivityAsync<string>(
                 ConsultGenerationActivityNames.UpdateSectionWithPatientInformation,
-                input with { SectionDraft = standardDraft });
+                input with { SectionDraft = standardDraft },
+                AgentActivityRetryOptions);
 
             await context.Entities.CallEntityAsync(
                 entityId,
@@ -1737,7 +1757,8 @@ public sealed class ConsultGenerationOrchestrator
             stepName = ConsultGenerationSectionProseSteps.InstructionsApplied;
             var finalProse = await context.CallActivityAsync<string>(
                 ConsultGenerationActivityNames.ApplySectionInstructions,
-                input with { SectionDraft = patientDraft });
+                input with { SectionDraft = patientDraft },
+                AgentActivityRetryOptions);
 
             await context.Entities.CallEntityAsync(
                 entityId,
@@ -2080,8 +2101,15 @@ public static class ConsultGenerationPreprocessingRunner
         string prompt,
         CancellationToken cancellationToken)
     {
+        // Snowstorm rejects search terms outside 3-250 characters; steer the agent away
+        // from passing sentences as terms. See docs/SNOMED_TOOL_FAILURES.md.
+        const string toolUsageGuidance =
+            "When calling SNOMED terminology tools such as search_concepts, look up one short clinical term per call " +
+            "(a few words, 3-250 characters) - never a sentence or passage. If a tool returns an error message, " +
+            "adjust the call as the message directs and retry.";
+
         var stopwatch = Stopwatch.StartNew();
-        var rawResponse = await agent.SendPromptAsync(warningStage, prompt, cancellationToken);
+        var rawResponse = await agent.SendPromptAsync(warningStage, $"{toolUsageGuidance}\n\n{prompt}", cancellationToken);
         var result = ConsultGenerationConceptParser.Parse(rawResponse, source, warningStage);
 
         logger.LogInformation(
