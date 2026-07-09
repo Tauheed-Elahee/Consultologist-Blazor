@@ -3,6 +3,24 @@
 Diagnosis and remediation options for consult-generation job failures caused by the
 `search_concepts` SNOMED tool, investigated 2026-07-06.
 
+> **Status (2026-07-09): root cause fixed; defense-in-depth added.**
+> **Option 1 — done.** The MCP server was rewritten on .NET 10 with input validation and
+> redeployed. Verified live: an over-length term now returns `{"error": "Search term
+> must be 3 to 250 characters; use a single short clinical term (a few words), not a
+> sentence."}` instead of the masked exception, so agents can self-correct.
+> **Option 3 — done** (both parts, implemented in this repo on 2026-07-09; see
+> "Option 3 in detail" below).
+> **Option 2 — done** (2026-07-09): the tool-usage instruction was added to agent
+> `test-json`, published as version 45, and `AzureAI__AgentVersion` on
+> `canada-east-ai-function` was updated from 44 to 45 (the app pins the version, so the
+> instruction was inert until the setting bump).
+>
+> A fourth layer exists in the MCP server itself: the `search_concepts` tool metadata
+> (parameter description) states the 3–250-character short-term rule, which every tool
+> consumer sees at call-forming time. Defense stack by reach: tool metadata (all MCP
+> consumers) → agent instructions (all `test-json` callers) → repo prompt guidance
+> (this repo's calls) → server-side validation (hard backstop).
+
 ## Symptom
 
 Durable consult-generation jobs fail during preprocessing with:
@@ -33,12 +51,58 @@ search term instead of a short concept — anything over 250 characters kills th
 Snowstorm server itself is healthy; short searches work fine. Nothing in this repository
 is broken.
 
+## Involved Azure resources
+
+Discovered 2026-07-07 via `az` while diagnosing this failure.
+
+### MCP server: `consultologist-snomed-mcp-flex`
+
+Updated 2026-07-09 after the .NET 10 migration; the original notes from 2026-07-07
+described the retired predecessor app `consultologist-snomed-mcp` (.NET 9, hardcoded
+Snowstorm URL, source not located at the time).
+
+- Source repo: `../snomed-snowstorm-mcp/` (sibling of this repo;
+  `snomed-snowstorm-mcp.csproj`, `SnowstormFunctions.cs`).
+- Azure Functions app `consultologist-snomed-mcp-flex`, resource group `snomed-rg`
+  (Flex Consumption; replaced the deleted `consultologist-snomed-mcp`). Targets
+  `net10.0`, isolated worker, `Microsoft.Azure.Functions.Worker.Extensions.Mcp`.
+- Still serves `mcp.snomed.consultologist.ai`.
+- Revised toolset: `SearchConcepts` (now with optional semantic-tag filter),
+  `ValidateConcept`, `GetConcept`, `GetParents`, `GetAncestors`, `GetChildren`,
+  `GetTerminologyInfo`, `EclQuery`; `GetBySemanticTag` was dropped.
+- The Snowstorm base URL now comes from the `SNOWSTORM_URL` app setting (no longer
+  hardcoded), and tool handlers guard against non-JSON Snowstorm responses and
+  unreachable-server errors, returning `{error: ...}` payloads instead of throwing.
+- **The fix-option-1 guard is implemented and verified live (2026-07-09):**
+  `SearchConcepts` rejects terms outside 3–250 characters with a descriptive,
+  agent-correctable error; in-range searches behave as before. The other tools carry
+  equivalent guards (also verified live): SCTID shape validation on the concept-ID
+  tools, non-empty ECL and 1–10000 limit checks, and Snowstorm's own error messages
+  passed through instead of masked exceptions. The last residual gap — timeouts
+  (`TaskCanceledException`) escaping as masked exceptions — was closed on 2026-07-09
+  (commit `0fff939` in the MCP repo): all network catch sites handle timeouts alongside
+  connection failures. Option 1 is fully implemented.
+- Two consumers: the Foundry agent below (consult generation), and the developer's
+  Claude Code MCP config (`snowstorm-azure`).
+
+### Foundry agent
+
+- Agent **`test-json`**, version **45** (as configured on 2026-07-09; version 45 added
+  the SNOMED tool-usage instruction), in Foundry project `consultologist-canada-east`.
+- Backing Azure resource: `consultologist-canada-east-resou` (kind AIServices), resource
+  group `consultologist_group`. Manage the agent (instructions, model, MCP tool wiring)
+  in the Azure AI Foundry portal (ai.azure.com), not the classic Azure portal.
+- The consuming Function App `canada-east-ai-function` selects the agent via app settings
+  `AzureAI__AgentName` / `AzureAI__AgentVersion` / `AzureAI__Endpoint`. That app also
+  carries stale `AzureAI__*__old` settings (old assistants-era agent id, endpoint, and
+  API version) that the code no longer reads — cleanup candidates.
+
 ## Fix options
 
 In order of value:
 
-1. **The MCP server (root fix).** Applied in whatever repo deploys
-   `mcp.snomed.consultologist.ai` (source is not in this repo): validate the term and
+1. **The MCP server (root fix).** Applied in the `consultologist-snomed-mcp` Functions
+   app (see resources above; source is not in this repo): validate the term and
    return an *informative* tool error instead of throwing — e.g., "Search term must be
    250 characters or fewer; retry with a short clinical term." Agents can self-correct
    from a descriptive error; they cannot from a masked exception. Alternatively, truncate
@@ -52,6 +116,13 @@ In order of value:
    `src/Consultologist.Api/Jobs/ConsultGenerationJobs.cs` — detailed below.
 
 ## Option 3 in detail
+
+> Implemented 2026-07-09. Part A: the tool-usage guidance is prepended in
+> `ConsultGenerationPreprocessingRunner.RunConceptPromptAsync`. Part B:
+> `ConsultGenerationOrchestrator.AgentActivityRetryOptions` (3 attempts, 5 s first
+> retry, 2× backoff, `HandleFailure` excludes `InvalidOperationException`) is passed at
+> all seven agent activity call sites. Note the isolated-worker API detail: the failure
+> filter is set via `RetryPolicy.HandleFailure` (the `Handle` property is read-only).
 
 Two independent changes in `ConsultGenerationJobs.cs`, both defensive — they reduce how
 often the bad tool call happens and stop it from killing the whole job when it does.
