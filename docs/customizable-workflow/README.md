@@ -29,6 +29,9 @@ yet; these notes are the input to a future milestone plan.
 - [product-stages.md](product-stages.md) — where this fits in the larger product: the
   workflow vision as stage 1 of four (engine → learning loop → verification layer →
   outputs and platform)
+- [completeness.md](completeness.md) — what remains after all the stages (governance,
+  regulatory track, evidence, the moving substrate) and the marker for "truly done
+  building"
 
 ## Key terms
 

@@ -35,7 +35,8 @@ point-in-time investigations and migration plans.
   [workflow packages](customizable-workflow/workflow-packages.md),
   [provenance](customizable-workflow/provenance.md),
   [DAG improvements](customizable-workflow/dag-improvements.md),
-  [product stages](customizable-workflow/product-stages.md)
+  [product stages](customizable-workflow/product-stages.md),
+  [completeness](customizable-workflow/completeness.md)
 
 ## Research
 
