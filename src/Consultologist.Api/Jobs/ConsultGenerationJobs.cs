@@ -7,6 +7,7 @@ using System.Net.ServerSentEvents;
 using Consultologist.Api.Agents;
 using Consultologist.Api.Auth;
 using Consultologist.Api.Models;
+using Consultologist.Api.Workflow;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -142,6 +143,11 @@ public sealed class ConsultGenerationJobs
             var jobId = Guid.NewGuid().ToString("N");
             var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
 
+            // Provenance: identify the artifacts and input that produce this consult.
+            // See docs/customizable-workflow/provenance.md.
+            var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
+            var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
+
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
                 req.FunctionContext.InvocationId,
@@ -150,7 +156,13 @@ public sealed class ConsultGenerationJobs
             await client.Entities.SignalEntityAsync(
                 entityId,
                 nameof(ConsultGenerationJobEntity.Initialize),
-                new ConsultGenerationJobInitialize(jobId, account.AppUserId, request.Sections));
+                new ConsultGenerationJobInitialize(
+                    jobId,
+                    account.AppUserId,
+                    request.Sections,
+                    request.WorkflowPackage,
+                    effectiveInputHash,
+                    agentVersion));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -159,7 +171,12 @@ public sealed class ConsultGenerationJobs
 
             var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
                 nameof(ConsultGenerationOrchestrator),
-                new ConsultGenerationOrchestrationInput(request, account.AppUserId),
+                new ConsultGenerationOrchestrationInput(
+                    request,
+                    account.AppUserId,
+                    request.WorkflowPackage,
+                    effectiveInputHash,
+                    agentVersion),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -1402,7 +1419,13 @@ public sealed class ConsultGenerationOrchestrator
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.Initialize),
-            new ConsultGenerationJobInitialize(context.InstanceId, input.AppUserId, request.Sections));
+            new ConsultGenerationJobInitialize(
+                context.InstanceId,
+                input.AppUserId,
+                request.Sections,
+                input.WorkflowPackage,
+                input.EffectiveInputHash,
+                input.AgentVersion));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -2261,6 +2284,10 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
             }
         }
 
+        State.WorkflowPackage ??= input.WorkflowPackage;
+        State.EffectiveInputHash ??= input.EffectiveInputHash;
+        State.AgentVersion ??= input.AgentVersion;
+
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
 
@@ -2405,7 +2432,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 
     private static void ApplyAnalysisUpdate(ConsultGenerationJobState state, ConsultGenerationAnalysisUpdate input)
     {
-        state.SchemaVersion = 1;
+        state.SchemaVersion = 2;
         state.AnalysisStatus = input.AnalysisStatus;
         state.AnalysisError = input.AnalysisError;
         state.CompletedStageCount = input.CompletedStageCount;
@@ -2468,12 +2495,18 @@ public sealed record ConsultGenerationActivityInput(
 
 public sealed record ConsultGenerationOrchestrationInput(
     ConsultGenerationRequest Request,
-    string AppUserId);
+    string AppUserId,
+    string? WorkflowPackage = null,
+    string? EffectiveInputHash = null,
+    string? AgentVersion = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
     string AppUserId,
-    IReadOnlyList<ConsultGenerationSectionRequest> Sections);
+    IReadOnlyList<ConsultGenerationSectionRequest> Sections,
+    string? WorkflowPackage = null,
+    string? EffectiveInputHash = null,
+    string? AgentVersion = null);
 
 public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
 
@@ -2536,7 +2569,7 @@ public sealed class ConsultGenerationJobState
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public int TotalSectionCount { get; set; }
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public string? AnalysisStatus { get; set; }
     public string? AnalysisError { get; set; }
     public List<ClinicalConcept> PatientConcepts { get; set; } = new();
@@ -2549,6 +2582,9 @@ public sealed class ConsultGenerationJobState
     public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
     public List<JobHistoryEvent> History { get; set; } = new();
     public string? FailureError { get; set; }
+    public string? WorkflowPackage { get; set; }
+    public string? EffectiveInputHash { get; set; }
+    public string? AgentVersion { get; set; }
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -2649,7 +2685,10 @@ public sealed class ConsultGenerationJobState
             StartedAtUtc: StartedAtUtc,
             CompletedAtUtc: CompletedAtUtc,
             RuntimeFailureError: FailureError,
-            History: History.Count > 0 ? History.AsReadOnly() : null);
+            History: History.Count > 0 ? History.AsReadOnly() : null,
+            WorkflowPackage: WorkflowPackage,
+            EffectiveInputHash: EffectiveInputHash,
+            AgentVersion: AgentVersion);
     }
 }
 

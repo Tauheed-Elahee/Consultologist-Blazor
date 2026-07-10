@@ -2,9 +2,8 @@
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Net
 @using System.Text
-@inject HttpClient Http
-@inject NavigationManager Navigation
 @inject IAccountEndpointService AccountService
+@inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
 
 @page "/templates"
@@ -92,7 +91,6 @@
 </AuthorizeView>
 
 @code {
-  private const string StandardsPath = "templates/consult_section_standards.md";
   private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
   private const string MarkdownContentType = "text/markdown";
 
@@ -115,7 +113,8 @@
 
     try
     {
-      defaultMarkdown = await LoadBundledStandardsAsync();
+      var package = await WorkflowService.GetCurrentPackageAsync();
+      defaultMarkdown = package.StandardsMarkdown;
       var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
       standards = ParseStandards(string.IsNullOrWhiteSpace(savedSetting?.Value) ? defaultMarkdown : savedSetting.Value);
     }
@@ -168,7 +167,7 @@
 
     try
     {
-      defaultMarkdown ??= await LoadBundledStandardsAsync();
+      defaultMarkdown ??= (await WorkflowService.GetCurrentPackageAsync()).StandardsMarkdown;
       standards = ParseStandards(defaultMarkdown);
       await AccountService.DeleteSettingAsync(StandardsSettingKey);
       statusIntent = MessageIntent.Success;
@@ -187,12 +186,6 @@
     {
       isSaving = false;
     }
-  }
-
-  private async Task<string> LoadBundledStandardsAsync()
-  {
-    var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
-    return await Http.GetStringAsync(standardsUri);
   }
 
   private static List<SectionStandard> ParseStandards(string markdown)
