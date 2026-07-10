@@ -1,5 +1,11 @@
 # Per-Consult Provenance Record
 
+> **Status (2026-07-09)**: milestone 1 records the first three fields on every job —
+> `WorkflowPackage`, `EffectiveInputHash` (SHA-256 over canonical draft+sections JSON,
+> computed server-side at job start), and `AgentVersion` — snapshotted into the
+> orchestration input and exposed on the job response (`SchemaVersion` 2). The remaining
+> fields land with later milestones.
+
 Every consult generation records the versioned artifacts that produced it. Conceptually:
 
 ```
@@ -19,7 +25,7 @@ contain hyphens; derive a string key from the object when needed).
 | `agent_version` | Foundry agent version (currently `test-json@45`) | Foundry + git attestation (below) |
 | `snomed_version` | Terminology edition + version + import date | MCP `get_terminology_info` (returns exactly this) |
 | `mcp_version` | Release (git tag) of the Apache-2.0 `snomed-snowstorm-mcp` repo | Git tag; deployed app should attest its build (e.g. info endpoint returning the commit) |
-| `workflow_package` | `name@version` of the pinned workflow package | Package registry |
+| `workflow_package` | `name@version` of the pinned workflow package (CalVer `vYYYY.MM.N`, e.g. `general@v2026.07.1`) | Package registry |
 | `input_hash` | Hash of the **effective** input | Computed at job start |
 | `inference_stack` (optional) | Inference engine + version, for bit-exact re-run attempts | Deployment config |
 

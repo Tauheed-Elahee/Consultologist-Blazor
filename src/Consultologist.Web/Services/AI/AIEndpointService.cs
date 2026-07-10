@@ -19,7 +19,8 @@ public interface IAIEndpointService
 
     Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        IReadOnlyList<ConsultGenerationSectionRequest> sections);
+        IReadOnlyList<ConsultGenerationSectionRequest> sections,
+        string? workflowPackage = null);
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
@@ -232,7 +233,8 @@ public class AIEndpointService : IAIEndpointService
 
     public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        IReadOnlyList<ConsultGenerationSectionRequest> sections)
+        IReadOnlyList<ConsultGenerationSectionRequest> sections,
+        string? workflowPackage = null)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -246,7 +248,7 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
             }
 
-            var request = new ConsultGenerationRequest(consultDraft, sections);
+            var request = new ConsultGenerationRequest(consultDraft, sections, workflowPackage);
 
             _logger.LogInformation(
                 "Starting consult generation job at {Url}. SectionCount={SectionCount}, ConsultDraftLength={ConsultDraftLength}",
@@ -456,7 +458,7 @@ public class AIEndpointService : IAIEndpointService
 
 public record AgentSectionRequest(string ConsultDraft, string SectionName, string SectionStandard);
 public record AgentResponse(string? Response, string? Error, bool Success);
-public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<ConsultGenerationSectionRequest> Sections);
+public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<ConsultGenerationSectionRequest> Sections, string? WorkflowPackage = null);
 public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
 public record ConsultGenerationResponse(Dictionary<string, string> GeneratedSections, Dictionary<string, string> FailedSections, bool Success);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);

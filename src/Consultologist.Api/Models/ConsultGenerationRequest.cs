@@ -4,7 +4,8 @@ namespace Consultologist.Api.Models;
 
 public record ConsultGenerationRequest(
     string ConsultDraft,
-    IReadOnlyList<ConsultGenerationSectionRequest> Sections);
+    IReadOnlyList<ConsultGenerationSectionRequest> Sections,
+    string? WorkflowPackage = null);
 
 public record ConsultGenerationSectionRequest(
     string Id,
@@ -51,7 +52,10 @@ public record ConsultGenerationJobResponse(
     DateTimeOffset? CreatedAtUtc = null,
     DateTimeOffset? StartedAtUtc = null,
     DateTimeOffset? CompletedAtUtc = null,
-    IReadOnlyList<JobHistoryEvent>? History = null);
+    IReadOnlyList<JobHistoryEvent>? History = null,
+    string? WorkflowPackage = null,
+    string? EffectiveInputHash = null,
+    string? AgentVersion = null);
 
 public record JobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 

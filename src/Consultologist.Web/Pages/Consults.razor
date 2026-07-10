@@ -6,12 +6,12 @@
 @using System.Text.Json
 @using Consultologist.Web.Services.AI
 @using Consultologist.Web.Services.Diagnostics
-@inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IAIEndpointService AIService
 @inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
 @inject IAccountEndpointService AccountService
+@inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
 @implements IAsyncDisposable
 
@@ -195,7 +195,6 @@
 </AuthorizeView>
 
 @code {
-  private const string StandardsPath = "templates/consult_section_standards.md";
   private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
   private static readonly int MaxSseReconnectAttempts = 1;
   private static readonly JsonSerializerOptions SseJsonOptions = new()
@@ -205,6 +204,7 @@
 
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
+  private string? workflowPackageRef;
   private Dictionary<string, string> generatedSections = new();
   private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
@@ -234,7 +234,9 @@
 
     try
     {
-      var defaultMarkdown = await LoadBundledStandardsAsync();
+      var package = await WorkflowService.GetCurrentPackageAsync();
+      workflowPackageRef = package.Ref;
+      var defaultMarkdown = package.StandardsMarkdown;
       var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
       var markdown = string.IsNullOrWhiteSpace(savedSetting?.Value)
         ? defaultMarkdown
@@ -292,7 +294,7 @@
         .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
         .ToList();
 
-      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections);
+      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections, workflowPackageRef);
       var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
 
       if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
@@ -903,12 +905,6 @@
     return activeSectionSnapshots.Count > 0
       ? activeSectionSnapshots
       : sectionStandards;
-  }
-
-  private async Task<string> LoadBundledStandardsAsync()
-  {
-    var standardsUri = new Uri(new Uri(Navigation.BaseUri), StandardsPath);
-    return await Http.GetStringAsync(standardsUri);
   }
 
   private static List<SectionStandard> ParseStandards(string markdown)

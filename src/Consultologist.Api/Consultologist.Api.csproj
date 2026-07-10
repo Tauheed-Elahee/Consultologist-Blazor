@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Data.Tables" />
+    <PackageReference Include="Azure.Storage.Blobs" />
     <PackageReference Include="Azure.Identity" Aliases="AzureIdentity" />
     <PackageReference Include="Azure.AI.Extensions.OpenAI" />
     <PackageReference Include="Azure.AI.Projects" />
