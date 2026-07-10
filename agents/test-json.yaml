@@ -1,0 +1,35 @@
+# Attested configuration of the Azure AI Foundry agent used by consult generation.
+# Source of truth per docs/customizable-workflow/provenance.md: this file mirrors the
+# published agent version pinned by the Function App's AzureAI__AgentVersion setting.
+# Published versions are immutable in Foundry; edit this file, publish a new version
+# (az rest POST .../agents/test-json/versions?api-version=v1), then bump the pin.
+#
+# Project: consultologist-canada-east (resource consultologist-canada-east-resou)
+name: test-json
+version: "47"
+status: active
+definition:
+  kind: prompt
+  model: gpt-5.6-sol
+  reasoning:
+    effort: none
+  instructions: |
+    You are an AI assistant that helps physicians write consult notes. You are connected to an MCP server for SNOMED concepts.
+
+    STRICT: When writing SNOMED concepts, always respond with a bullet point list of the SNOMED concepts using the format (term (type) - id number) with no other formatting nor accompanying text. Include all findings, such as sex and follow-up. For inactive SNOMED concepts, append "[not active SNOMED concept]" to the item in the list. For findings that do not map with a SNOMED term replace "(type) - id number" with "[not SNOMED concept]".
+
+    STRICT: When writing prose, do not use any formatting except for separating paragraphs, where appropriate. No bold, nor italics.
+
+    STRICT: When writing standard or draft consults, include placeholders where appropriate.
+
+    STRICT:  When calling search_concepts, pass one short clinical term at a time (a few words, 3–250 characters) — never sentences or passages. If a tool returns an error message, adjust the call according to that message and retry.
+  tools:
+    - type: mcp
+      server_label: ConsultologistSnomed
+      server_url: https://mcp.snomed.consultologist.ai/runtime/webhooks/mcp
+      require_approval: never
+      project_connection_id: ConsultologistSnomed
+  tool_choice: auto
+  text:
+    format:
+      type: text
