@@ -27,6 +27,16 @@ point-in-time investigations and migration plans.
 - [STORAGE.md](STORAGE.md) — Durable Functions storage setup
 - [NETWORK_HARDENING.md](NETWORK_HARDENING.md) — network hardening notes
 
+## Customizable workflow (design notes)
+
+- [customizable-workflow/](customizable-workflow/README.md) — versioned workflow
+  packages, specialty bundles, and the per-consult provenance record (design discussion
+  2026-07-09, not yet implemented): [current state](customizable-workflow/current-state.md),
+  [workflow packages](customizable-workflow/workflow-packages.md),
+  [provenance](customizable-workflow/provenance.md),
+  [DAG improvements](customizable-workflow/dag-improvements.md),
+  [product stages](customizable-workflow/product-stages.md)
+
 ## Research
 
 - [research/Findings-AI-Endpoint.md](research/Findings-AI-Endpoint.md) — Azure AI Foundry API endpoint investigation
