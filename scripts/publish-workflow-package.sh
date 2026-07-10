@@ -33,7 +33,8 @@ if ! [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[1-9][0-9]*$ ]]; then
 	exit 1
 fi
 
-AUTH=(--account-name "$ACCOUNT" --auth-mode login)
+# login (Entra RBAC, needs Storage Blob Data Contributor) or key (queries account keys)
+AUTH=(--account-name "$ACCOUNT" --auth-mode "${AZ_STORAGE_AUTH_MODE:-login}")
 
 az storage container create "${AUTH[@]}" --name "$CONTAINER" --output none
 

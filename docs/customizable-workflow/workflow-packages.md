@@ -42,6 +42,10 @@ keeps its native scheme.
 > jobs record `WorkflowPackage`/`EffectiveInputHash`/`AgentVersion`
 > (job `SchemaVersion` 2). Seed package source lives in `packages/general/`; publish
 > with `scripts/publish-workflow-package.sh`.
+> Registry auth is Entra-first: the store uses the app's managed identity against
+> `WorkflowPackages__BlobServiceUri` (Storage Blob Data Reader on the account); the
+> publish script uses `az --auth-mode login` (Storage Blob Data Contributor for the
+> publisher). Connection strings remain only as the local-dev/Azurite fallback.
 
 - **Registry**: packages live in storage — Azure Blob is the natural fit
   (`workflow-packages` container, `{name}/{version}/...`), published **immutably**: a new version never
