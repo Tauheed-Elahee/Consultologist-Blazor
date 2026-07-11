@@ -31,6 +31,13 @@ contain hyphens; derive a string key from the object when needed).
 
 ## Attestation: git as source of truth for mutable deployments
 
+> **Implemented 2026-07-10** for the agent: `AgentAttestationService` (hosted service in
+> the Api) loads the bundled `agents/{name}.yaml` at startup, fetches the deployed agent
+> version from the Foundry API with the app's managed identity, and compares model,
+> instructions, reasoning effort, tool choice, and tools. Drift logs as an error;
+> `AgentAttestation__Enforce=true` fails the host instead. The MCP-deployment
+> attestation remains future work.
+
 The Foundry agent (system prompt, parameters, tool wiring) is edited in a portal and is
 therefore mutable state. Rule: **track the agent config in git; at startup or job start,
 fetch the deployed agent version and verify it matches the tracked manifest** — fail or
