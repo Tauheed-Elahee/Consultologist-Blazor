@@ -52,7 +52,9 @@ keeps its native scheme.
   mutates an old one, exactly like model weights or agent versions.
 - **Authoring**: keep package sources in their own git repo with CI publishing to blob
   on tag — code-style review and history, weights-style pinning at runtime. (Mirrors
-  how `snomed-snowstorm-mcp` is a separate repo with its own deployment.)
+  how `snomed-snowstorm-mcp` is a separate repo with its own deployment.) Full design
+  for this split — including the agents repo and the CI-only trust model — in
+  [content-repos.md](content-repos.md).
 - **Pinning**: an account (or an individual consult run) references `name@version`. The
   current hardcoded behavior becomes the seed package (`general@v2026.07.1`) so nothing in the
   app is special-cased.
