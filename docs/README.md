@@ -24,6 +24,7 @@ point-in-time investigations and migration plans.
 
 ## Storage & infrastructure
 
+- [CONFIGURATION.md](CONFIGURATION.md) — environment variable / app setting reference for the Api and frontend config keys
 - [STORAGE.md](STORAGE.md) — Durable Functions storage setup
 - [NETWORK_HARDENING.md](NETWORK_HARDENING.md) — network hardening notes
 
