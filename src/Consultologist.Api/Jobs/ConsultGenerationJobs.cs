@@ -1454,7 +1454,7 @@ public sealed class ConsultGenerationOrchestrator
 
         var patientConcepts = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(ExtractPatientConceptsActivity),
-            new ConsultGenerationConceptActivityInput(request.ConsultDraft),
+            new ConsultGenerationConceptActivityInput(request.ConsultDraft, input.WorkflowPackage),
             AgentActivityRetryOptions);
 
         if (patientConcepts.Concepts.Count == 0)
@@ -1485,7 +1485,7 @@ public sealed class ConsultGenerationOrchestrator
 
         var problemContext = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(IdentifyProblemActivity),
-            new ConsultGenerationProblemActivityInput(patientConcepts.Concepts),
+            new ConsultGenerationProblemActivityInput(patientConcepts.Concepts, input.WorkflowPackage),
             AgentActivityRetryOptions);
 
         if (problemContext.Concepts.Count == 0)
@@ -1516,7 +1516,7 @@ public sealed class ConsultGenerationOrchestrator
 
         var typicalTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(CreateTypicalTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, Array.Empty<ClinicalConcept>()),
+            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, Array.Empty<ClinicalConcept>(), input.WorkflowPackage),
             AgentActivityRetryOptions);
 
         if (typicalTrajectory.Concepts.Count == 0)
@@ -1547,7 +1547,7 @@ public sealed class ConsultGenerationOrchestrator
 
         var patientTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
             nameof(CreatePatientTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, typicalTrajectory.Concepts),
+            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, typicalTrajectory.Concepts, input.WorkflowPackage),
             AgentActivityRetryOptions);
 
         if (patientTrajectory.Concepts.Count == 0)
@@ -1596,7 +1596,8 @@ public sealed class ConsultGenerationOrchestrator
                 entityId,
                 request.ConsultDraft,
                 patientTrajectory.Concepts,
-                section);
+                section,
+                input.WorkflowPackage);
 
             pendingTasks.Add(task);
             taskSections[task] = section;
@@ -1741,9 +1742,10 @@ public sealed class ConsultGenerationOrchestrator
         EntityInstanceId entityId,
         string consultDraft,
         IReadOnlyList<ClinicalConcept> patientTrajectoryConcepts,
-        ConsultGenerationSectionRequest section)
+        ConsultGenerationSectionRequest section,
+        string? workflowPackage)
     {
-        var input = new ConsultGenerationActivityInput(consultDraft, patientTrajectoryConcepts, section);
+        var input = new ConsultGenerationActivityInput(consultDraft, patientTrajectoryConcepts, section, WorkflowPackage: workflowPackage);
         var stepName = ConsultGenerationSectionProseSteps.StandardDraftCreated;
 
         try
@@ -1832,6 +1834,7 @@ public sealed class GenerateConsultSectionActivity
             var prose = await _sectionGenerator.GenerateStandardSectionDraftAsync(
                 input.PatientTrajectoryConcepts,
                 section.Name,
+                input.WorkflowPackage,
                 cancellationToken);
 
             var trimmedProse = prose.Trim();
@@ -1879,6 +1882,7 @@ public sealed class GenerateConsultSectionActivity
                 input.SectionDraft ?? string.Empty,
                 input.ConsultDraft,
                 section.Name,
+                input.WorkflowPackage,
                 cancellationToken);
 
             var trimmedProse = prose.Trim();
@@ -1926,6 +1930,7 @@ public sealed class GenerateConsultSectionActivity
                 input.SectionDraft ?? string.Empty,
                 section.Name,
                 section.Standard,
+                input.WorkflowPackage,
                 cancellationToken);
 
             var trimmedProse = prose.Trim();
@@ -1958,11 +1963,13 @@ public sealed class GenerateConsultSectionActivity
 public sealed class ExtractPatientConceptsActivity
 {
     private readonly AgentSectionGenerator _agent;
+    private readonly IWorkflowPromptProvider _promptProvider;
     private readonly ILogger<ExtractPatientConceptsActivity> _logger;
 
-    public ExtractPatientConceptsActivity(AgentSectionGenerator agent, ILogger<ExtractPatientConceptsActivity> logger)
+    public ExtractPatientConceptsActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<ExtractPatientConceptsActivity> logger)
     {
         _agent = agent;
+        _promptProvider = promptProvider;
         _logger = logger;
     }
 
@@ -1971,7 +1978,13 @@ public sealed class ExtractPatientConceptsActivity
         [ActivityTrigger] ConsultGenerationConceptActivityInput input,
         CancellationToken cancellationToken)
     {
-        var prompt = $"""
+        var rendered = await _promptProvider.TryRenderAsync(
+            input.WorkflowPackage,
+            WorkflowPromptContract.ExtractPatientConcepts,
+            new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft },
+            cancellationToken);
+
+        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
             Extract patient-specific clinical concepts from the draft consult note.
 
             Output only SNOMED concept bullets in these exact forms:
@@ -1993,11 +2006,13 @@ public sealed class ExtractPatientConceptsActivity
 public sealed class IdentifyProblemActivity
 {
     private readonly AgentSectionGenerator _agent;
+    private readonly IWorkflowPromptProvider _promptProvider;
     private readonly ILogger<IdentifyProblemActivity> _logger;
 
-    public IdentifyProblemActivity(AgentSectionGenerator agent, ILogger<IdentifyProblemActivity> logger)
+    public IdentifyProblemActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<IdentifyProblemActivity> logger)
     {
         _agent = agent;
+        _promptProvider = promptProvider;
         _logger = logger;
     }
 
@@ -2006,7 +2021,16 @@ public sealed class IdentifyProblemActivity
         [ActivityTrigger] ConsultGenerationProblemActivityInput input,
         CancellationToken cancellationToken)
     {
-        var prompt = $"""
+        var rendered = await _promptProvider.TryRenderAsync(
+            input.WorkflowPackage,
+            WorkflowPromptContract.IdentifyProblem,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(input.PatientConcepts)
+            },
+            cancellationToken);
+
+        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
             Identify the primary disease or problem concept from the validated patient concepts.
 
             Output only one or more SNOMED concept bullets in these exact forms:
@@ -2027,11 +2051,13 @@ public sealed class IdentifyProblemActivity
 public sealed class CreateTypicalTrajectoryActivity
 {
     private readonly AgentSectionGenerator _agent;
+    private readonly IWorkflowPromptProvider _promptProvider;
     private readonly ILogger<CreateTypicalTrajectoryActivity> _logger;
 
-    public CreateTypicalTrajectoryActivity(AgentSectionGenerator agent, ILogger<CreateTypicalTrajectoryActivity> logger)
+    public CreateTypicalTrajectoryActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<CreateTypicalTrajectoryActivity> logger)
     {
         _agent = agent;
+        _promptProvider = promptProvider;
         _logger = logger;
     }
 
@@ -2040,7 +2066,16 @@ public sealed class CreateTypicalTrajectoryActivity
         [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
         CancellationToken cancellationToken)
     {
-        var prompt = $"""
+        var rendered = await _promptProvider.TryRenderAsync(
+            input.WorkflowPackage,
+            WorkflowPromptContract.CreateTypicalTrajectory,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(input.ProblemContext)
+            },
+            cancellationToken);
+
+        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
             Build a typical clinical trajectory for the disease/problem concept.
 
             Output only SNOMED concept bullets in these exact forms:
@@ -2062,11 +2097,13 @@ public sealed class CreateTypicalTrajectoryActivity
 public sealed class CreatePatientTrajectoryActivity
 {
     private readonly AgentSectionGenerator _agent;
+    private readonly IWorkflowPromptProvider _promptProvider;
     private readonly ILogger<CreatePatientTrajectoryActivity> _logger;
 
-    public CreatePatientTrajectoryActivity(AgentSectionGenerator agent, ILogger<CreatePatientTrajectoryActivity> logger)
+    public CreatePatientTrajectoryActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<CreatePatientTrajectoryActivity> logger)
     {
         _agent = agent;
+        _promptProvider = promptProvider;
         _logger = logger;
     }
 
@@ -2075,7 +2112,18 @@ public sealed class CreatePatientTrajectoryActivity
         [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
         CancellationToken cancellationToken)
     {
-        var prompt = $"""
+        var rendered = await _promptProvider.TryRenderAsync(
+            input.WorkflowPackage,
+            WorkflowPromptContract.CreatePatientTrajectory,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(input.ProblemContext),
+                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(input.PatientConcepts),
+                [WorkflowPromptContract.TypicalTrajectoryConcepts] = ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts)
+            },
+            cancellationToken);
+
+        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
             Reconcile a patient-specific trajectory from the validated patient concepts and typical trajectory.
 
             Output only SNOMED concept bullets in these exact forms:
@@ -2101,14 +2149,15 @@ public sealed class CreatePatientTrajectoryActivity
     }
 }
 
-public sealed record ConsultGenerationConceptActivityInput(string ConsultDraft);
+public sealed record ConsultGenerationConceptActivityInput(string ConsultDraft, string? WorkflowPackage = null);
 
-public sealed record ConsultGenerationProblemActivityInput(IReadOnlyList<ClinicalConcept> PatientConcepts);
+public sealed record ConsultGenerationProblemActivityInput(IReadOnlyList<ClinicalConcept> PatientConcepts, string? WorkflowPackage = null);
 
 public sealed record ConsultGenerationTrajectoryActivityInput(
     IReadOnlyList<ClinicalConcept> ProblemContext,
     IReadOnlyList<ClinicalConcept> PatientConcepts,
-    IReadOnlyList<ClinicalConcept> TypicalTrajectoryConcepts);
+    IReadOnlyList<ClinicalConcept> TypicalTrajectoryConcepts,
+    string? WorkflowPackage = null);
 
 public sealed record ConceptExtractionResult(
     IReadOnlyList<ClinicalConcept> Concepts,
@@ -2116,6 +2165,15 @@ public sealed record ConceptExtractionResult(
 
 public static class ConsultGenerationPreprocessingRunner
 {
+    // Snowstorm rejects search terms outside 3-250 characters; steer the agent away
+    // from passing sentences as terms. See docs/SNOMED_TOOL_FAILURES.md. On the
+    // package path this text lives in the package's snomed-tool-guidance prelude;
+    // this constant is the compiled fallback.
+    public const string SnomedToolGuidance =
+        "When calling SNOMED terminology tools such as search_concepts, look up one short clinical term per call " +
+        "(a few words, 3-250 characters) - never a sentence or passage. If a tool returns an error message, " +
+        "adjust the call as the message directs and retry.";
+
     public static async Task<ConceptExtractionResult> RunConceptPromptAsync(
         AgentSectionGenerator agent,
         ILogger logger,
@@ -2124,15 +2182,8 @@ public static class ConsultGenerationPreprocessingRunner
         string prompt,
         CancellationToken cancellationToken)
     {
-        // Snowstorm rejects search terms outside 3-250 characters; steer the agent away
-        // from passing sentences as terms. See docs/SNOMED_TOOL_FAILURES.md.
-        const string toolUsageGuidance =
-            "When calling SNOMED terminology tools such as search_concepts, look up one short clinical term per call " +
-            "(a few words, 3-250 characters) - never a sentence or passage. If a tool returns an error message, " +
-            "adjust the call as the message directs and retry.";
-
         var stopwatch = Stopwatch.StartNew();
-        var rawResponse = await agent.SendPromptAsync(warningStage, $"{toolUsageGuidance}\n\n{prompt}", cancellationToken);
+        var rawResponse = await agent.SendPromptAsync(warningStage, prompt, cancellationToken);
         var result = ConsultGenerationConceptParser.Parse(rawResponse, source, warningStage);
 
         logger.LogInformation(
@@ -2491,7 +2542,8 @@ public sealed record ConsultGenerationActivityInput(
     string ConsultDraft,
     IReadOnlyList<ClinicalConcept> PatientTrajectoryConcepts,
     ConsultGenerationSectionRequest Section,
-    string? SectionDraft = null);
+    string? SectionDraft = null,
+    string? WorkflowPackage = null);
 
 public sealed record ConsultGenerationOrchestrationInput(
     ConsultGenerationRequest Request,
