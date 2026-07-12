@@ -86,7 +86,8 @@ when a specialty needs a structurally different pipeline.
    `general@v2026.07.1`. Defaults leave the codebase; versioning and provenance exist from day
    one.
 2. **Prompts into packages** — the seven hardcoded prompts become package content
-   (templates with declared variables).
+   (templates with declared variables). Format specified in
+   [package-format-v2.md](package-format-v2.md) (specVersion 2, Scriban).
 3. **Section prose steps as package-defined ordered lists** (N steps, string→string).
 4. **DAG in the package format** — including per-step output contracts (schemas), which
    is what finally severs harness dependence. Only build this when a real specialty
