@@ -44,11 +44,24 @@ if az storage blob exists "${AUTH[@]}" --container-name "$CONTAINER" \
 	exit 1
 fi
 
+SPEC_VERSION=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['specVersion'])")
+if [[ "$SPEC_VERSION" -ge 2 && ! -d "$PACKAGE_DIR/prompts" ]]; then
+	echo "error: specVersion $SPEC_VERSION packages must contain a prompts/ directory" >&2
+	exit 1
+fi
+
 echo "Publishing $NAME@$VERSION ..."
 az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 	--file "$MANIFEST" --name "$NAME/$VERSION/manifest.json" --output none
 az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 	--file "$STANDARDS" --name "$NAME/$VERSION/standards.md" --output none
+
+if [[ -d "$PACKAGE_DIR/prompts" ]]; then
+	for f in "$PACKAGE_DIR"/prompts/*.md; do
+		az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
+			--file "$f" --name "$NAME/$VERSION/prompts/$(basename "$f")" --output none
+	done
+fi
 
 echo "Updating $NAME/latest.json -> $VERSION"
 POINTER=$(mktemp)
