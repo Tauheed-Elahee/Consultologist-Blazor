@@ -299,7 +299,7 @@ public sealed class AgentSectionGenerator
             """;
     }
 
-    private static string BuildStandardSectionDraftMessage(
+    internal static string BuildStandardSectionDraftMessage(
         IReadOnlyList<ClinicalConcept> patientTrajectory,
         string sectionName)
     {
@@ -323,7 +323,7 @@ public sealed class AgentSectionGenerator
             """;
     }
 
-    private static string BuildPatientSectionDraftMessage(
+    internal static string BuildPatientSectionDraftMessage(
         string standardSectionDraft,
         string consultDraft,
         string sectionName)
@@ -355,7 +355,7 @@ public sealed class AgentSectionGenerator
             """;
     }
 
-    private static string BuildSectionInstructionsMessage(
+    internal static string BuildSectionInstructionsMessage(
         string patientSectionDraft,
         string sectionName,
         string sectionStandard)
@@ -387,7 +387,7 @@ public sealed class AgentSectionGenerator
             """;
     }
 
-    private static string FormatConcepts(IReadOnlyList<ClinicalConcept> concepts)
+    internal static string FormatConcepts(IReadOnlyList<ClinicalConcept> concepts)
     {
         if (concepts.Count == 0)
         {
