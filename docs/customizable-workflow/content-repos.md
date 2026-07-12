@@ -1,0 +1,73 @@
+# Content Repos: Workflows and Agents as GitOps-Published Artifacts
+
+Design recorded 2026-07-10 (user-approved direction; implementation tracked on the
+Configurable Workflow board, paired with milestone 2). Goal: the app repo becomes
+**engine-only** — all content ships from dedicated repos through CI to the registry,
+and content cadence fully decouples from app deploys.
+
+## Topology: two repos
+
+| Repo | Contents | Versioning / tags | Publishes |
+|---|---|---|---|
+| `consultologist-workflows` | Workflow package sources (today: `packages/general/`) | CalVer `vYYYY.MM.N` per package | `workflow-packages` blob container (`{name}/{version}/…` + `latest.json` pointers) |
+| `consultologist-agents` | Agent manifests (today: `agents/test-json.yaml`) | Tags matching Foundry integer versions (`test-json/48`) | **Both** the Foundry agent version (via the agents REST API) and the manifest mirror in blob (`agents/{name}/{version}/agent.yaml`) |
+
+Two repos rather than one content repo: clean per-artifact tagging (CalVer vs Foundry
+integers), separate future access control (clinicians author workflows, not agents), and
+consistency with the per-artifact repo pattern (`snomed-snowstorm-mcp`).
+
+## Full GitOps for agents
+
+Merging to the agents repo's main **is** the publish event: CI creates the new Foundry
+agent version (`az rest POST …/agents/{name}/versions`) and mirrors the manifest to
+blob. The portal is never used to publish, so git↔Foundry drift becomes impossible by
+construction; the app's attestation check remains as the backstop that *proves* it
+(catching out-of-band portal edits). The pin bump (`AzureAI__AgentVersion`) stays a
+deliberate, separate act — publishing a version and activating it are different
+decisions.
+
+## Trust model (the load-bearing part)
+
+The registry is only a git-controlled channel if **CI is the only writer**:
+
+- CI authenticates via **GitHub→Azure OIDC federated credentials** (no stored secrets);
+  its identity holds Storage Blob Data Contributor scoped to the registry containers,
+  and (agents repo) the Foundry role needed to publish agent versions.
+- Humans and the app hold **Storage Blob Data Reader** only. The current
+  laptop-publishing flow (user's Contributor role on `consultologistjobqueue`) is
+  retired at migration.
+- Shared-key access on the storage account is disabled once nothing depends on it
+  (overlaps with the identity-based-connections migration, issue #10).
+
+With that in place, startup attestation compares the Foundry plane (portal-editable)
+against the registry plane (git-only) — a meaningful cross-channel check. Serving the
+attestation manifest from a registry that humans could write would make the check
+tautological; the write restriction is what preserves its value. Rationale history: the
+manifest was first bundled into the app package precisely to keep it in a
+harder-to-change channel than the thing it verifies.
+
+## App changes at migration
+
+- `AgentAttestationService` fetches the manifest from the registry
+  (`agents/{name}/{pinned-version}/agent.yaml`) instead of the bundled file; the bundled
+  file remains only as a local-dev fallback. Enforce/warn semantics unchanged.
+- The `specVersion` gate, trust policy (registry location, enforce mode), and the engine
+  itself stay in the app repo — expectations about *how to interpret* content ride with
+  the code.
+- `scripts/publish-workflow-package.sh` migrates to the workflows repo (CI becomes its
+  main caller); the app repo's `packages/` and `agents/` folders are removed.
+
+## Migration checklist (for the implementing session)
+
+1. Create `consultologist-workflows` and `consultologist-agents` (gh), seed from the app
+   repo's `packages/` and `agents/` (short history — plain copy with a pointer commit is
+   acceptable; `git filter-repo` if history preservation is wanted).
+2. Entra: one app registration or user-assigned MI per repo CI with federated credentials
+   for `repo:Tauheed-Elahee/<repo>:ref:refs/heads/main` (and tags); role assignments as
+   above.
+3. CI workflows: validate (schema, CalVer format, immutability check) → publish on tag
+   (workflows) / on merge (agents, plus Foundry publish).
+4. App: attestation registry fetch + remove bundled content; update
+   `docs/CONFIGURATION.md` for any new settings (e.g. manifest registry URI).
+5. Lock down: revoke laptop Contributor, disable shared-key access (with #10).
+6. Update this doc's status line and `workflow-packages.md`'s authoring section.

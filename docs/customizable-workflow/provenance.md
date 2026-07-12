@@ -45,6 +45,11 @@ warn loudly on drift. This makes `agent_version` and the git content redundant b
 construction, which is the point: the check keeps them honest. The same pattern applies
 to the MCP deployment.
 
+Planned evolution ([content-repos.md](content-repos.md)): the attested manifest moves
+from the app package to a registry written **only by CI** from a dedicated agents repo
+(GitHub→Azure OIDC; humans read-only). The CI-only-write restriction is the
+precondition — a registry humans can write would make the attestation tautological.
+
 ## The effective-input hash
 
 The input is not just the consult draft. The request reaching the orchestrator is
