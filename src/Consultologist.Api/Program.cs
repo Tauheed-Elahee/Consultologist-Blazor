@@ -68,6 +68,8 @@ builder.Services.AddSingleton<IConsultGenerationJobEventStore, TableConsultGener
 builder.Services.AddSingleton<IConsultGenerationJobIndexStore, TableConsultGenerationJobIndexStore>();
 builder.Services.AddSingleton<IWorkflowPackageStore, WorkflowPackageStore>();
 builder.Services.AddScoped<WorkflowPackages>();
+builder.Services.AddHttpClient();
+builder.Services.AddHostedService<AgentAttestationService>();
 builder.Services.AddTransient<ConsultGenerationJobEntity>();
 builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
