@@ -1,0 +1,82 @@
+# Registry Operations: Browsing and Inspecting Workflow Packages
+
+How to look at the package registry — the Azure Blob container that holds published
+workflow packages. Written 2026-07-12, when the registry held `general` versions
+v2026.07.1 (seed), v2026.07.2 (first real standards), and v2026.07.3 (first
+specVersion-2 package with prompts).
+
+## Where the registry lives
+
+- **Storage account**: `consultologistjobqueue` (resource group `consultologist_group`
+  — the same account backing Durable Functions).
+- **Container**: `workflow-packages`.
+- **Layout** (one package shown):
+
+```
+workflow-packages/
+└── general/
+    ├── latest.json                     # mutable pointer: {"version": "vYYYY.MM.N"}
+    ├── v2026.07.2/
+    │   ├── manifest.json
+    │   └── standards.md
+    └── v2026.07.3/                     # specVersion 2: prompts join the bundle
+        ├── manifest.json
+        ├── standards.md
+        └── prompts/
+            ├── _snomed-tool-guidance.md
+            └── <seven prompt templates>.md
+```
+
+A package version is **one artifact**: standards and prompts (and, in later
+specVersions, more) travel together under a single CalVer version. `latest.json` files
+are the only mutable blobs; published versions are immutable by convention.
+
+## Via `az` CLI
+
+`--auth-mode login` uses your Entra identity (requires a Storage Blob Data role on the
+account); omitting it makes az fall back to account keys with a warning.
+
+```bash
+# List everything in the registry
+az storage blob list --account-name consultologistjobqueue --auth-mode login \
+  --container-name workflow-packages --query "[].name" -o tsv
+
+# Read any single file straight to the terminal
+az storage blob download --account-name consultologistjobqueue --auth-mode login \
+  --container-name workflow-packages \
+  --name general/v2026.07.3/prompts/extract-patient-concepts.md --file /dev/stdout
+
+# Check where 'latest' points
+az storage blob download --account-name consultologistjobqueue --auth-mode login \
+  --container-name workflow-packages --name general/latest.json --file /dev/stdout
+```
+
+## Via the Azure portal
+
+portal.azure.com → search **consultologistjobqueue** → left menu **Containers** (under
+"Data storage") → **workflow-packages** → browse into `general/` and the version
+folders. Clicking a blob offers an **Edit** tab that renders markdown/JSON inline —
+convenient for reading a prompt.
+
+> **Caution**: the portal will happily let you edit and save a blob in place, but
+> published versions are immutable **by convention only**. Never edit a published
+> version — changes go through a new CalVer version via
+> `scripts/publish-workflow-package.sh` (which refuses to overwrite existing versions).
+> The [content-repos design](content-repos.md) eventually makes this enforcement rather
+> than convention: CI becomes the only writer and humans get read-only access.
+
+## Via Azure Storage Explorer
+
+The desktop app (or the portal's "Storage browser" blade) shows the same content with
+tree navigation, and makes bulk-downloading a whole version folder trivial — useful for
+diffing two published versions locally.
+
+## Publishing (for completeness)
+
+Publishing is not a browse operation: author changes in the repo's `packages/` sources,
+bump the manifest's CalVer version, and run
+`./scripts/publish-workflow-package.sh consultologistjobqueue packages/<name>`.
+The script uploads the version folder, updates the `latest` pointer, and refuses to
+republish an existing version. CI validates the package sources on every build
+(`tests/PackageSourceValidationTests.cs`) using the same validator the engine applies
+at load time.
