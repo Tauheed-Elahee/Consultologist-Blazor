@@ -39,7 +39,8 @@ point-in-time investigations and migration plans.
   [product stages](customizable-workflow/product-stages.md),
   [completeness](customizable-workflow/completeness.md),
   [content repos](customizable-workflow/content-repos.md),
-  [package format v2](customizable-workflow/package-format-v2.md)
+  [package format v2](customizable-workflow/package-format-v2.md),
+  [registry operations](customizable-workflow/registry-operations.md)
 
 ## Research
 
