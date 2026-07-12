@@ -73,12 +73,20 @@ fewer. All values are strings, pre-rendered by the engine:
 | `section_standard` | Resolved standard for the section (package default + account override), may be empty |
 | `standard_section_draft` | Output of the standard-section-draft step |
 | `patient_section_draft` | Output of the patient-section-draft step |
-| `patient_concepts`, `problem_concepts`, `typical_trajectory_concepts`, `patient_trajectory_concepts` | Concept lists in the concept rendering contract below |
+| `patient_concepts`, `problem_concepts`, `typical_trajectory_concepts` | Concept lists in the **analysis format** of the concept rendering contract below |
+| `patient_trajectory_concepts` | Concept list in the **trajectory-context format** of the concept rendering contract below |
 
 ### Concept rendering contract
 
 Concept-list variables are pre-rendered by the engine (formatting stays engine-side in
-v2; templates receive finished text). Exact format, one bullet per line, `\n` separated:
+v2; templates receive finished text). There are **two distinct formats**, matching the
+two formatters the compiled prompts have always used — a verbatim port must preserve
+both. Any harness reimplementing this format must reproduce these renderings
+byte-for-byte: they feed the model and therefore affect output.
+
+**Analysis format** — used for `patient_concepts`, `problem_concepts`, and
+`typical_trajectory_concepts` (the analysis-stage prompts; engine formatter:
+`ConsultGenerationConceptFormatter`). One bullet per line, newline-separated:
 
 ```
 - {term} ({type}) - {id}                                  # active SNOMED concept
@@ -89,8 +97,18 @@ v2; templates receive finished text). Exact format, one bullet per line, `\n` se
 - A bullet may carry a trailing ` -- support: {phrase}` suffix.
 - An empty list renders as the literal string `(none)`.
 
-Any harness reimplementing this format must reproduce this rendering byte-for-byte —
-it feeds the model and therefore affects output.
+**Trajectory-context format** — used for `patient_trajectory_concepts` (the
+`standard-section-draft` prose prompt; engine formatter:
+`AgentSectionGenerator.FormatConcepts`). One bullet per line, newline-separated:
+
+```
+- {term} ({type}) - {id}; active: {True|False}; source: {source}
+```
+
+- `active` renders the boolean with .NET capitalization (`True`/`False`).
+- A bullet with a support phrase carries a trailing ` support: {phrase}` suffix
+  (single space, no `--` separator — this differs from the analysis format).
+- An empty list renders as the literal string `(none)`.
 
 ## Templating: Scriban
 
