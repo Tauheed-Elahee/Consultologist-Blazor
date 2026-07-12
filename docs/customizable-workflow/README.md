@@ -32,6 +32,8 @@ yet; these notes are the input to a future milestone plan.
 - [completeness.md](completeness.md) — what remains after all the stages (governance,
   regulatory track, evidence, the moving substrate) and the marker for "truly done
   building"
+- [package-format-v2.md](package-format-v2.md) — normative specVersion-2 format:
+  prompt templates (Scriban), variable contract, strictness rules, rollout
 - [content-repos.md](content-repos.md) — splitting workflow and agent content into
   dedicated GitOps repos publishing to the registry (CI-only writes, full agent GitOps,
   migration checklist)
