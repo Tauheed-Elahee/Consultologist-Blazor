@@ -1984,20 +1984,7 @@ public sealed class ExtractPatientConceptsActivity
             new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft },
             cancellationToken);
 
-        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
-            Extract patient-specific clinical concepts from the draft consult note.
-
-            Output only SNOMED concept bullets in these exact forms:
-            - term (type) - id number
-            - term [not SNOMED concept]
-            - term (type) - id number [not active SNOMED concept]
-
-            Include inactive SNOMED concepts when relevant. Include clinically important findings that are not SNOMED concepts using [not SNOMED concept].
-            Do not include commentary, headings, JSON, or non-bullet lines.
-
-            Draft consult note:
-            {input.ConsultDraft}
-            """;
+        var prompt = rendered ?? ConsultGenerationCompiledPrompts.ExtractPatientConcepts(input.ConsultDraft);
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ConceptsExtracted, "patient", prompt, cancellationToken);
     }
@@ -2030,19 +2017,7 @@ public sealed class IdentifyProblemActivity
             },
             cancellationToken);
 
-        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
-            Identify the primary disease or problem concept from the validated patient concepts.
-
-            Output only one or more SNOMED concept bullets in these exact forms:
-            - term (type) - id number
-            - term [not SNOMED concept]
-            - term (type) - id number [not active SNOMED concept]
-
-            Prefer the disease/problem driving the oncology consult. Do not include commentary, headings, JSON, or non-bullet lines.
-
-            Validated patient concepts:
-            {ConsultGenerationConceptFormatter.Format(input.PatientConcepts)}
-            """;
+        var prompt = rendered ?? ConsultGenerationCompiledPrompts.IdentifyProblem(ConsultGenerationConceptFormatter.Format(input.PatientConcepts));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ProblemIdentified, "problem", prompt, cancellationToken);
     }
@@ -2075,20 +2050,7 @@ public sealed class CreateTypicalTrajectoryActivity
             },
             cancellationToken);
 
-        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
-            Build a typical clinical trajectory for the disease/problem concept.
-
-            Output only SNOMED concept bullets in these exact forms:
-            - term (type) - id number
-            - term [not SNOMED concept]
-            - term (type) - id number [not active SNOMED concept]
-
-            Include a concise support phrase after the accepted bullet only when needed by appending " -- support: ...".
-            Do not include commentary, headings, JSON, or non-bullet lines.
-
-            Disease/problem concept:
-            {ConsultGenerationConceptFormatter.Format(input.ProblemContext)}
-            """;
+        var prompt = rendered ?? ConsultGenerationCompiledPrompts.CreateTypicalTrajectory(ConsultGenerationConceptFormatter.Format(input.ProblemContext));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated, "typical-trajectory", prompt, cancellationToken);
     }
@@ -2123,27 +2085,10 @@ public sealed class CreatePatientTrajectoryActivity
             },
             cancellationToken);
 
-        var prompt = rendered ?? ConsultGenerationPreprocessingRunner.SnomedToolGuidance + "\n\n" + $"""
-            Reconcile a patient-specific trajectory from the validated patient concepts and typical trajectory.
-
-            Output only SNOMED concept bullets in these exact forms:
-            - term (type) - id number
-            - term [not SNOMED concept]
-            - term (type) - id number [not active SNOMED concept]
-
-            Include only patient-specific trajectory details supported by validated patient concepts. Do not add typical trajectory details unless supported by patient concepts.
-            Include a concise support phrase after the accepted bullet only when needed by appending " -- support: ...".
-            Do not include commentary, headings, JSON, or non-bullet lines.
-
-            Disease/problem concept:
-            {ConsultGenerationConceptFormatter.Format(input.ProblemContext)}
-
-            Validated patient concepts:
-            {ConsultGenerationConceptFormatter.Format(input.PatientConcepts)}
-
-            Typical trajectory concepts:
-            {ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts)}
-            """;
+        var prompt = rendered ?? ConsultGenerationCompiledPrompts.CreatePatientTrajectory(
+            ConsultGenerationConceptFormatter.Format(input.ProblemContext),
+            ConsultGenerationConceptFormatter.Format(input.PatientConcepts),
+            ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated, "patient-trajectory", prompt, cancellationToken);
     }

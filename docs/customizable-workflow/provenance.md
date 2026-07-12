@@ -59,6 +59,13 @@ overrides). Cleanest rule: overrides produce an ephemeral package-content hash r
 alongside the pinned package version — otherwise two different runs can claim the same
 input.
 
+**Prompts are not part of the input hash.** Since specVersion 2
+([package-format-v2.md](package-format-v2.md)) the prompts are package content, covered
+by the `workflowPackage` provenance field; the effective-input hash continues to cover
+only draft + resolved sections/standards. Two jobs with the same hash but different
+package versions ran the same clinical input through different prompts — which is
+exactly what the two fields, read together, are designed to express.
+
 ## Model parameters: reasoning toggle
 
 DeepSeek V4 Pro supports disabling reasoning via parameters. Implications:
