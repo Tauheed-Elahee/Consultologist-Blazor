@@ -16,7 +16,7 @@ public interface IWorkflowPackageStore
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
     private const string ContainerName = "workflow-packages";
-    public const int SupportedSpecVersion = 1;
+    public const int SupportedSpecVersion = 2;
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -85,11 +85,60 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         }
 
         var standards = await DownloadTextAsync($"{packageRef.Name}/{version}/standards.md", cancellationToken);
-        var package = new WorkflowPackage(manifest, standards);
+
+        var prompts = manifest.SpecVersion >= 2
+            ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
+            : null;
+
+        var package = new WorkflowPackage(manifest, standards, prompts);
 
         _packageCache.TryAdd(cacheKey, package);
-        _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}", cacheKey, manifest.SpecVersion);
+        _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
         return package;
+    }
+
+    /// <summary>
+    /// Downloads and validates the prompt templates of a specVersion-2 package.
+    /// Validation failures throw — the engine's fail-loud enforcement point
+    /// (docs/customizable-workflow/package-format-v2.md).
+    /// </summary>
+    private async Task<Dictionary<string, WorkflowPromptTemplate>> LoadPromptsAsync(
+        string name,
+        string version,
+        WorkflowPackageManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        var paths = (manifest.Prompts ?? new List<WorkflowPromptSpec>()).Select(p => p.File)
+            .Concat((manifest.Preludes ?? new Dictionary<string, string>()).Values)
+            .Distinct(StringComparer.Ordinal);
+
+        foreach (var path in paths)
+        {
+            files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
+        }
+
+        var result = WorkflowPackageValidator.Validate(manifest, files);
+
+        foreach (var warning in result.Warnings)
+        {
+            _logger.LogWarning("Workflow package {Name}@{Version}: {Warning}", name, version, warning);
+        }
+
+        if (!result.IsValid)
+        {
+            throw new InvalidOperationException(
+                $"Workflow package {name}@{version} failed specVersion-{manifest.SpecVersion} validation: {string.Join(" | ", result.Errors)}");
+        }
+
+        return manifest.Prompts!.ToDictionary(
+            prompt => prompt.Id,
+            prompt => new WorkflowPromptTemplate(
+                prompt.Id,
+                files[prompt.File],
+                prompt.Variables,
+                prompt.Prelude is null ? null : files[manifest.Preludes![prompt.Prelude]]),
+            StringComparer.Ordinal);
     }
 
     private async Task<string> ResolveLatestVersionAsync(string name, CancellationToken cancellationToken)

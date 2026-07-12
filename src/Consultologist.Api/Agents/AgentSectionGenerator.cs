@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Consultologist.Api.Models;
+using Consultologist.Api.Workflow;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Core;
@@ -14,11 +15,13 @@ public sealed class AgentSectionGenerator
 {
     private readonly ILogger<AgentSectionGenerator> _logger;
     private readonly TokenCredential _credential;
+    private readonly IWorkflowPromptProvider _promptProvider;
 
-    public AgentSectionGenerator(ILogger<AgentSectionGenerator> logger, TokenCredential credential)
+    public AgentSectionGenerator(ILogger<AgentSectionGenerator> logger, TokenCredential credential, IWorkflowPromptProvider promptProvider)
     {
         _logger = logger;
         _credential = credential;
+        _promptProvider = promptProvider;
 
         Console.Error.WriteLine($"[Api.StartupDiagnostics] AgentSectionGenerator constructed. Utc={DateTimeOffset.UtcNow:O}");
         _logger.LogInformation("AgentSectionGenerator constructed.");
@@ -52,11 +55,23 @@ public sealed class AgentSectionGenerator
     public async Task<string> GenerateStandardSectionDraftAsync(
         IReadOnlyList<ClinicalConcept> patientTrajectory,
         string sectionName,
+        string? workflowPackage,
         CancellationToken cancellationToken)
     {
+        var prompt = await _promptProvider.TryRenderAsync(
+            workflowPackage,
+            WorkflowPromptContract.StandardSectionDraft,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.SectionName] = sectionName,
+                [WorkflowPromptContract.PatientTrajectoryConcepts] = FormatConcepts(patientTrajectory)
+            },
+            cancellationToken)
+            ?? BuildStandardSectionDraftMessage(patientTrajectory, sectionName);
+
         return await SendPromptAsync(
             $"section-standard-draft:{sectionName}",
-            BuildStandardSectionDraftMessage(patientTrajectory, sectionName),
+            prompt,
             cancellationToken);
     }
 
@@ -64,11 +79,24 @@ public sealed class AgentSectionGenerator
         string standardSectionDraft,
         string consultDraft,
         string sectionName,
+        string? workflowPackage,
         CancellationToken cancellationToken)
     {
+        var prompt = await _promptProvider.TryRenderAsync(
+            workflowPackage,
+            WorkflowPromptContract.PatientSectionDraft,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.StandardSectionDraftVariable] = standardSectionDraft,
+                [WorkflowPromptContract.ConsultDraft] = consultDraft,
+                [WorkflowPromptContract.SectionName] = sectionName
+            },
+            cancellationToken)
+            ?? BuildPatientSectionDraftMessage(standardSectionDraft, consultDraft, sectionName);
+
         return await SendPromptAsync(
             $"section-patient-draft:{sectionName}",
-            BuildPatientSectionDraftMessage(standardSectionDraft, consultDraft, sectionName),
+            prompt,
             cancellationToken);
     }
 
@@ -76,11 +104,24 @@ public sealed class AgentSectionGenerator
         string patientSectionDraft,
         string sectionName,
         string sectionStandard,
+        string? workflowPackage,
         CancellationToken cancellationToken)
     {
+        var prompt = await _promptProvider.TryRenderAsync(
+            workflowPackage,
+            WorkflowPromptContract.SectionInstructions,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.PatientSectionDraftVariable] = patientSectionDraft,
+                [WorkflowPromptContract.SectionName] = sectionName,
+                [WorkflowPromptContract.SectionStandard] = sectionStandard
+            },
+            cancellationToken)
+            ?? BuildSectionInstructionsMessage(patientSectionDraft, sectionName, sectionStandard);
+
         return await SendPromptAsync(
             $"section-instructions-applied:{sectionName}",
-            BuildSectionInstructionsMessage(patientSectionDraft, sectionName, sectionStandard),
+            prompt,
             cancellationToken);
     }
 

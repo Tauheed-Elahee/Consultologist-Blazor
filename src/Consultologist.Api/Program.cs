@@ -67,6 +67,7 @@ builder.Services.AddSingleton<IAccountSettingsStore, AccountSettingsStore>();
 builder.Services.AddSingleton<IConsultGenerationJobEventStore, TableConsultGenerationJobEventStore>();
 builder.Services.AddSingleton<IConsultGenerationJobIndexStore, TableConsultGenerationJobIndexStore>();
 builder.Services.AddSingleton<IWorkflowPackageStore, WorkflowPackageStore>();
+builder.Services.AddSingleton<IWorkflowPromptProvider, WorkflowPromptProvider>();
 builder.Services.AddScoped<WorkflowPackages>();
 builder.Services.AddHttpClient();
 builder.Services.AddHostedService<AgentAttestationService>();

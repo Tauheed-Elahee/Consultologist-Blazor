@@ -5,13 +5,36 @@ namespace Consultologist.Api.Workflow;
 public sealed record WorkflowPackageManifest(
     string Name,
     string Version,
-    int SpecVersion);
+    int SpecVersion,
+    WorkflowTemplatingSpec? Templating = null,
+    Dictionary<string, string>? Preludes = null,
+    List<WorkflowPromptSpec>? Prompts = null);
+
+public sealed record WorkflowTemplatingSpec(
+    string Engine,
+    string EngineVersion);
+
+public sealed record WorkflowPromptSpec(
+    string Id,
+    string File,
+    List<string> Variables,
+    string? Prelude = null);
+
+/// <summary>A prompt template loaded from a specVersion-2 package, ready to render.</summary>
+public sealed record WorkflowPromptTemplate(
+    string Id,
+    string TemplateText,
+    IReadOnlyList<string> Variables,
+    string? PreludeText);
 
 public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
-    string StandardsMarkdown)
+    string StandardsMarkdown,
+    IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
+
+    public bool HasPrompts => Prompts is { Count: > 0 };
 }
 
 public sealed record WorkflowPackageResponse(
