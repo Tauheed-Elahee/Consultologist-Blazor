@@ -2,18 +2,23 @@
 
 The goal is not primarily "users editing workflows" — it is **content as versioned
 artifacts, decoupled from code deploys**. The pattern is already running in production
-for the agent: the app pins `test-json` version 45 via the `AzureAI__AgentVersion` app
-setting, and new agent behavior ships by publishing a new version and flipping one
-setting, with no redeploy. Workflow content gets the same lifecycle.
+for the agent: the app pins `test-json` (version 47 as of 2026-07-13) via the
+`AzureAI__AgentVersion` app setting, and new agent behavior ships by publishing a new
+version and flipping one setting, with no redeploy. Workflow content gets the same
+lifecycle.
 
 ## The package concept
 
 A **workflow package** is one named, versioned artifact bundling everything content-ish:
 
 - section standards (what `consult_section_standards.md` holds today)
-- prompt templates for each stage/step (Scriban-style, with declared variables)
-- per-step model parameters (reasoning on/off, temperature, seed — see provenance.md)
-- eventually: the step/DAG definition itself, including per-step output contracts
+- prompt templates for each stage/step (Scriban, with declared variables — since
+  specVersion 2)
+- the section step sequence itself (`sectionSteps`, declarative bindings — since
+  specVersion 3)
+- per-step model parameters (reasoning on/off, temperature, seed — see provenance.md;
+  not yet)
+- eventually: the full DAG definition, including per-step output contracts
 
 ## Versioning: CalVer `vYYYY.MM.N` (decided 2026-07-09)
 
@@ -95,6 +100,26 @@ when a specialty needs a structurally different pipeline.
    is what finally severs harness dependence. Only build this when a real specialty
    demands a different shape; by then the registry/versioning/provenance rails exist.
 
+> **Milestone 2 implemented 2026-07-12** (#4, PRs #21–#23/#25): specVersion 2 — the
+> seven prompts became package content: Scriban templates, file-per-prompt with
+> manifest-declared variables and a shared SNOMED-guidance prelude; rendered via
+> `IWorkflowPromptProvider`, validated identically at publish and load time
+> (`WorkflowPackageValidator`). First package `general@v2026.07.3`; production-verified
+> with byte-checked prompt provenance (job `b4d31df0…`, 31/31 sections).
+
+> **Milestone 3 implemented 2026-07-13** (#5, PRs #32–#36): specVersion 3 — the
+> per-section prose pipeline became a package-declared ordered step list
+> (`sectionSteps`: prompt + label + variable bindings against the engine's closed
+> binding vocabulary), executed by one generic `run-prose-step` activity. A package is
+> now mandatory: the job start resolves the pin server-side to a concrete immutable
+> version and snapshots the step list into the job; the compiled fallback prompts, the
+> legacy `ConsultGeneration`/`AgentProxy` endpoints, and the fixed step vocabulary were
+> deleted. v2 packages remain valid via a normative synthesized step list. First
+> package `general@v2026.07.4`; production-verified 9/9 with 27/27 prompts byte-matched
+> against the package source (job `9a558ff3…`).
+
 UI consequences: the Templates page grows from "edit section standards" toward a package
 view with per-account overrides; progress displays become generic step lists rather than
-hardcoded stage names.
+hardcoded stage names (done for the prose steps in milestone 3 — the client renders
+package-declared labels from the `section-prose-step` event; the analysis stages stay
+hardcoded until milestone 4).
