@@ -22,7 +22,6 @@ set -euo pipefail
 #                   When unset, that test is skipped.
 #
 # Optional — live AI call tests (each defaults to 0; set to 1 to enable):
-#   RUN_VALID_AGENT_PROXY      Run a real AgentProxy section generation call.
 #   RUN_VALID_DURABLE_JOB      Create a real durable job and poll it to terminal state.
 #   RUN_VALID_DURABLE_JOB_SSE  Create a real durable job, stream it via SSE, and verify replay.
 #                              Also requires a job to reach a terminal state; may take up to 2 minutes.
@@ -33,7 +32,6 @@ set -euo pipefail
 #
 # Example — run all tests including authenticated and live AI calls:
 #   BEARER_TOKEN=<token> \
-#   RUN_VALID_AGENT_PROXY=1 \
 #   RUN_VALID_DURABLE_JOB=1 \
 #   RUN_VALID_DURABLE_JOB_SSE=1 \
 #   ./scripts/smoke-api-strict.sh
@@ -175,42 +173,6 @@ request http_string_probe "$BASE_URL/api/HttpStringProbe"
 assert_status http_string_probe 200
 pass "HttpStringProbe remains reachable"
 
-request agent_proxy_invalid \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  "$BASE_URL/api/AgentProxy"
-assert_status agent_proxy_invalid 400
-assert_header_contains agent_proxy_invalid Content-Type "application/json"
-assert_json agent_proxy_invalid 'payload.get("Success") is False' "AgentProxy invalid response should have Success=false"
-assert_json agent_proxy_invalid 'payload.get("Error") == "Invalid request: ConsultDraft, SectionName, and SectionStandard are required"' "AgentProxy invalid response should include exact validation error"
-pass "AgentProxy invalid POST returns exact 400 validation JSON"
-
-request consult_generation_invalid \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  "$BASE_URL/api/ConsultGeneration"
-assert_status consult_generation_invalid 400
-assert_header_contains consult_generation_invalid Content-Type "application/json"
-assert_json consult_generation_invalid 'payload.get("Success") is False' "ConsultGeneration invalid response should have Success=false"
-assert_json consult_generation_invalid 'payload.get("FailedSections", {}).get("request") == "ConsultDraft is required."' "ConsultGeneration invalid response should include exact validation error"
-pass "ConsultGeneration invalid POST returns exact 400 validation JSON"
-
-request consult_generation_cors \
-  -X OPTIONS \
-  -H "Origin: $ALLOWED_ORIGIN" \
-  -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type, Authorization, Last-Event-ID" \
-  "$BASE_URL/api/ConsultGeneration"
-assert_status consult_generation_cors 204
-assert_header_contains consult_generation_cors Access-Control-Allow-Origin "$ALLOWED_ORIGIN"
-assert_header_contains consult_generation_cors Access-Control-Allow-Methods "POST"
-assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Content-Type"
-assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Authorization"
-assert_header_contains consult_generation_cors Access-Control-Allow-Headers "Last-Event-ID"
-pass "ConsultGeneration CORS preflight returns expected platform CORS headers"
-
 request consult_generation_jobs_cors \
   -X OPTIONS \
   -H "Origin: $ALLOWED_ORIGIN" \
@@ -285,30 +247,6 @@ assert_status consult_generation_job_events_mismatched_last_event_id 400
 assert_header_contains consult_generation_job_events_mismatched_last_event_id Content-Type "application/json"
 assert_json consult_generation_job_events_mismatched_last_event_id 'payload.get("error") == "Last-Event-ID does not match the requested job."' "ConsultGenerationJobs events mismatched Last-Event-ID should return sanitized error"
 pass "ConsultGenerationJobs events rejects mismatched Last-Event-ID"
-
-if [[ "${RUN_VALID_AGENT_PROXY:-0}" == "1" ]]; then
-  request agent_proxy_valid \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "$(python3 - "$VALID_CONSULT_DRAFT" "$VALID_SECTION_STANDARD" <<'PY'
-import json
-import sys
-print(json.dumps({
-    "ConsultDraft": sys.argv[1],
-    "SectionName": "History",
-    "SectionStandard": sys.argv[2],
-}))
-PY
-)" \
-    "$BASE_URL/api/AgentProxy"
-  assert_status agent_proxy_valid 200
-  assert_header_contains agent_proxy_valid Content-Type "application/json"
-  assert_json agent_proxy_valid 'payload.get("Success") is True' "AgentProxy valid response should have Success=true"
-  assert_json agent_proxy_valid 'isinstance(payload.get("Response"), str) and len(payload.get("Response").strip()) > 0' "AgentProxy valid response should include non-empty Response"
-  pass "AgentProxy valid POST returns successful generation JSON"
-else
-  echo "SKIP: AgentProxy valid Foundry call. Set RUN_VALID_AGENT_PROXY=1 to enable."
-fi
 
 if [[ "${RUN_VALID_DURABLE_JOB:-0}" == "1" ]]; then
   request durable_job_valid \

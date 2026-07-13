@@ -1837,117 +1837,82 @@ public sealed class ConsultGenerationOrchestrator
     }
 }
 
+/// <summary>
+/// Shims for the pre-milestone-3 prose activity names, so activity messages queued by
+/// an old orchestrator don't dead-letter across the deploy. Each renders its v2 prompt
+/// from the job's package and sends it — the compiled prompt builders are gone.
+/// Remove after one release of drain.
+/// </summary>
 public sealed class GenerateConsultSectionActivity
 {
     private readonly ILogger<GenerateConsultSectionActivity> _logger;
     private readonly AgentSectionGenerator _sectionGenerator;
+    private readonly IWorkflowPromptProvider _promptProvider;
 
     public GenerateConsultSectionActivity(
         ILogger<GenerateConsultSectionActivity> logger,
-        AgentSectionGenerator sectionGenerator)
+        AgentSectionGenerator sectionGenerator,
+        IWorkflowPromptProvider promptProvider)
     {
         _logger = logger;
         _sectionGenerator = sectionGenerator;
+        _promptProvider = promptProvider;
     }
 
     [Function(ConsultGenerationActivityNames.GenerateStandardSectionDraft)]
-    public async Task<string> GenerateStandardSectionDraftAsync(
+    public Task<string> GenerateStandardSectionDraftAsync(
         [ActivityTrigger] ConsultGenerationActivityInput input,
         CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
-        var section = input.Section;
-
-        try
-        {
-            _logger.LogInformation(
-                "Starting standard section draft generation. SectionId={SectionId}, SectionName={SectionName}",
-                section.Id,
-                section.Name);
-
-            var prose = await _sectionGenerator.GenerateStandardSectionDraftAsync(
-                input.PatientTrajectoryConcepts,
-                section.Name,
-                input.WorkflowPackage,
-                cancellationToken);
-
-            var trimmedProse = prose.Trim();
-
-            _logger.LogInformation(
-                "Standard section draft generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
-                section.Id,
-                section.Name,
-                trimmedProse.Length,
-                stopwatch.ElapsedMilliseconds);
-
-            return trimmedProse;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Standard section draft generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
-                section.Id,
-                section.Name,
-                ex.GetType().FullName,
-                ex.Message,
-                stopwatch.ElapsedMilliseconds);
-
-            throw;
-        }
+        return RunLegacyStepAsync(
+            input,
+            WorkflowPromptContract.StandardSectionDraft,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.SectionName] = input.Section.Name,
+                [WorkflowPromptContract.PatientTrajectoryConcepts] = AgentSectionGenerator.FormatConcepts(input.PatientTrajectoryConcepts)
+            },
+            cancellationToken);
     }
 
     [Function(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation)]
-    public async Task<string> UpdateSectionWithPatientInformationAsync(
+    public Task<string> UpdateSectionWithPatientInformationAsync(
         [ActivityTrigger] ConsultGenerationActivityInput input,
         CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
-        var section = input.Section;
-
-        try
-        {
-            _logger.LogInformation(
-                "Starting patient section draft generation. SectionId={SectionId}, SectionName={SectionName}",
-                section.Id,
-                section.Name);
-
-            var prose = await _sectionGenerator.UpdateSectionWithPatientInformationAsync(
-                input.SectionDraft ?? string.Empty,
-                input.ConsultDraft,
-                section.Name,
-                input.WorkflowPackage,
-                cancellationToken);
-
-            var trimmedProse = prose.Trim();
-
-            _logger.LogInformation(
-                "Patient section draft generation completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
-                section.Id,
-                section.Name,
-                trimmedProse.Length,
-                stopwatch.ElapsedMilliseconds);
-
-            return trimmedProse;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Patient section draft generation failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
-                section.Id,
-                section.Name,
-                ex.GetType().FullName,
-                ex.Message,
-                stopwatch.ElapsedMilliseconds);
-
-            throw;
-        }
+        return RunLegacyStepAsync(
+            input,
+            WorkflowPromptContract.PatientSectionDraft,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.StandardSectionDraftVariable] = input.SectionDraft ?? string.Empty,
+                [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft,
+                [WorkflowPromptContract.SectionName] = input.Section.Name
+            },
+            cancellationToken);
     }
 
     [Function(ConsultGenerationActivityNames.ApplySectionInstructions)]
-    public async Task<string> ApplySectionInstructionsAsync(
+    public Task<string> ApplySectionInstructionsAsync(
         [ActivityTrigger] ConsultGenerationActivityInput input,
+        CancellationToken cancellationToken)
+    {
+        return RunLegacyStepAsync(
+            input,
+            WorkflowPromptContract.SectionInstructions,
+            new Dictionary<string, string>
+            {
+                [WorkflowPromptContract.PatientSectionDraftVariable] = input.SectionDraft ?? string.Empty,
+                [WorkflowPromptContract.SectionName] = input.Section.Name,
+                [WorkflowPromptContract.SectionStandard] = input.Section.Standard
+            },
+            cancellationToken);
+    }
+
+    private async Task<string> RunLegacyStepAsync(
+        ConsultGenerationActivityInput input,
+        string promptId,
+        Dictionary<string, string> variables,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -1956,21 +1921,18 @@ public sealed class GenerateConsultSectionActivity
         try
         {
             _logger.LogInformation(
-                "Starting section instruction application. SectionId={SectionId}, SectionName={SectionName}",
+                "Starting legacy prose step. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}",
+                promptId,
                 section.Id,
                 section.Name);
 
-            var prose = await _sectionGenerator.ApplySectionInstructionsAsync(
-                input.SectionDraft ?? string.Empty,
-                section.Name,
-                section.Standard,
-                input.WorkflowPackage,
-                cancellationToken);
-
+            var prompt = await _promptProvider.RenderAsync(input.WorkflowPackage, promptId, variables, cancellationToken);
+            var prose = await _sectionGenerator.SendPromptAsync($"{promptId}:{section.Name}", prompt, cancellationToken);
             var trimmedProse = prose.Trim();
 
             _logger.LogInformation(
-                "Section instruction application completed. SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                "Legacy prose step completed. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
+                promptId,
                 section.Id,
                 section.Name,
                 trimmedProse.Length,
@@ -1982,7 +1944,8 @@ public sealed class GenerateConsultSectionActivity
         {
             _logger.LogError(
                 ex,
-                "Section instruction application failed. SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                "Legacy prose step failed. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
+                promptId,
                 section.Id,
                 section.Name,
                 ex.GetType().FullName,
@@ -2012,13 +1975,11 @@ public sealed class ExtractPatientConceptsActivity
         [ActivityTrigger] ConsultGenerationConceptActivityInput input,
         CancellationToken cancellationToken)
     {
-        var rendered = await _promptProvider.TryRenderAsync(
+        var prompt = await _promptProvider.RenderAsync(
             input.WorkflowPackage,
             WorkflowPromptContract.ExtractPatientConcepts,
             new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft },
             cancellationToken);
-
-        var prompt = rendered ?? ConsultGenerationCompiledPrompts.ExtractPatientConcepts(input.ConsultDraft);
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ConceptsExtracted, "patient", prompt, cancellationToken);
     }
@@ -2042,7 +2003,7 @@ public sealed class IdentifyProblemActivity
         [ActivityTrigger] ConsultGenerationProblemActivityInput input,
         CancellationToken cancellationToken)
     {
-        var rendered = await _promptProvider.TryRenderAsync(
+        var prompt = await _promptProvider.RenderAsync(
             input.WorkflowPackage,
             WorkflowPromptContract.IdentifyProblem,
             new Dictionary<string, string>
@@ -2050,8 +2011,6 @@ public sealed class IdentifyProblemActivity
                 [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(input.PatientConcepts)
             },
             cancellationToken);
-
-        var prompt = rendered ?? ConsultGenerationCompiledPrompts.IdentifyProblem(ConsultGenerationConceptFormatter.Format(input.PatientConcepts));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ProblemIdentified, "problem", prompt, cancellationToken);
     }
@@ -2075,7 +2034,7 @@ public sealed class CreateTypicalTrajectoryActivity
         [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
         CancellationToken cancellationToken)
     {
-        var rendered = await _promptProvider.TryRenderAsync(
+        var prompt = await _promptProvider.RenderAsync(
             input.WorkflowPackage,
             WorkflowPromptContract.CreateTypicalTrajectory,
             new Dictionary<string, string>
@@ -2083,8 +2042,6 @@ public sealed class CreateTypicalTrajectoryActivity
                 [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(input.ProblemContext)
             },
             cancellationToken);
-
-        var prompt = rendered ?? ConsultGenerationCompiledPrompts.CreateTypicalTrajectory(ConsultGenerationConceptFormatter.Format(input.ProblemContext));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated, "typical-trajectory", prompt, cancellationToken);
     }
@@ -2108,7 +2065,7 @@ public sealed class CreatePatientTrajectoryActivity
         [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
         CancellationToken cancellationToken)
     {
-        var rendered = await _promptProvider.TryRenderAsync(
+        var prompt = await _promptProvider.RenderAsync(
             input.WorkflowPackage,
             WorkflowPromptContract.CreatePatientTrajectory,
             new Dictionary<string, string>
@@ -2118,11 +2075,6 @@ public sealed class CreatePatientTrajectoryActivity
                 [WorkflowPromptContract.TypicalTrajectoryConcepts] = ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts)
             },
             cancellationToken);
-
-        var prompt = rendered ?? ConsultGenerationCompiledPrompts.CreatePatientTrajectory(
-            ConsultGenerationConceptFormatter.Format(input.ProblemContext),
-            ConsultGenerationConceptFormatter.Format(input.PatientConcepts),
-            ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts));
 
         return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated, "patient-trajectory", prompt, cancellationToken);
     }
@@ -2144,15 +2096,6 @@ public sealed record ConceptExtractionResult(
 
 public static class ConsultGenerationPreprocessingRunner
 {
-    // Snowstorm rejects search terms outside 3-250 characters; steer the agent away
-    // from passing sentences as terms. See docs/SNOMED_TOOL_FAILURES.md. On the
-    // package path this text lives in the package's snomed-tool-guidance prelude;
-    // this constant is the compiled fallback.
-    public const string SnomedToolGuidance =
-        "When calling SNOMED terminology tools such as search_concepts, look up one short clinical term per call " +
-        "(a few words, 3-250 characters) - never a sentence or passage. If a tool returns an error message, " +
-        "adjust the call as the message directs and retry.";
-
     public static async Task<ConceptExtractionResult> RunConceptPromptAsync(
         AgentSectionGenerator agent,
         ILogger logger,

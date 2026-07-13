@@ -60,7 +60,6 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
 });
 
 builder.Services.AddScoped<AgentSectionGenerator>();
-builder.Services.AddScoped<AgentProxy>();
 builder.Services.AddSingleton<IBearerTokenValidator, BearerTokenValidator>();
 builder.Services.AddSingleton<IAccountStore, AccountStore>();
 builder.Services.AddSingleton<IAccountSettingsStore, AccountSettingsStore>();
@@ -76,7 +75,6 @@ builder.Services.AddTransient<ConsultGenerationJobEntity>();
 builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
 builder.Services.AddScoped<Diagnostics>();
-builder.Services.AddScoped<ConsultGeneration>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
 builder.Services.AddScoped<GenerateConsultSectionActivity>();
 builder.Services.AddScoped<ExtractPatientConceptsActivity>();
