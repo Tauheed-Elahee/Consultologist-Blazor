@@ -61,4 +61,28 @@ public class PackageSourceValidationTests
         Assert.True(result.IsValid, "validation errors: " + string.Join(" | ", result.Errors));
         Assert.True(result.Warnings.Count == 0, "validation warnings: " + string.Join(" | ", result.Warnings));
     }
+
+    [Fact]
+    public void GeneralPackageSource_DeclaresTheCanonicalSectionSteps()
+    {
+        var packageDir = Path.Combine(FindRepoRoot(), "packages", "general");
+        var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(
+            File.ReadAllText(Path.Combine(packageDir, "manifest.json")), JsonOptions)!;
+
+        Assert.True(manifest.SpecVersion >= 3, "the repo package is expected to be specVersion 3 or newer");
+        Assert.NotNull(manifest.SectionSteps);
+
+        // The first v3 package is the verbatim v2 pipeline; its declared steps must
+        // equal the synthesis the engine applies to v2 packages.
+        Assert.Equal(
+            WorkflowSectionStepDefaults.V2Synthesized.Select(step => (step.StepId, step.Label)),
+            manifest.SectionSteps!.Select(step => (step.StepId, step.Label)));
+
+        foreach (var (declared, synthesized) in manifest.SectionSteps!.Zip(WorkflowSectionStepDefaults.V2Synthesized))
+        {
+            Assert.Equal(
+                synthesized.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal),
+                declared.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal));
+        }
+    }
 }

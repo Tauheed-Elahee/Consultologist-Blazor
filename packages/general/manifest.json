@@ -1,7 +1,7 @@
 {
 	"name": "general",
-	"version": "v2026.07.3",
-	"specVersion": 2,
+	"version": "v2026.07.4",
+	"specVersion": 3,
 	"templating": { "engine": "scriban", "engineVersion": "7.2.5" },
 	"preludes": {
 		"snomed-tool-guidance": "prompts/_snomed-tool-guidance.md"
@@ -22,5 +22,18 @@
 		  "variables": ["standard_section_draft", "consult_draft", "section_name"] },
 		{ "id": "section-instructions", "file": "prompts/section-instructions.md",
 		  "variables": ["patient_section_draft", "section_name", "section_standard"] }
+	],
+	"sectionSteps": [
+		{ "prompt": "standard-section-draft", "label": "Drafting section",
+		  "bindings": { "section_name": "section_name",
+		                "patient_trajectory_concepts": "patient_trajectory_concepts" } },
+		{ "prompt": "patient-section-draft", "label": "Applying patient information",
+		  "bindings": { "standard_section_draft": "previous_step_output",
+		                "consult_draft": "consult_draft",
+		                "section_name": "section_name" } },
+		{ "prompt": "section-instructions", "label": "Applying section instructions",
+		  "bindings": { "patient_section_draft": "previous_step_output",
+		                "section_name": "section_name",
+		                "section_standard": "section_standard" } }
 	]
 }
