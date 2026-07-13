@@ -262,32 +262,52 @@ public class WorkflowPromptProviderTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("not a valid ref")]
-    public async Task TryRender_ReturnsNull_WithoutUsableRef(string? packageRef)
+    public async Task Render_Throws_WithoutUsableRef(string? packageRef)
     {
         var store = Substitute.For<IWorkflowPackageStore>();
 
-        var result = await CreateProvider(store).TryRenderAsync(
-            packageRef, WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateProvider(store).RenderAsync(
+            packageRef, WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None));
 
-        Assert.Null(result);
         await store.DidNotReceiveWithAnyArgs().ResolveAsync(default!, default);
     }
 
     [Fact]
-    public async Task TryRender_ReturnsNull_ForSpecVersion1Package()
+    public async Task Render_Throws_ForSpecVersion1Package()
     {
         var store = Substitute.For<IWorkflowPackageStore>();
         store.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackage(new WorkflowPackageManifest("general", "v2026.07.2", 1), "## hpi: HPI"));
 
-        var result = await CreateProvider(store).TryRenderAsync(
-            "general@v2026.07.2", WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => CreateProvider(store).RenderAsync(
+            "general@v2026.07.2", WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None));
 
-        Assert.Null(result);
+        Assert.Contains("predates prompt templates", ex.Message);
     }
 
     [Fact]
-    public async Task TryRender_RendersFromV2Package()
+    public async Task Render_Throws_ForMissingPromptId()
+    {
+        var store = Substitute.For<IWorkflowPackageStore>();
+        var template = new WorkflowPromptTemplate(
+            WorkflowPromptContract.IdentifyProblem,
+            "{{ patient_concepts }}",
+            new[] { "patient_concepts" },
+            null);
+        store.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(
+                V2Fixtures.Manifest(),
+                "## hpi: HPI",
+                new Dictionary<string, WorkflowPromptTemplate> { [template.Id] = template }));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => CreateProvider(store).RenderAsync(
+            "general@v2026.08.1", WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None));
+
+        Assert.Contains("has no prompt", ex.Message);
+    }
+
+    [Fact]
+    public async Task Render_RendersFromV2Package()
     {
         var template = new WorkflowPromptTemplate(
             WorkflowPromptContract.ExtractPatientConcepts,
@@ -301,7 +321,7 @@ public class WorkflowPromptProviderTests
         var store = Substitute.For<IWorkflowPackageStore>();
         store.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>()).Returns(package);
 
-        var result = await CreateProvider(store).TryRenderAsync(
+        var result = await CreateProvider(store).RenderAsync(
             "general@v2026.08.1", WorkflowPromptContract.ExtractPatientConcepts, Vars, CancellationToken.None);
 
         Assert.Equal("Prelude.\n\nExtract from: draft", result);

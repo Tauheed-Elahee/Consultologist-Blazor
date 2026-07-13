@@ -79,8 +79,8 @@ via `appsettings.Development.json`), not by environment variables:
 
 - `AzureAd:Authority`, `AzureAd:ClientId`, `AzureAd:ValidateAuthority` — MSAL sign-in.
 - `AzureFunction:ApiScope` — scope requested for API tokens.
-- `AzureFunction:*Url` — endpoint URLs: `AgentProxyUrl`, `AccountMeUrl`,
-  `ConsultGenerationUrl`, `ConsultGenerationJobsUrl`, `DiagnosticsSseExitUrl`,
-  `WorkflowPackageCurrentUrl`.
+- `AzureFunction:*Url` — endpoint URLs: `AccountMeUrl`, `ConsultGenerationJobsUrl`,
+  `DiagnosticsSseExitUrl`, `WorkflowPackageCurrentUrl`. (`AgentProxyUrl` and
+  `ConsultGenerationUrl` were removed with their legacy endpoints in milestone 3.)
 - `AzureFunction:TimeoutSeconds` — HTTP client timeout for AI calls (default 240 when
   absent; shipped value 300).

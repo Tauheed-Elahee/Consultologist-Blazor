@@ -12,11 +12,6 @@ public record ConsultGenerationSectionRequest(
     string Name,
     string Standard);
 
-public record ConsultGenerationResponse(
-    Dictionary<string, string> GeneratedSections,
-    Dictionary<string, string> FailedSections,
-    bool Success);
-
 public record ConsultGenerationJobStartResponse(
     string JobId,
     string StatusUrl);

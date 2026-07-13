@@ -55,12 +55,12 @@ public static class PromptTemplateRenderer
 public interface IWorkflowPromptProvider
 {
     /// <summary>
-    /// Renders the prompt from the job's pinned package. Returns null when the compiled
-    /// default should be used instead (no package ref, unparseable ref, or a
-    /// specVersion-1 package). Throws when a v2 package is present but rendering fails —
+    /// Renders the prompt from the job's pinned package. A usable specVersion-2+
+    /// package is mandatory (milestone 3 retired the compiled fallbacks): a missing or
+    /// unparseable ref, a specVersion-1 package, or a rendering failure all throw —
     /// fail loud per the format spec.
     /// </summary>
-    Task<string?> TryRenderAsync(
+    Task<string> RenderAsync(
         string? packageRef,
         string promptId,
         IReadOnlyDictionary<string, string> variables,
@@ -78,7 +78,7 @@ public sealed class WorkflowPromptProvider : IWorkflowPromptProvider
         _logger = logger;
     }
 
-    public async Task<string?> TryRenderAsync(
+    public async Task<string> RenderAsync(
         string? packageRef,
         string promptId,
         IReadOnlyDictionary<string, string> variables,
@@ -86,27 +86,20 @@ public sealed class WorkflowPromptProvider : IWorkflowPromptProvider
     {
         if (!WorkflowPackageRef.TryParse(packageRef, out var parsedRef))
         {
-            if (!string.IsNullOrWhiteSpace(packageRef))
-            {
-                _logger.LogWarning(
-                    "Job carries an unparseable workflow package ref '{PackageRef}'; using compiled prompts.",
-                    packageRef);
-            }
-
-            return null;
+            throw new InvalidOperationException(
+                $"Prompt '{promptId}' has no usable workflow package ref ('{packageRef}').");
         }
 
         var package = await _packageStore.ResolveAsync(parsedRef!, cancellationToken);
 
         if (!package.HasPrompts)
         {
-            return null; // specVersion 1: compiled prompts remain the defaults.
+            throw new InvalidOperationException(
+                $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; a specVersion 2 or newer package is required.");
         }
 
         if (!package.Prompts!.TryGetValue(promptId, out var prompt))
         {
-            // A validated v2 package always carries the closed set; absence here means
-            // the package bypassed validation — fail loud rather than silently fall back.
             throw new InvalidOperationException(
                 $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) has no prompt '{promptId}'.");
         }
