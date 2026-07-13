@@ -105,7 +105,8 @@ Stays in the app, correctly, forever:
 2. **The input model** — "a consult draft plus sections with standards" is the one
    domain assumption that survives M4. The engine is a generic interpreter *of
    consult-generation workflows*, not arbitrary workloads. Package-defined input
-   schemas would be a conceivable M5; nothing on the boards demands it.
+   schemas would be a conceivable milestone 5 (see the final section); nothing on the
+   boards demands it.
 3. **Policy and trust** — specVersion/engineVersion gates, pin resolution order,
    attestation, the effective-input-hash definition, provenance recording, per-node
    tool allowlists and budgets. These must never be package-controlled: the package
@@ -126,3 +127,45 @@ semantics in two externalized places — the Foundry agent (SNOMED tool wiring, 
 discipline) and the MCP server. They are versioned and attested rather than compiled —
 which is the point — but a reimplementing harness needs them too, which is why
 provenance.md counts them as first-class artifacts in the record.
+
+## A conceivable milestone 5: the input model as content
+
+Deliberately unplanned — recorded here so the boundary decision stays conscious rather
+than accidental.
+
+**What it is.** After M4, packages control the prompts, steps, and graph, but every
+workflow still begins from the same fixed input: a consult draft plus sections with
+standards. That shape is compiled into the request contract, the effective-input hash,
+the binding vocabulary (`consult_draft`, the section list), and the Consults page's
+input form. M5 would move *that* into the package: a manifest-declared **input schema**
+(JSON Schema, presumably) defining what each workflow takes in.
+
+**What it would entail**, roughly in order of pain:
+
+- **The frontend becomes schema-driven** — the Consults page stops being a hardcoded
+  draft-plus-sections form and renders whatever input form the pinned package declares.
+  Most of the cost lives here.
+- **The binding contract derives from the schema** — engine-supplied variables come
+  from declared input fields rather than a fixed vocabulary, and M4's map node fans out
+  over any declared collection, not specifically "sections".
+- **The effective-input hash generalizes** to canonical serialization of
+  schema-conformant input — mechanical; the hash machinery already works this way in
+  miniature.
+- **Overrides and standards generalize** into package-defined content slots rather than
+  the one hardwired standards document.
+
+**What it would buy.** Workflows over genuinely different source material — discharge
+summaries from ward notes, tumor-board summaries from multi-document packets, operative
+notes — and, at the platform endgame (product-stages.md stage 4), third parties
+building documentation products on the engine without the app growing input handling
+for each.
+
+**Why it stays a footnote.** The second-consumer rule that has governed every
+externalization so far: nothing on either board needs it. Notably, the stage-4 outputs
+(referring-physician letter, patient summary, coding) do **not** — they are additional
+workflows over the *same* consult input and analysis outputs, so M4 covers them.
+
+**The realistic forcing function to watch: EMR integration.** The day input stops being
+a pasted draft and becomes structured payloads (FHIR bundles, referral document
+packets), the fixed input model starts to pinch and M5 becomes a real milestone rather
+than a footnote. Until then it is the honest, defensible edge of the decoupling.
