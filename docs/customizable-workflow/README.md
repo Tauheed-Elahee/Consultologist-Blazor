@@ -39,6 +39,9 @@ yet; these notes are the input to a future milestone plan.
   migration checklist)
 - [registry-operations.md](registry-operations.md) — browsing and inspecting the
   package registry (az CLI, portal, Storage Explorer) and the publish flow
+- [decoupling-roadmap.md](decoupling-roadmap.md) — post-milestone-2 forecast: phase
+  plan for milestones 3–4, the refactoring bill, risks, and the precise end-state
+  boundary of the "generic engine" claim
 
 ## Key terms
 
