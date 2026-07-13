@@ -42,6 +42,13 @@ Refactoring bill:
 
 ### Milestone 4 (#6, specVersion 4) — the big one (~3–5× milestone 2)
 
+> **Status 2026-07-13**: milestone 3 shipped as forecast (fallbacks retired, legacy
+> endpoint deleted). Milestone 4 was planned and split: phases 0/A (the file split and
+> structured outputs replacing the parser) execute now; the DAG cutover itself is
+> specified at implementation resolution in
+> [dag-as-data-design.md](dag-as-data-design.md) and shelved behind this section's
+> gate, as gated sub-issues #41–#44.
+
 DAG-as-data: the orchestrator becomes an interpreter — topological walk,
 `Task.WhenAll` on parallel-ready nodes, a **map/fan-out node type that subsumes the
 section loop** rather than special-casing it. The deep refactor is everything the fixed

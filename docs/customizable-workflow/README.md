@@ -44,6 +44,9 @@ yet; these notes are the input to a future milestone plan.
 - [decoupling-roadmap.md](decoupling-roadmap.md) — post-milestone-2 forecast: phase
   plan for milestones 3–4, the refactoring bill, risks, and the precise end-state
   boundary of the "generic engine" claim
+- [dag-as-data-design.md](dag-as-data-design.md) — milestone 4 phases B–D at
+  implementation resolution (specVersion-4 nodes/schemas, interpreter, migration),
+  shelved behind the roadmap gate; phases 0/A (file split, structured outputs) execute
 
 ## Key terms
 
