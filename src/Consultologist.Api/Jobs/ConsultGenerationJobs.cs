@@ -1178,28 +1178,20 @@ public sealed class ConsultGenerationJobs
         List<ConsultGenerationJobEventCandidate> candidates,
         ConsultGenerationJobResponse response)
     {
-        if (response.SectionProseProgress == null)
+        // Pre-milestone-3 snapshots carry no step list; their prose events were
+        // materialized while they ran and replay from the event store.
+        if (response.SectionProseProgress == null || response.SectionSteps is not { Count: > 0 } steps)
         {
             return;
         }
 
-        var steps = response.SectionSteps;
-        var totalStepCount = steps?.Count ?? ConsultGenerationSectionProseSteps.TotalStepCount;
-
         foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
         {
-            var completedStepCount = Math.Clamp(progress.CompletedProseStepCount, 0, totalStepCount);
+            var completedStepCount = Math.Clamp(progress.CompletedProseStepCount, 0, steps.Count);
 
             for (var stepCount = 1; stepCount <= completedStepCount; stepCount++)
             {
-                var step = steps != null
-                    ? steps[stepCount - 1]
-                    : GetLegacySectionProseStepDescriptor(stepCount);
-
-                if (step == null)
-                {
-                    continue;
-                }
+                var step = steps[stepCount - 1];
 
                 AddEventCandidate(
                     candidates,
@@ -1300,10 +1292,7 @@ public sealed class ConsultGenerationJobs
             return "building the patient trajectory";
         }
 
-        if (failureText.Contains(ConsultGenerationActivityNames.RunProseStep, StringComparison.Ordinal)
-            || failureText.Contains(ConsultGenerationActivityNames.GenerateStandardSectionDraft, StringComparison.Ordinal)
-            || failureText.Contains(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation, StringComparison.Ordinal)
-            || failureText.Contains(ConsultGenerationActivityNames.ApplySectionInstructions, StringComparison.Ordinal))
+        if (failureText.Contains(ConsultGenerationActivityNames.RunProseStep, StringComparison.Ordinal))
         {
             return "generating a consult section";
         }
@@ -1347,19 +1336,6 @@ public sealed class ConsultGenerationJobs
         var index = completedStageCount - 1;
         var stages = ConsultGenerationAnalysisStatuses.OrderedStages;
         return index >= 0 && index < stages.Length ? stages[index] : null;
-    }
-
-    // Pre-milestone-3 job snapshots carry no step list; map their fixed three steps.
-    // Remove after one release of drain.
-    private static ConsultSectionStepDescriptor? GetLegacySectionProseStepDescriptor(int completedStepCount)
-    {
-        return completedStepCount switch
-        {
-            1 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.StandardDraftCreated, "Drafting section"),
-            2 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.PatientDraftCreated, "Applying patient information"),
-            3 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.InstructionsApplied, "Applying section instructions"),
-            _ => null
-        };
     }
 
     private sealed class CorsResultActionResult : IActionResult
@@ -1457,13 +1433,9 @@ public sealed class ConsultGenerationOrchestrator
 
         try
         {
-        // Jobs queued before section steps were snapshotted into the orchestration
-        // input fall back to the canonical v2 step list.
         var sectionSteps = input.SectionSteps is { Count: > 0 }
             ? input.SectionSteps
-            : WorkflowSectionStepDefaults.V2Synthesized
-                .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
-                .ToList();
+            : throw new InvalidOperationException("Consult generation input carries no section steps; the job start snapshots them from the workflow package.");
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -1833,126 +1805,6 @@ public sealed class ConsultGenerationOrchestrator
         catch (Exception ex)
         {
             return new SectionGenerationResult(section.Id, section.Name, false, null, $"{currentStepLabel} failed: {ex.Message}");
-        }
-    }
-}
-
-/// <summary>
-/// Shims for the pre-milestone-3 prose activity names, so activity messages queued by
-/// an old orchestrator don't dead-letter across the deploy. Each renders its v2 prompt
-/// from the job's package and sends it — the compiled prompt builders are gone.
-/// Remove after one release of drain.
-/// </summary>
-public sealed class GenerateConsultSectionActivity
-{
-    private readonly ILogger<GenerateConsultSectionActivity> _logger;
-    private readonly AgentSectionGenerator _sectionGenerator;
-    private readonly IWorkflowPromptProvider _promptProvider;
-
-    public GenerateConsultSectionActivity(
-        ILogger<GenerateConsultSectionActivity> logger,
-        AgentSectionGenerator sectionGenerator,
-        IWorkflowPromptProvider promptProvider)
-    {
-        _logger = logger;
-        _sectionGenerator = sectionGenerator;
-        _promptProvider = promptProvider;
-    }
-
-    [Function(ConsultGenerationActivityNames.GenerateStandardSectionDraft)]
-    public Task<string> GenerateStandardSectionDraftAsync(
-        [ActivityTrigger] ConsultGenerationActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        return RunLegacyStepAsync(
-            input,
-            WorkflowPromptContract.StandardSectionDraft,
-            new Dictionary<string, string>
-            {
-                [WorkflowPromptContract.SectionName] = input.Section.Name,
-                [WorkflowPromptContract.PatientTrajectoryConcepts] = AgentSectionGenerator.FormatConcepts(input.PatientTrajectoryConcepts)
-            },
-            cancellationToken);
-    }
-
-    [Function(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation)]
-    public Task<string> UpdateSectionWithPatientInformationAsync(
-        [ActivityTrigger] ConsultGenerationActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        return RunLegacyStepAsync(
-            input,
-            WorkflowPromptContract.PatientSectionDraft,
-            new Dictionary<string, string>
-            {
-                [WorkflowPromptContract.StandardSectionDraftVariable] = input.SectionDraft ?? string.Empty,
-                [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft,
-                [WorkflowPromptContract.SectionName] = input.Section.Name
-            },
-            cancellationToken);
-    }
-
-    [Function(ConsultGenerationActivityNames.ApplySectionInstructions)]
-    public Task<string> ApplySectionInstructionsAsync(
-        [ActivityTrigger] ConsultGenerationActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        return RunLegacyStepAsync(
-            input,
-            WorkflowPromptContract.SectionInstructions,
-            new Dictionary<string, string>
-            {
-                [WorkflowPromptContract.PatientSectionDraftVariable] = input.SectionDraft ?? string.Empty,
-                [WorkflowPromptContract.SectionName] = input.Section.Name,
-                [WorkflowPromptContract.SectionStandard] = input.Section.Standard
-            },
-            cancellationToken);
-    }
-
-    private async Task<string> RunLegacyStepAsync(
-        ConsultGenerationActivityInput input,
-        string promptId,
-        Dictionary<string, string> variables,
-        CancellationToken cancellationToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var section = input.Section;
-
-        try
-        {
-            _logger.LogInformation(
-                "Starting legacy prose step. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}",
-                promptId,
-                section.Id,
-                section.Name);
-
-            var prompt = await _promptProvider.RenderAsync(input.WorkflowPackage, promptId, variables, cancellationToken);
-            var prose = await _sectionGenerator.SendPromptAsync($"{promptId}:{section.Name}", prompt, cancellationToken);
-            var trimmedProse = prose.Trim();
-
-            _logger.LogInformation(
-                "Legacy prose step completed. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}, ResponseLength={ResponseLength}, ElapsedMs={ElapsedMs}",
-                promptId,
-                section.Id,
-                section.Name,
-                trimmedProse.Length,
-                stopwatch.ElapsedMilliseconds);
-
-            return trimmedProse;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Legacy prose step failed. PromptId={PromptId}, SectionId={SectionId}, SectionName={SectionName}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
-                promptId,
-                section.Id,
-                section.Name,
-                ex.GetType().FullName,
-                ex.Message,
-                stopwatch.ElapsedMilliseconds);
-
-            throw;
         }
     }
 }
@@ -2461,13 +2313,6 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     };
 }
 
-public sealed record ConsultGenerationActivityInput(
-    string ConsultDraft,
-    IReadOnlyList<ClinicalConcept> PatientTrajectoryConcepts,
-    ConsultGenerationSectionRequest Section,
-    string? SectionDraft = null,
-    string? WorkflowPackage = null);
-
 public sealed record ConsultGenerationOrchestrationInput(
     ConsultGenerationRequest Request,
     string AppUserId,
@@ -2708,13 +2553,6 @@ public static class ConsultGenerationJobStatuses
 public static class ConsultGenerationActivityNames
 {
     public const string RunProseStep = "run-prose-step";
-
-    // Legacy per-step activity names: still deployed as shims so activity messages
-    // queued by a pre-milestone-3 orchestrator don't dead-letter. Remove after one
-    // release of drain.
-    public const string GenerateStandardSectionDraft = "generate-standard-section-draft";
-    public const string UpdateSectionWithPatientInformation = "update-section-with-patient-information";
-    public const string ApplySectionInstructions = "apply-section-instructions";
 }
 
 public static class ConsultGenerationAnalysisStatuses
@@ -2748,14 +2586,8 @@ public static class ConsultGenerationSectionProseSteps
     /// <summary>The single SSE event name for every prose step; the payload carries the step id and label.</summary>
     public const string EventName = "section-prose-step";
 
-    /// <summary>Fallback step count for pre-milestone-3 job snapshots without a step list.</summary>
+    /// <summary>Deserialization default for pre-milestone-3 job snapshots without a step list.</summary>
     public const int TotalStepCount = 3;
-
-    // Legacy fixed step ids, kept for pre-milestone-3 job snapshots. Remove after one
-    // release of drain.
-    public const string StandardDraftCreated = "section-standard-draft-created";
-    public const string PatientDraftCreated = "section-patient-draft-created";
-    public const string InstructionsApplied = "section-instructions-applied";
 }
 
 public static class ConsultGenerationSectionStatuses
