@@ -22,8 +22,10 @@ through `IConfiguration` accept either form; settings read directly via
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
 | `AzureAI__Endpoint` | Foundry project endpoint, e.g. `https://<resource>.services.ai.azure.com/api/projects/<project>` | — | yes (agent calls throw without it) |
-| `AzureAI__AgentName` | Agent name in the Foundry project (currently `test-json`) | — | yes |
-| `AzureAI__AgentVersion` | Published agent version number as a string (currently `47`) | — | yes |
+| `AzureAI__AgentName` | Prose agent name in the Foundry project (currently `test-json`) | — | yes |
+| `AzureAI__AgentVersion` | Published prose agent version as a string (currently `47`) | — | yes |
+| `AzureAI__ConceptAgentName` | Structured-output agent for the concept analysis stages (currently `concept-extraction`; published with a `json_schema` text format — see `agents/concept-extraction.yaml`) | — | yes (analysis activities throw without it) |
+| `AzureAI__ConceptAgentVersion` | Published concept agent version as a string (currently `1`); recorded in per-job provenance | — | yes |
 | `AzureAI__ApiVersion` | Foundry agents API version | `v1` | no |
 | `AzureAI__NetworkTimeoutSeconds` | Non-negative integer (seconds) | `270` | no |
 | `AzureAI__MaxRetries` | Non-negative integer (SDK-internal retries per call; durable retries stack on top) | `0` | no |
@@ -34,7 +36,11 @@ through `IConfiguration` accept either form; settings read directly via
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
 | `AgentAttestation__Enforce` | `true` (case-insensitive) = drift fails host startup; any other value = drift logs an error only | warn-only | no |
-| `AgentAttestation__ManifestPath` | Absolute or relative path to the attested agent YAML | `agents/{AzureAI__AgentName}.yaml` under the app base directory | no |
+| `AgentAttestation__ManifestDirectory` | Directory holding the attested agent YAMLs (`{agent-name}.yaml` per pinned agent; replaces the former `AgentAttestation__ManifestPath`) | `agents/` under the app base directory | no |
+
+Every pinned agent is attested: `AzureAI__AgentName`/`AgentVersion` and, when
+configured, `AzureAI__ConceptAgentName`/`ConceptAgentVersion` — including the
+`text.format` block (type/name/strict and canonical-JSON schema comparison).
 
 Transient check failures (Foundry unreachable, manifest missing) only warn, even in
 enforce mode — only proven disagreement is fatal.

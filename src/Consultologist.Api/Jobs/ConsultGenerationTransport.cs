@@ -190,6 +190,7 @@ public sealed class ConsultGenerationJobs
             // See docs/customizable-workflow/provenance.md.
             var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
             var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
+            var conceptAgentVersion = Environment.GetEnvironmentVariable("AzureAI__ConceptAgentVersion");
 
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
@@ -206,7 +207,8 @@ public sealed class ConsultGenerationJobs
                     resolvedPackageRef,
                     effectiveInputHash,
                     agentVersion,
-                    sectionSteps));
+                    sectionSteps,
+                    conceptAgentVersion));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -221,7 +223,8 @@ public sealed class ConsultGenerationJobs
                     resolvedPackageRef,
                     effectiveInputHash,
                     agentVersion,
-                    sectionSteps),
+                    sectionSteps,
+                    conceptAgentVersion),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 

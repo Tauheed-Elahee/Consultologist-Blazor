@@ -1,0 +1,60 @@
+# Attested configuration of the structured-output Foundry agent used by the concept
+# analysis stages (milestone 4 phase A). Foundry rejects request-level text options for
+# agent-bound calls, so the json_schema output format lives in this agent's definition;
+# test-json keeps serving the prose steps as plain text. The embedded schema mirrors
+# the engine contract (ConceptOutputContract.SchemaJson) byte-for-byte — pinned by
+# tests. Source of truth per docs/customizable-workflow/provenance.md: edit this file,
+# publish a new version (az rest POST .../agents/concept-extraction/versions?api-version=v1),
+# then bump the AzureAI__ConceptAgentVersion pin.
+#
+# Project: consultologist-canada-east (resource consultologist-canada-east-resou)
+name: concept-extraction
+version: "1"
+status: active
+definition:
+  kind: prompt
+  model: gpt-5.6-sol
+  reasoning:
+    effort: none
+  instructions: |
+    You are an AI assistant that helps physicians write consult notes. You are connected to an MCP server for SNOMED concepts.
+
+    When asked for SNOMED concepts, include all findings, such as sex and follow-up. Set isActive=false for concepts that are inactive in SNOMED. For findings that do not map to a SNOMED concept, set isSnomedConcept=false and id=null.
+
+    STRICT: When calling search_concepts, pass one short clinical term at a time (a few words, 3-250 characters) - never sentences or passages. If a tool returns an error message, adjust the call according to that message and retry.
+  tools:
+    - type: mcp
+      server_label: ConsultologistSnomed
+      server_url: https://mcp.snomed.consultologist.ai/runtime/webhooks/mcp
+      require_approval: never
+      project_connection_id: ConsultologistSnomed
+  tool_choice: auto
+  text:
+    format:
+      type: json_schema
+      name: concept_list
+      strict: true
+      schema: |
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["concepts"],
+          "properties": {
+            "concepts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["term", "type", "id", "isSnomedConcept", "isActive", "support"],
+                "properties": {
+                  "term":            { "type": "string" },
+                  "type":            { "type": "string" },
+                  "id":              { "type": ["string", "null"] },
+                  "isSnomedConcept": { "type": "boolean" },
+                  "isActive":        { "type": "boolean" },
+                  "support":         { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        }

@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Azure.Core;
 using Microsoft.Extensions.Hosting;
@@ -67,47 +68,72 @@ public sealed class AgentAttestationService : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    // Every pinned agent gets attested: the prose agent and (when configured) the
+    // structured-output concept agent.
+    private static readonly (string NameKey, string VersionKey)[] AgentPins =
+    {
+        ("AzureAI__AgentName", "AzureAI__AgentVersion"),
+        ("AzureAI__ConceptAgentName", "AzureAI__ConceptAgentVersion")
+    };
+
     private async Task<List<string>?> RunAsync(CancellationToken cancellationToken)
     {
         var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
-        var agentName = Environment.GetEnvironmentVariable("AzureAI__AgentName");
-        var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
         var apiVersion = Environment.GetEnvironmentVariable("AzureAI__ApiVersion") ?? "v1";
 
-        if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(agentName) || string.IsNullOrWhiteSpace(agentVersion))
+        if (string.IsNullOrWhiteSpace(endpoint))
         {
-            _logger.LogInformation("Agent attestation skipped: AzureAI__Endpoint/AgentName/AgentVersion not configured.");
+            _logger.LogInformation("Agent attestation skipped: AzureAI__Endpoint not configured.");
             return null;
         }
 
-        var manifestPath = Environment.GetEnvironmentVariable("AgentAttestation__ManifestPath")
-            ?? Path.Combine(AppContext.BaseDirectory, "agents", $"{agentName}.yaml");
-
-        if (!File.Exists(manifestPath))
-        {
-            _logger.LogWarning("Agent attestation skipped: manifest not found at {ManifestPath}.", manifestPath);
-            return null;
-        }
-
-        var manifest = AttestedAgentManifest.Load(await File.ReadAllTextAsync(manifestPath, cancellationToken));
-
+        var ranAny = false;
         var mismatches = new List<string>();
 
-        if (!string.Equals(manifest.Version, agentVersion, StringComparison.Ordinal))
+        foreach (var (nameKey, versionKey) in AgentPins)
         {
-            mismatches.Add($"pinned version {agentVersion} != manifest version {manifest.Version}");
+            var agentName = Environment.GetEnvironmentVariable(nameKey);
+            var agentVersion = Environment.GetEnvironmentVariable(versionKey);
+
+            if (string.IsNullOrWhiteSpace(agentName) || string.IsNullOrWhiteSpace(agentVersion))
+            {
+                _logger.LogInformation("Agent attestation skipped for {NameKey}: not configured.", nameKey);
+                continue;
+            }
+
+            var manifestPath = Path.Combine(
+                Environment.GetEnvironmentVariable("AgentAttestation__ManifestDirectory")
+                    ?? Path.Combine(AppContext.BaseDirectory, "agents"),
+                $"{agentName}.yaml");
+
+            if (!File.Exists(manifestPath))
+            {
+                _logger.LogWarning("Agent attestation skipped for {AgentName}: manifest not found at {ManifestPath}.", agentName, manifestPath);
+                continue;
+            }
+
+            ranAny = true;
+            var manifest = AttestedAgentManifest.Load(await File.ReadAllTextAsync(manifestPath, cancellationToken));
+            var agentMismatches = new List<string>();
+
+            if (!string.Equals(manifest.Version, agentVersion, StringComparison.Ordinal))
+            {
+                agentMismatches.Add($"pinned version {agentVersion} != manifest version {manifest.Version}");
+            }
+
+            var deployed = await FetchDeployedDefinitionAsync(endpoint, agentName, agentVersion, apiVersion, cancellationToken);
+            agentMismatches.AddRange(AttestedAgentManifest.Compare(manifest, deployed));
+
+            if (agentMismatches.Count == 0)
+            {
+                _logger.LogInformation("Agent attestation passed. Agent={AgentName}@{AgentVersion}", agentName, agentVersion);
+                Console.Error.WriteLine($"[AgentAttestation] passed: {agentName}@{agentVersion}");
+            }
+
+            mismatches.AddRange(agentMismatches.Select(m => $"{agentName}@{agentVersion}: {m}"));
         }
 
-        var deployed = await FetchDeployedDefinitionAsync(endpoint, agentName, agentVersion, apiVersion, cancellationToken);
-        mismatches.AddRange(AttestedAgentManifest.Compare(manifest, deployed));
-
-        if (mismatches.Count == 0)
-        {
-            _logger.LogInformation("Agent attestation passed. Agent={AgentName}@{AgentVersion}", agentName, agentVersion);
-            Console.Error.WriteLine($"[AgentAttestation] passed: {agentName}@{agentVersion}");
-        }
-
-        return mismatches;
+        return ranAny ? mismatches : null;
     }
 
     private async Task<JsonNode> FetchDeployedDefinitionAsync(
@@ -144,6 +170,7 @@ public sealed class AttestedAgentManifest
         public AttestedReasoning? Reasoning { get; set; }
         public string? ToolChoice { get; set; }
         public List<AttestedTool> Tools { get; set; } = new();
+        public AttestedText? Text { get; set; }
     }
 
     public sealed class AttestedReasoning
@@ -156,6 +183,21 @@ public sealed class AttestedAgentManifest
         public string Type { get; set; } = string.Empty;
         public string? ServerLabel { get; set; }
         public string? ServerUrl { get; set; }
+    }
+
+    public sealed class AttestedText
+    {
+        public AttestedTextFormat? Format { get; set; }
+    }
+
+    public sealed class AttestedTextFormat
+    {
+        public string Type { get; set; } = string.Empty;
+        public string? Name { get; set; }
+        public string? Strict { get; set; }
+
+        /// <summary>JSON document as a string (YAML block scalar); compared canonically.</summary>
+        public string? Schema { get; set; }
     }
 
     public static AttestedAgentManifest Load(string yaml)
@@ -193,6 +235,21 @@ public sealed class AttestedAgentManifest
             mismatches.Add("instructions differ");
         }
 
+        // The text format is part of the agent's behavioral contract — for the
+        // structured-output agent it carries the response schema itself.
+        var manifestFormat = manifest.Definition.Text?.Format;
+        var deployedFormat = definition["text"]?["format"];
+        CompareValue(mismatches, "text.format.type", manifestFormat?.Type, deployedFormat?["type"]?.ToString());
+        CompareValue(mismatches, "text.format.name", manifestFormat?.Name, deployedFormat?["name"]?.ToString());
+        CompareValue(mismatches, "text.format.strict", manifestFormat?.Strict?.ToLowerInvariant(), deployedFormat?["strict"]?.ToString().ToLowerInvariant());
+
+        var manifestSchema = string.IsNullOrWhiteSpace(manifestFormat?.Schema) ? null : JsonNode.Parse(manifestFormat.Schema);
+        var deployedSchema = deployedFormat?["schema"];
+        if (CanonicalJson(manifestSchema) != CanonicalJson(deployedSchema))
+        {
+            mismatches.Add("text.format.schema differs");
+        }
+
         var deployedTools = definition["tools"]?.AsArray() ?? new JsonArray();
         if (deployedTools.Count != manifest.Definition.Tools.Count)
         {
@@ -224,4 +281,28 @@ public sealed class AttestedAgentManifest
     // API's JSON strings without changing agent behavior.
     private static string NormalizeText(string? text) =>
         (text ?? string.Empty).Replace("\r\n", "\n").TrimEnd();
+
+    /// <summary>Order-insensitive JSON equality: objects re-serialized with sorted keys.</summary>
+    private static string CanonicalJson(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return "null";
+        }
+
+        if (node is JsonObject obj)
+        {
+            var parts = obj
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{JsonSerializer.Serialize(pair.Key)}:{CanonicalJson(pair.Value)}");
+            return "{" + string.Join(",", parts) + "}";
+        }
+
+        if (node is JsonArray array)
+        {
+            return "[" + string.Join(",", array.Select(CanonicalJson)) + "]";
+        }
+
+        return node.ToJsonString();
+    }
 }

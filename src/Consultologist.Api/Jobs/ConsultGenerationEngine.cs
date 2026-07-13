@@ -61,7 +61,8 @@ public sealed class ConsultGenerationOrchestrator
                 input.WorkflowPackage,
                 input.EffectiveInputHash,
                 input.AgentVersion,
-                sectionSteps));
+                sectionSteps,
+                input.ConceptAgentVersion));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -571,19 +572,21 @@ public static class ConsultGenerationPreprocessingRunner
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var rawResponse = await agent.SendPromptAsync(warningStage, prompt, cancellationToken);
-        var result = ConsultGenerationConceptParser.Parse(rawResponse, source, warningStage);
+        var rawResponse = await agent.SendPromptAsync(warningStage, prompt, useConceptAgent: true, cancellationToken);
+        var concepts = ConceptOutputContract.Deserialize(rawResponse, source);
 
         logger.LogInformation(
-            "SNOMED preprocessing completed. Stage={Stage}, ValidConceptCount={ValidConceptCount}, DroppedMalformedConceptCount={DroppedMalformedConceptCount}, ElapsedMs={ElapsedMs}",
+            "SNOMED preprocessing completed. Stage={Stage}, ConceptCount={ConceptCount}, ElapsedMs={ElapsedMs}",
             warningStage,
-            result.Concepts.Count,
-            result.ValidationWarnings.Sum(warning => warning.DroppedLineCount),
+            concepts.Count,
             stopwatch.ElapsedMilliseconds);
 
         Console.Error.WriteLine(
-            $"[SNOMEDPreprocessing] Stage={warningStage}; ValidationWarnings={JsonSerializer.Serialize(result.ValidationWarnings)}; ElapsedMs={stopwatch.ElapsedMilliseconds}");
+            $"[SNOMEDPreprocessing] Stage={warningStage}; ConceptCount={concepts.Count}; ElapsedMs={stopwatch.ElapsedMilliseconds}");
 
-        return result;
+        // ValidationWarnings is a dead field since structured outputs replaced the
+        // bullet parser: schema violations throw instead of dropping lines. The record
+        // shape survives until the DAG phase's drain window retires it.
+        return new ConceptExtractionResult(concepts, Array.Empty<ConsultGenerationValidationWarning>());
     }
 }
