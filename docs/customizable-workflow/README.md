@@ -34,6 +34,8 @@ yet; these notes are the input to a future milestone plan.
   building"
 - [package-format-v2.md](package-format-v2.md) — normative specVersion-2 format:
   prompt templates (Scriban), variable contract, strictness rules, rollout
+- [package-format-v3.md](package-format-v3.md) — normative specVersion-3 format:
+  package-defined section steps, declarative bindings, fallback retirement
 - [content-repos.md](content-repos.md) — splitting workflow and agent content into
   dedicated GitOps repos publishing to the registry (CI-only writes, full agent GitOps,
   migration checklist)

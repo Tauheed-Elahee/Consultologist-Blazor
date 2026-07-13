@@ -1,5 +1,9 @@
 # Workflow Package Format — specVersion 2 (Prompt Templates)
 
+> Superseded for new packages by [package-format-v3.md](package-format-v3.md)
+> (milestone 3, section steps). v2 packages remain fully valid; v3 defines their
+> synthesized step list.
+
 Normative specification for `specVersion: 2` packages, authored for milestone 2
 (issue #4, sub-issue #17). v2 is a strict superset of v1: it adds **prompt templates**
 to the package; the standards content is unchanged. Decisions recorded here were made

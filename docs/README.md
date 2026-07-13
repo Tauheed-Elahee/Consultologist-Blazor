@@ -40,6 +40,7 @@ point-in-time investigations and migration plans.
   [completeness](customizable-workflow/completeness.md),
   [content repos](customizable-workflow/content-repos.md),
   [package format v2](customizable-workflow/package-format-v2.md),
+  [package format v3](customizable-workflow/package-format-v3.md),
   [registry operations](customizable-workflow/registry-operations.md),
   [decoupling roadmap](customizable-workflow/decoupling-roadmap.md)
 
