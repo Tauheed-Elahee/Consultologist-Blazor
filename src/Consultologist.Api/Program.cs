@@ -68,6 +68,7 @@ builder.Services.AddSingleton<IConsultGenerationJobEventStore, TableConsultGener
 builder.Services.AddSingleton<IConsultGenerationJobIndexStore, TableConsultGenerationJobIndexStore>();
 builder.Services.AddSingleton<IWorkflowPackageStore, WorkflowPackageStore>();
 builder.Services.AddSingleton<IWorkflowPromptProvider, WorkflowPromptProvider>();
+builder.Services.AddSingleton<IWorkflowPackagePinResolver, WorkflowPackagePinResolver>();
 builder.Services.AddScoped<WorkflowPackages>();
 builder.Services.AddHttpClient();
 builder.Services.AddHostedService<AgentAttestationService>();
@@ -82,5 +83,6 @@ builder.Services.AddScoped<ExtractPatientConceptsActivity>();
 builder.Services.AddScoped<IdentifyProblemActivity>();
 builder.Services.AddScoped<CreateTypicalTrajectoryActivity>();
 builder.Services.AddScoped<CreatePatientTrajectoryActivity>();
+builder.Services.AddScoped<RunProseStepActivity>();
 
 builder.Build().Run();

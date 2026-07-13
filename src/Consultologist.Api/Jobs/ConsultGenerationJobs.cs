@@ -46,15 +46,21 @@ public sealed class ConsultGenerationJobs
     private readonly ILogger<ConsultGenerationJobs> _logger;
     private readonly IAccountAuthorizer _authorizer;
     private readonly IConsultGenerationJobEventStore _eventStore;
+    private readonly IWorkflowPackageStore _packageStore;
+    private readonly IWorkflowPackagePinResolver _pinResolver;
 
     public ConsultGenerationJobs(
         ILogger<ConsultGenerationJobs> logger,
         IAccountAuthorizer authorizer,
-        IConsultGenerationJobEventStore eventStore)
+        IConsultGenerationJobEventStore eventStore,
+        IWorkflowPackageStore packageStore,
+        IWorkflowPackagePinResolver pinResolver)
     {
         _logger = logger;
         _authorizer = authorizer;
         _eventStore = eventStore;
+        _packageStore = packageStore;
+        _pinResolver = pinResolver;
     }
 
     [Function("StartConsultGenerationJob")]
@@ -143,6 +149,43 @@ public sealed class ConsultGenerationJobs
             var jobId = Guid.NewGuid().ToString("N");
             var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
 
+            // A workflow package is mandatory: resolve the ref here (request → account
+            // pin → default) to a concrete immutable version and snapshot it into the
+            // job, so the whole run — and the provenance record — uses one version even
+            // when the pin says "latest". Registry failure stops the job before it exists.
+            if (!WorkflowPackageRef.TryParse(request.WorkflowPackage, out var packageRef))
+            {
+                if (!string.IsNullOrWhiteSpace(request.WorkflowPackage))
+                {
+                    _logger.LogWarning("Invalid ConsultGenerationJobs request: malformed workflow package ref '{PackageRef}'.", request.WorkflowPackage);
+                    return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "WorkflowPackage is not a valid package reference." }, cancellationToken);
+                }
+
+                packageRef = await _pinResolver.ResolvePinAsync(account.AppUserId, cancellationToken);
+            }
+
+            WorkflowPackage package;
+            try
+            {
+                package = await _packageStore.ResolveAsync(packageRef!, cancellationToken);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogError(ex, "Workflow package resolution failed at job start. Pin={Pin}", packageRef);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.ServiceUnavailable, new { error = "Workflow package registry is unavailable." }, cancellationToken);
+            }
+
+            if (package.SectionSteps is not { Count: > 0 })
+            {
+                _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no section steps; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
+            }
+
+            var resolvedPackageRef = package.Ref;
+            var sectionSteps = package.SectionSteps
+                .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
+                .ToList();
+
             // Provenance: identify the artifacts and input that produce this consult.
             // See docs/customizable-workflow/provenance.md.
             var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
@@ -160,9 +203,10 @@ public sealed class ConsultGenerationJobs
                     jobId,
                     account.AppUserId,
                     request.Sections,
-                    request.WorkflowPackage,
+                    resolvedPackageRef,
                     effectiveInputHash,
-                    agentVersion));
+                    agentVersion,
+                    sectionSteps));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -174,9 +218,10 @@ public sealed class ConsultGenerationJobs
                 new ConsultGenerationOrchestrationInput(
                     request,
                     account.AppUserId,
-                    request.WorkflowPackage,
+                    resolvedPackageRef,
                     effectiveInputHash,
-                    agentVersion),
+                    agentVersion,
+                    sectionSteps),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -1006,7 +1051,7 @@ public sealed class ConsultGenerationJobs
         return new SseItem<string>(json, eventName);
     }
 
-    private static IReadOnlyList<ConsultGenerationJobEventCandidate> CreateSemanticEventCandidates(
+    internal static IReadOnlyList<ConsultGenerationJobEventCandidate> CreateSemanticEventCandidates(
         ConsultGenerationJobResponse response)
     {
         var candidates = new List<ConsultGenerationJobEventCandidate>();
@@ -1138,16 +1183,18 @@ public sealed class ConsultGenerationJobs
             return;
         }
 
+        var steps = response.SectionSteps;
+        var totalStepCount = steps?.Count ?? ConsultGenerationSectionProseSteps.TotalStepCount;
+
         foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
         {
-            var completedStepCount = Math.Clamp(
-                progress.CompletedProseStepCount,
-                0,
-                ConsultGenerationSectionProseSteps.TotalStepCount);
+            var completedStepCount = Math.Clamp(progress.CompletedProseStepCount, 0, totalStepCount);
 
             for (var stepCount = 1; stepCount <= completedStepCount; stepCount++)
             {
-                var step = GetSectionProseStepByCompletedCount(stepCount);
+                var step = steps != null
+                    ? steps[stepCount - 1]
+                    : GetLegacySectionProseStepDescriptor(stepCount);
 
                 if (step == null)
                 {
@@ -1156,14 +1203,15 @@ public sealed class ConsultGenerationJobs
 
                 AddEventCandidate(
                     candidates,
-                    step,
-                    $"section-prose:{progress.SectionId}:{step}",
+                    ConsultGenerationSectionProseSteps.EventName,
+                    $"section-prose:{progress.SectionId}:{step.Id}",
                     new ConsultGenerationSectionProseStepEvent(
                         response.JobId,
                         progress.SectionId,
                         progress.SectionName,
-                        step,
-                        GetSectionProseStepMessage(step),
+                        step.Id,
+                        step.Label,
+                        $"{step.Label} completed.",
                         stepCount,
                         progress.TotalProseStepCount));
             }
@@ -1252,7 +1300,8 @@ public sealed class ConsultGenerationJobs
             return "building the patient trajectory";
         }
 
-        if (failureText.Contains(ConsultGenerationActivityNames.GenerateStandardSectionDraft, StringComparison.Ordinal)
+        if (failureText.Contains(ConsultGenerationActivityNames.RunProseStep, StringComparison.Ordinal)
+            || failureText.Contains(ConsultGenerationActivityNames.GenerateStandardSectionDraft, StringComparison.Ordinal)
             || failureText.Contains(ConsultGenerationActivityNames.UpdateSectionWithPatientInformation, StringComparison.Ordinal)
             || failureText.Contains(ConsultGenerationActivityNames.ApplySectionInstructions, StringComparison.Ordinal))
         {
@@ -1300,25 +1349,16 @@ public sealed class ConsultGenerationJobs
         return index >= 0 && index < stages.Length ? stages[index] : null;
     }
 
-    private static string? GetSectionProseStepByCompletedCount(int completedStepCount)
+    // Pre-milestone-3 job snapshots carry no step list; map their fixed three steps.
+    // Remove after one release of drain.
+    private static ConsultSectionStepDescriptor? GetLegacySectionProseStepDescriptor(int completedStepCount)
     {
         return completedStepCount switch
         {
-            1 => ConsultGenerationSectionProseSteps.StandardDraftCreated,
-            2 => ConsultGenerationSectionProseSteps.PatientDraftCreated,
-            3 => ConsultGenerationSectionProseSteps.InstructionsApplied,
+            1 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.StandardDraftCreated, "Drafting section"),
+            2 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.PatientDraftCreated, "Applying patient information"),
+            3 => new ConsultSectionStepDescriptor(ConsultGenerationSectionProseSteps.InstructionsApplied, "Applying section instructions"),
             _ => null
-        };
-    }
-
-    private static string GetSectionProseStepMessage(string step)
-    {
-        return step switch
-        {
-            ConsultGenerationSectionProseSteps.StandardDraftCreated => "Standard section draft created.",
-            ConsultGenerationSectionProseSteps.PatientDraftCreated => "Patient information applied to section draft.",
-            ConsultGenerationSectionProseSteps.InstructionsApplied => "Section instructions applied.",
-            _ => "Section prose step completed."
         };
     }
 
@@ -1377,6 +1417,7 @@ public sealed record ConsultGenerationSectionProseStepEvent(
     string SectionId,
     string SectionName,
     string Step,
+    string Label,
     string Message,
     int CompletedStepCount,
     int TotalStepCount);
@@ -1416,6 +1457,14 @@ public sealed class ConsultGenerationOrchestrator
 
         try
         {
+        // Jobs queued before section steps were snapshotted into the orchestration
+        // input fall back to the canonical v2 step list.
+        var sectionSteps = input.SectionSteps is { Count: > 0 }
+            ? input.SectionSteps
+            : WorkflowSectionStepDefaults.V2Synthesized
+                .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
+                .ToList();
+
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.Initialize),
@@ -1425,7 +1474,8 @@ public sealed class ConsultGenerationOrchestrator
                 request.Sections,
                 input.WorkflowPackage,
                 input.EffectiveInputHash,
-                input.AgentVersion));
+                input.AgentVersion,
+                sectionSteps));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -1597,7 +1647,8 @@ public sealed class ConsultGenerationOrchestrator
                 request.ConsultDraft,
                 patientTrajectory.Concepts,
                 section,
-                input.WorkflowPackage);
+                input.WorkflowPackage,
+                sectionSteps);
 
             pendingTasks.Add(task);
             taskSections[task] = section;
@@ -1743,62 +1794,45 @@ public sealed class ConsultGenerationOrchestrator
         string consultDraft,
         IReadOnlyList<ClinicalConcept> patientTrajectoryConcepts,
         ConsultGenerationSectionRequest section,
-        string? workflowPackage)
+        string? workflowPackage,
+        IReadOnlyList<ConsultSectionStepDescriptor> steps)
     {
-        var input = new ConsultGenerationActivityInput(consultDraft, patientTrajectoryConcepts, section, WorkflowPackage: workflowPackage);
-        var stepName = ConsultGenerationSectionProseSteps.StandardDraftCreated;
+        var currentStepLabel = steps[0].Label;
 
         try
         {
-            var standardDraft = await context.CallActivityAsync<string>(
-                ConsultGenerationActivityNames.GenerateStandardSectionDraft,
-                input,
-                AgentActivityRetryOptions);
+            string? previousStepOutput = null;
 
-            await context.Entities.CallEntityAsync(
-                entityId,
-                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
-                new ConsultGenerationSectionProseStepUpdate(
-                    section.Id,
-                    section.Name,
-                    ConsultGenerationSectionProseSteps.StandardDraftCreated,
-                    1));
+            for (var i = 0; i < steps.Count; i++)
+            {
+                currentStepLabel = steps[i].Label;
 
-            stepName = ConsultGenerationSectionProseSteps.PatientDraftCreated;
-            var patientDraft = await context.CallActivityAsync<string>(
-                ConsultGenerationActivityNames.UpdateSectionWithPatientInformation,
-                input with { SectionDraft = standardDraft },
-                AgentActivityRetryOptions);
+                previousStepOutput = await context.CallActivityAsync<string>(
+                    ConsultGenerationActivityNames.RunProseStep,
+                    new ConsultProseStepActivityInput(
+                        steps[i].Id,
+                        consultDraft,
+                        patientTrajectoryConcepts,
+                        section,
+                        previousStepOutput,
+                        workflowPackage),
+                    AgentActivityRetryOptions);
 
-            await context.Entities.CallEntityAsync(
-                entityId,
-                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
-                new ConsultGenerationSectionProseStepUpdate(
-                    section.Id,
-                    section.Name,
-                    ConsultGenerationSectionProseSteps.PatientDraftCreated,
-                    2));
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
+                    new ConsultGenerationSectionProseStepUpdate(
+                        section.Id,
+                        section.Name,
+                        steps[i].Id,
+                        i + 1));
+            }
 
-            stepName = ConsultGenerationSectionProseSteps.InstructionsApplied;
-            var finalProse = await context.CallActivityAsync<string>(
-                ConsultGenerationActivityNames.ApplySectionInstructions,
-                input with { SectionDraft = patientDraft },
-                AgentActivityRetryOptions);
-
-            await context.Entities.CallEntityAsync(
-                entityId,
-                nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
-                new ConsultGenerationSectionProseStepUpdate(
-                    section.Id,
-                    section.Name,
-                    ConsultGenerationSectionProseSteps.InstructionsApplied,
-                    3));
-
-            return new SectionGenerationResult(section.Id, section.Name, true, finalProse.Trim(), null);
+            return new SectionGenerationResult(section.Id, section.Name, true, previousStepOutput!.Trim(), null);
         }
         catch (Exception ex)
         {
-            return new SectionGenerationResult(section.Id, section.Name, false, null, $"{stepName} failed: {ex.Message}");
+            return new SectionGenerationResult(section.Id, section.Name, false, null, $"{currentStepLabel} failed: {ex.Message}");
         }
     }
 }
@@ -2283,6 +2317,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.WorkflowPackage ??= input.WorkflowPackage;
         State.EffectiveInputHash ??= input.EffectiveInputHash;
         State.AgentVersion ??= input.AgentVersion;
+        State.SectionSteps ??= input.SectionSteps?.ToList();
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -2378,7 +2413,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         var section = state.GetOrAddSection(input.SectionId, input.SectionName);
         section.ProseStepStatus = input.ProseStepStatus;
         section.CompletedProseStepCount = input.CompletedProseStepCount;
-        section.TotalProseStepCount = ConsultGenerationSectionProseSteps.TotalStepCount;
+        section.TotalProseStepCount = state.SectionSteps?.Count ?? ConsultGenerationSectionProseSteps.TotalStepCount;
         State = state;
     }
 
@@ -2495,7 +2530,8 @@ public sealed record ConsultGenerationOrchestrationInput(
     string AppUserId,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null);
+    string? AgentVersion = null,
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -2503,7 +2539,21 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<ConsultGenerationSectionRequest> Sections,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null);
+    string? AgentVersion = null,
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
+
+/// <summary>
+/// Input of the generic prose-step activity. Carries the step id rather than the step
+/// definition: the workflow package ref is pinned to an immutable version at job start,
+/// so re-resolving it inside the activity is deterministic.
+/// </summary>
+public sealed record ConsultProseStepActivityInput(
+    string StepId,
+    string ConsultDraft,
+    IReadOnlyList<ClinicalConcept> PatientTrajectoryConcepts,
+    ConsultGenerationSectionRequest Section,
+    string? PreviousStepOutput = null,
+    string? WorkflowPackage = null);
 
 public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
 
@@ -2582,6 +2632,7 @@ public sealed class ConsultGenerationJobState
     public string? WorkflowPackage { get; set; }
     public string? EffectiveInputHash { get; set; }
     public string? AgentVersion { get; set; }
+    public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -2685,7 +2736,8 @@ public sealed class ConsultGenerationJobState
             History: History.Count > 0 ? History.AsReadOnly() : null,
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
-            AgentVersion: AgentVersion);
+            AgentVersion: AgentVersion,
+            SectionSteps: SectionSteps);
     }
 }
 
@@ -2712,6 +2764,11 @@ public static class ConsultGenerationJobStatuses
 
 public static class ConsultGenerationActivityNames
 {
+    public const string RunProseStep = "run-prose-step";
+
+    // Legacy per-step activity names: still deployed as shims so activity messages
+    // queued by a pre-milestone-3 orchestrator don't dead-letter. Remove after one
+    // release of drain.
     public const string GenerateStandardSectionDraft = "generate-standard-section-draft";
     public const string UpdateSectionWithPatientInformation = "update-section-with-patient-information";
     public const string ApplySectionInstructions = "apply-section-instructions";
@@ -2745,7 +2802,14 @@ public static class ConsultGenerationAnalysisStatuses
 
 public static class ConsultGenerationSectionProseSteps
 {
+    /// <summary>The single SSE event name for every prose step; the payload carries the step id and label.</summary>
+    public const string EventName = "section-prose-step";
+
+    /// <summary>Fallback step count for pre-milestone-3 job snapshots without a step list.</summary>
     public const int TotalStepCount = 3;
+
+    // Legacy fixed step ids, kept for pre-milestone-3 job snapshots. Remove after one
+    // release of drain.
     public const string StandardDraftCreated = "section-standard-draft-created";
     public const string PatientDraftCreated = "section-patient-draft-created";
     public const string InstructionsApplied = "section-instructions-applied";

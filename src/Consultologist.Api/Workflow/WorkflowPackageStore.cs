@@ -16,7 +16,7 @@ public interface IWorkflowPackageStore
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
     private const string ContainerName = "workflow-packages";
-    public const int SupportedSpecVersion = 2;
+    public const int SupportedSpecVersion = 3;
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -90,7 +90,16 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
             : null;
 
-        var package = new WorkflowPackage(manifest, standards, prompts);
+        // v3 declares its section steps; v2 predates them, so the engine synthesizes
+        // the canonical three-step list (normative in package-format-v3.md); v1 has none.
+        var sectionSteps = manifest.SpecVersion switch
+        {
+            >= 3 => manifest.SectionSteps,
+            2 => WorkflowSectionStepDefaults.V2Synthesized,
+            _ => null
+        };
+
+        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -98,9 +107,9 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     }
 
     /// <summary>
-    /// Downloads and validates the prompt templates of a specVersion-2 package.
+    /// Downloads and validates the prompt templates of a specVersion-2+ package.
     /// Validation failures throw — the engine's fail-loud enforcement point
-    /// (docs/customizable-workflow/package-format-v2.md).
+    /// (docs/customizable-workflow/package-format-v2.md, package-format-v3.md).
     /// </summary>
     private async Task<Dictionary<string, WorkflowPromptTemplate>> LoadPromptsAsync(
         string name,
