@@ -89,6 +89,8 @@ when a specialty needs a structurally different pipeline.
    (templates with declared variables). Format specified in
    [package-format-v2.md](package-format-v2.md) (specVersion 2, Scriban).
 3. **Section prose steps as package-defined ordered lists** (N steps, string→string).
+   Format specified in [package-format-v3.md](package-format-v3.md) (specVersion 3,
+   declarative bindings; compiled fallbacks retire).
 4. **DAG in the package format** — including per-step output contracts (schemas), which
    is what finally severs harness dependence. Only build this when a real specialty
    demands a different shape; by then the registry/versioning/provenance rails exist.
