@@ -5,9 +5,9 @@ using Scriban.Runtime;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Validates a specVersion-2 package per docs/customizable-workflow/package-format-v2.md.
-/// Used at load time by the store (the engine's enforcement point) and by tests; the
-/// same checks apply at publish time.
+/// Validates a specVersion-2 or -3 package per docs/customizable-workflow/
+/// package-format-v2.md and package-format-v3.md. Used at load time by the store
+/// (the engine's enforcement point) and by tests; the same checks apply at publish time.
 /// </summary>
 public static class WorkflowPackageValidator
 {
@@ -30,7 +30,7 @@ public static class WorkflowPackageValidator
         if (manifest.Templating is null
             || !string.Equals(manifest.Templating.Engine, "scriban", StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add("templating.engine must be 'scriban' for specVersion 2.");
+            errors.Add($"templating.engine must be 'scriban' for specVersion {manifest.SpecVersion}.");
         }
         else if (!Version.TryParse(manifest.Templating.EngineVersion, out var engineVersion))
         {
@@ -44,6 +44,7 @@ public static class WorkflowPackageValidator
 
         var prompts = manifest.Prompts ?? new List<WorkflowPromptSpec>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
+        var isV3 = manifest.SpecVersion >= 3;
 
         foreach (var prompt in prompts)
         {
@@ -52,15 +53,20 @@ public static class WorkflowPackageValidator
                 errors.Add($"Duplicate prompt id '{prompt.Id}'.");
             }
 
-            if (!WorkflowPromptContract.RequiredPromptIds.Contains(prompt.Id))
+            if (!isV3 && !WorkflowPromptContract.RequiredPromptIds.Contains(prompt.Id))
             {
                 errors.Add($"Unknown prompt id '{prompt.Id}' (the prompt set is closed in specVersion 2).");
                 continue;
             }
 
-            foreach (var variable in prompt.Variables.Where(v => !WorkflowPromptContract.KnownVariables.Contains(v)))
+            // Analysis prompts keep the closed variable contract in every specVersion;
+            // in v3 the prose prompts' variable names are free-form (covered by bindings).
+            if (!isV3 || WorkflowPromptContract.AnalysisPromptIds.Contains(prompt.Id))
             {
-                errors.Add($"Prompt '{prompt.Id}' declares variable '{variable}' which is not in the variable contract.");
+                foreach (var variable in prompt.Variables.Where(v => !WorkflowPromptContract.KnownVariables.Contains(v)))
+                {
+                    errors.Add($"Prompt '{prompt.Id}' declares variable '{variable}' which is not in the variable contract.");
+                }
             }
 
             if (prompt.Prelude != null && (manifest.Preludes is null || !manifest.Preludes.ContainsKey(prompt.Prelude)))
@@ -77,7 +83,8 @@ public static class WorkflowPackageValidator
             ValidateTemplate(prompt, templateText, errors, warnings);
         }
 
-        foreach (var missing in WorkflowPromptContract.RequiredPromptIds.Except(ids))
+        var requiredIds = isV3 ? WorkflowPromptContract.AnalysisPromptIds : WorkflowPromptContract.RequiredPromptIds;
+        foreach (var missing in requiredIds.Except(ids))
         {
             errors.Add($"Required prompt id '{missing}' is missing from the manifest.");
         }
@@ -90,7 +97,79 @@ public static class WorkflowPackageValidator
             }
         }
 
+        if (isV3)
+        {
+            ValidateSectionSteps(manifest, errors);
+        }
+        else if (manifest.SectionSteps is { Count: > 0 })
+        {
+            errors.Add("sectionSteps requires specVersion 3.");
+        }
+
         return new ValidationResult(errors, warnings);
+    }
+
+    private static void ValidateSectionSteps(WorkflowPackageManifest manifest, List<string> errors)
+    {
+        var steps = manifest.SectionSteps ?? new List<WorkflowSectionStepSpec>();
+        if (steps.Count == 0)
+        {
+            errors.Add("sectionSteps is required and must not be empty in specVersion 3.");
+            return;
+        }
+
+        var promptsById = (manifest.Prompts ?? new List<WorkflowPromptSpec>())
+            .GroupBy(p => p.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var stepIds = new HashSet<string>(StringComparer.Ordinal);
+        var referencedPrompts = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var step = steps[i];
+
+            if (!stepIds.Add(step.StepId))
+            {
+                errors.Add($"Duplicate section step id '{step.StepId}' (give reused prompts an explicit 'id').");
+            }
+
+            if (string.IsNullOrWhiteSpace(step.Label))
+            {
+                errors.Add($"Section step '{step.StepId}' has no label.");
+            }
+
+            foreach (var source in step.Bindings.Values.Where(s => !WorkflowStepBindingSources.All.Contains(s)))
+            {
+                errors.Add($"Section step '{step.StepId}' binds to unknown source '{source}'.");
+            }
+
+            if (i == 0 && step.Bindings.Values.Contains(WorkflowStepBindingSources.PreviousStepOutput))
+            {
+                errors.Add($"Section step '{step.StepId}' is first and cannot bind '{WorkflowStepBindingSources.PreviousStepOutput}'.");
+            }
+
+            if (!promptsById.TryGetValue(step.Prompt, out var prompt))
+            {
+                errors.Add($"Section step '{step.StepId}' references undeclared prompt '{step.Prompt}'.");
+                continue;
+            }
+
+            referencedPrompts.Add(step.Prompt);
+
+            var declared = new HashSet<string>(prompt.Variables, StringComparer.Ordinal);
+            if (!declared.SetEquals(step.Bindings.Keys))
+            {
+                errors.Add(
+                    $"Section step '{step.StepId}' bindings [{string.Join(", ", step.Bindings.Keys.Order(StringComparer.Ordinal))}] " +
+                    $"must exactly match prompt '{step.Prompt}' variables [{string.Join(", ", prompt.Variables.Order(StringComparer.Ordinal))}].");
+            }
+        }
+
+        foreach (var orphan in promptsById.Keys
+                     .Where(id => !WorkflowPromptContract.AnalysisPromptIds.Contains(id) && !referencedPrompts.Contains(id)))
+        {
+            errors.Add($"Prompt '{orphan}' is neither an analysis prompt nor referenced by any section step.");
+        }
     }
 
     private static void ValidateTemplate(

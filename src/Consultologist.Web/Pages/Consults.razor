@@ -603,13 +603,12 @@
           totalAnalysisStageCount = stage?.TotalStageCount ?? totalAnalysisStageCount;
           break;
 
-        case "section-standard-draft-created":
-        case "section-patient-draft-created":
-        case "section-instructions-applied":
+        case "section-prose-step":
           var sectionStep = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(json, SseJsonOptions);
           if (sectionStep != null)
           {
-            aiProgressNotice = $"{GetSectionProseStepProgressLabel(sectionStep.Step)}: {sectionStep.SectionName}";
+            var stepLabel = string.IsNullOrWhiteSpace(sectionStep.Label) ? "Generating section" : sectionStep.Label;
+            aiProgressNotice = $"{stepLabel}: {sectionStep.SectionName}";
           }
           break;
 
@@ -740,17 +739,6 @@
     6 => "Section generation",
     _ => $"Stage {stageIndex}"
   };
-
-  private static string GetSectionProseStepProgressLabel(string step)
-  {
-    return step switch
-    {
-      "section-standard-draft-created" => "Drafting section",
-      "section-patient-draft-created" => "Applying patient information",
-      "section-instructions-applied" => "Applying section instructions",
-      _ => "Generating section"
-    };
-  }
 
   private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
   {
@@ -988,6 +976,7 @@
     string SectionId,
     string SectionName,
     string Step,
+    string Label,
     string Message,
     int CompletedStepCount,
     int TotalStepCount);

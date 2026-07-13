@@ -55,7 +55,14 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<JobHistoryEvent>? History = null,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null);
+    string? AgentVersion = null,
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
+
+/// <summary>
+/// The identity and display label of one per-section prose step, snapshotted from the
+/// job's workflow package at start.
+/// </summary>
+public sealed record ConsultSectionStepDescriptor(string Id, string Label);
 
 public record JobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 

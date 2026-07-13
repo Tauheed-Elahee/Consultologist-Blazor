@@ -8,7 +8,8 @@ public sealed record WorkflowPackageManifest(
     int SpecVersion,
     WorkflowTemplatingSpec? Templating = null,
     Dictionary<string, string>? Preludes = null,
-    List<WorkflowPromptSpec>? Prompts = null);
+    List<WorkflowPromptSpec>? Prompts = null,
+    List<WorkflowSectionStepSpec>? SectionSteps = null);
 
 public sealed record WorkflowTemplatingSpec(
     string Engine,
@@ -20,7 +21,21 @@ public sealed record WorkflowPromptSpec(
     List<string> Variables,
     string? Prelude = null);
 
-/// <summary>A prompt template loaded from a specVersion-2 package, ready to render.</summary>
+/// <summary>
+/// One ordered step of the per-section prose pipeline (specVersion 3): renders one
+/// prompt template with each declared variable bound to an engine binding source.
+/// See docs/customizable-workflow/package-format-v3.md.
+/// </summary>
+public sealed record WorkflowSectionStepSpec(
+    string Prompt,
+    string Label,
+    Dictionary<string, string> Bindings,
+    string? Id = null)
+{
+    public string StepId => Id ?? Prompt;
+}
+
+/// <summary>A prompt template loaded from a specVersion-2+ package, ready to render.</summary>
 public sealed record WorkflowPromptTemplate(
     string Id,
     string TemplateText,
@@ -30,7 +45,8 @@ public sealed record WorkflowPromptTemplate(
 public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
     string StandardsMarkdown,
-    IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null)
+    IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
+    IReadOnlyList<WorkflowSectionStepSpec>? SectionSteps = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 
