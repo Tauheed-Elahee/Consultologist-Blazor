@@ -355,15 +355,15 @@ public class SectionProseStepEventTests
     }
 
     [Fact]
-    public void Candidates_MapLegacySnapshotsWithoutStepLists()
+    public void Candidates_SkipLegacySnapshotsWithoutStepLists()
     {
+        // Pre-milestone-3 snapshots regenerate no prose candidates; their events were
+        // materialized while they ran and replay from the event store.
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(
                 Response(sectionSteps: null, completedStepCount: 2, totalStepCount: 3))
             .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
             .ToList();
 
-        Assert.Equal(2, candidates.Count);
-        Assert.Equal($"section-prose:hpi:{ConsultGenerationSectionProseSteps.StandardDraftCreated}", candidates[0].EventKey);
-        Assert.Equal($"section-prose:hpi:{ConsultGenerationSectionProseSteps.PatientDraftCreated}", candidates[1].EventKey);
+        Assert.Empty(candidates);
     }
 }
