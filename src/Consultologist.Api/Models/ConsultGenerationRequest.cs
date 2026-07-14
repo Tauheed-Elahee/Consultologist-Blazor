@@ -52,13 +52,48 @@ public record ConsultGenerationJobResponse(
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null);
+    string? ConceptAgentVersion = null,
+    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
+    IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null);
 
 /// <summary>
 /// The identity and display label of one per-section prose step, snapshotted from the
 /// job's workflow package at start.
 /// </summary>
 public sealed record ConsultSectionStepDescriptor(string Id, string Label);
+
+/// <summary>
+/// One node of the job's workflow DAG, snapshotted from the pinned package at start —
+/// the orchestrator's whole worldview of the graph (Durable replay never re-reads the
+/// registry for shape).
+/// </summary>
+public sealed record ConsultNodeDescriptor(
+    string Id,
+    string Kind,
+    string Label,
+    string? PromptId = null,
+    IReadOnlyDictionary<string, ConsultNodeBindingDescriptor>? Bindings = null,
+    bool HasJsonOutput = false,
+    string? FailIfEmpty = null,
+    IReadOnlyList<ConsultSectionStepDescriptor>? Steps = null,
+    string? ConceptsNodeId = null,
+    string? ConceptSource = null);
+
+public sealed record ConsultNodeBindingDescriptor(string From, string? As = null);
+
+/// <summary>
+/// Per-node run status and provenance exposed on the job response — the hashes form
+/// the step-level verification chain (dag-improvements #6). Concepts stay off the
+/// wire; they live in entity state.
+/// </summary>
+public sealed record ConsultGenerationNodeStatusResponse(
+    string NodeId,
+    string Label,
+    string Status,
+    string? InputHash = null,
+    string? OutputHash = null,
+    DateTimeOffset? CompletedAtUtc = null,
+    string? Error = null);
 
 public record JobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
