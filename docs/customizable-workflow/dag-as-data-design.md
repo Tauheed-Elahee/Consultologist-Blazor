@@ -1,5 +1,26 @@
 # DAG-as-Data Design (Milestone 4, Phases B–D)
 
+> **Status 2026-07-14 — gate lifted by decision; executing.** The normative format now
+> lives in [package-format-v4.md](package-format-v4.md); this document remains the
+> design record. Five reconciliations against post-phase-A reality supersede details
+> below:
+> **R1** — "sends with the node's schema" is dead: Foundry rejects request-level text
+> options (spike #39). `output.schema` selects the attested structured-output agent
+> (`concept-extraction`) and the `ConceptOutputContract` deserializer; the engine sends
+> no schema per request. A second output shape means a second structured agent.
+> **R2** — the activity deserializes (retryable at the activity boundary), the
+> orchestrator renders: deserialized concepts ride the recorded activity result, so
+> orchestrator-side binding rendering is pure over recorded data — replay-safe.
+> **R3** — concept `source:` stamps survive via an engine-pinned well-known map (the
+> four canonical node ids → their legacy sources; custom ids stamp the node id) —
+> load-bearing for byte parity of the trajectory-context rendering.
+> **R4** — v4 map bodies *lower* to the v3 section-step shape, so `run-prose-step` and
+> `ProseStepVariableBuilder` execute them unchanged; the store returns both `Nodes`
+> and `SectionSteps` for every spec version ≥ 2. New closure: map steps bind at most
+> one upstream node, rendered `concept-context`.
+> **R5** — the B1 job-start guard is removed in B2 (not phase D), since phase C flips
+> the pin to v4 before D.
+
 Recorded 2026-07-13 at implementation resolution, then **shelved by decision**: the
 roadmap's gate ("only build DAG-as-data when a real specialty demands a different
 pipeline shape", workflow-packages.md) holds. Milestone 4's executing slice is phases

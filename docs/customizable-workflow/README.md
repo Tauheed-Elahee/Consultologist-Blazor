@@ -44,9 +44,12 @@ yet; these notes are the input to a future milestone plan.
 - [decoupling-roadmap.md](decoupling-roadmap.md) — post-milestone-2 forecast: phase
   plan for milestones 3–4, the refactoring bill, risks, and the precise end-state
   boundary of the "generic engine" claim
+- [package-format-v4.md](package-format-v4.md) — normative specVersion-4 format:
+  the node DAG (implicit edges, one map node), schema file refs welded to attested
+  agents, per-node failure policy, the v4.0 closures
 - [dag-as-data-design.md](dag-as-data-design.md) — milestone 4 phases B–D at
-  implementation resolution (specVersion-4 nodes/schemas, interpreter, migration),
-  shelved behind the roadmap gate; phases 0/A (file split, structured outputs) execute
+  implementation resolution (specVersion-4 nodes/schemas, interpreter, migration);
+  gate lifted 2026-07-14, executing
 
 ## Key terms
 

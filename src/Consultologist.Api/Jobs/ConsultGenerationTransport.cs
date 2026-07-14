@@ -181,6 +181,14 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
+            // Guard-then-implement: the DAG interpreter arrives with #42; until then,
+            // specVersion-4 packages validate and load but cannot run jobs.
+            if (package.Manifest.SpecVersion >= 4)
+            {
+                _logger.LogWarning("Workflow package {Package} is specVersion {SpecVersion}; the engine does not yet interpret specVersion 4.", package.Ref, package.Manifest.SpecVersion);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} is specVersion {package.Manifest.SpecVersion}; the engine does not yet interpret specVersion 4 packages." }, cancellationToken);
+            }
+
             var resolvedPackageRef = package.Ref;
             var sectionSteps = package.SectionSteps
                 .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))

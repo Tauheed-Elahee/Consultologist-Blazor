@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Consultologist.Api.Workflow;
@@ -9,7 +11,9 @@ public sealed record WorkflowPackageManifest(
     WorkflowTemplatingSpec? Templating = null,
     Dictionary<string, string>? Preludes = null,
     List<WorkflowPromptSpec>? Prompts = null,
-    List<WorkflowSectionStepSpec>? SectionSteps = null);
+    List<WorkflowSectionStepSpec>? SectionSteps = null,
+    Dictionary<string, string>? Schemas = null,
+    List<WorkflowNodeSpec>? Nodes = null);
 
 public sealed record WorkflowTemplatingSpec(
     string Engine,
@@ -35,6 +39,96 @@ public sealed record WorkflowSectionStepSpec(
     public string StepId => Id ?? Prompt;
 }
 
+/// <summary>
+/// One node of the specVersion-4 workflow DAG. Edges are implicit in the bindings'
+/// node: references. See docs/customizable-workflow/package-format-v4.md.
+/// </summary>
+public sealed record WorkflowNodeSpec(
+    string Id,
+    string Kind,
+    string Label,
+    string? Prompt = null,
+    Dictionary<string, WorkflowBindingValue>? Bindings = null,
+    WorkflowNodeOutputSpec? Output = null,
+    string? Over = null,
+    List<WorkflowMapStepSpec>? Steps = null);
+
+public sealed record WorkflowNodeOutputSpec(
+    string Schema,
+    string? FailIfEmpty = null);
+
+public sealed record WorkflowMapStepSpec(
+    string Prompt,
+    string Label,
+    Dictionary<string, WorkflowBindingValue> Bindings,
+    string? Id = null)
+{
+    public string StepId => Id ?? Prompt;
+}
+
+/// <summary>
+/// A binding value in a specVersion-4 manifest: either a plain source string
+/// ("input:consult_draft") or an object selecting a renderer
+/// ({ "from": "node:x", "as": "concept-context" }).
+/// </summary>
+[JsonConverter(typeof(WorkflowBindingValueConverter))]
+public sealed record WorkflowBindingValue(string From, string? As = null);
+
+public sealed class WorkflowBindingValueConverter : JsonConverter<WorkflowBindingValue>
+{
+    public override WorkflowBindingValue Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return new WorkflowBindingValue(reader.GetString()!);
+        }
+
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException("A binding value must be a source string or a { from, as } object.");
+        }
+
+        string? from = null;
+        string? renderAs = null;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            var property = reader.GetString();
+            reader.Read();
+
+            switch (property?.ToLowerInvariant())
+            {
+                case "from":
+                    from = reader.GetString();
+                    break;
+                case "as":
+                    renderAs = reader.GetString();
+                    break;
+                default:
+                    throw new JsonException($"Unknown binding value property '{property}' (expected 'from' or 'as').");
+            }
+        }
+
+        return from is null
+            ? throw new JsonException("A binding value object requires 'from'.")
+            : new WorkflowBindingValue(from, renderAs);
+    }
+
+    public override void Write(Utf8JsonWriter writer, WorkflowBindingValue value, JsonSerializerOptions options)
+    {
+        if (value.As is null)
+        {
+            writer.WriteStringValue(value.From);
+            return;
+        }
+
+        writer.WriteStartObject();
+        writer.WriteString("from", value.From);
+        writer.WriteString("as", value.As);
+        writer.WriteEndObject();
+    }
+}
+
 /// <summary>A prompt template loaded from a specVersion-2+ package, ready to render.</summary>
 public sealed record WorkflowPromptTemplate(
     string Id,
@@ -46,7 +140,8 @@ public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
     string StandardsMarkdown,
     IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
-    IReadOnlyList<WorkflowSectionStepSpec>? SectionSteps = null)
+    IReadOnlyList<WorkflowSectionStepSpec>? SectionSteps = null,
+    IReadOnlyList<WorkflowNodeSpec>? Nodes = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 
