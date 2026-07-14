@@ -47,6 +47,10 @@ yet; these notes are the input to a future milestone plan.
 - [package-format-v4.md](package-format-v4.md) — normative specVersion-4 format:
   the node DAG (implicit edges, one map node), schema file refs welded to attested
   agents, per-node failure policy, the v4.0 closures
+- [package-format-v5-design.md](package-format-v5-design.md) — converged design
+  (2026-07-15, not implemented): fork-everything with parent lineage, data/
+  collections replacing the standards straddle, one node kind with forEach,
+  per-item provenance
 - [in-app-editing.md](in-app-editing.md) — design (2026-07-15, not yet
   implemented): the Templates page as a package editor publishing immutable
   per-account versions, the acct-* access rule, and the publish pipeline
