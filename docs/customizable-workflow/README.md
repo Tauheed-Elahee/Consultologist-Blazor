@@ -47,6 +47,9 @@ yet; these notes are the input to a future milestone plan.
 - [package-format-v4.md](package-format-v4.md) — normative specVersion-4 format:
   the node DAG (implicit edges, one map node), schema file refs welded to attested
   agents, per-node failure policy, the v4.0 closures
+- [in-app-editing.md](in-app-editing.md) — design (2026-07-15, not yet
+  implemented): the Templates page as a package editor publishing immutable
+  per-account versions, the acct-* access rule, and the publish pipeline
 - [output-contract-catalog.md](output-contract-catalog.md) — next-slice design
   (2026-07-15, not yet implemented): schema-keyed agent selection as engine
   configuration, the one-kind node calculus, derived DAG visualization, and the plan
