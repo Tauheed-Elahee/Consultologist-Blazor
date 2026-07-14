@@ -1096,7 +1096,16 @@ public sealed class ConsultGenerationJobs
         var candidates = new List<ConsultGenerationJobEventCandidate>();
 
         AddEventCandidate(candidates, "snapshot", "snapshot", response);
-        AddAnalysisEventCandidates(candidates, response);
+        if (response.NodeOutputs != null)
+        {
+            AddNodeEventCandidates(candidates, response);
+        }
+        else
+        {
+            // Pre-DAG (SchemaVersion 2) snapshots keep replaying their stage events.
+            AddAnalysisEventCandidates(candidates, response);
+        }
+
         AddSectionProseStepEventCandidates(candidates, response);
 
         foreach (var generatedSection in response.GeneratedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
@@ -1162,6 +1171,65 @@ public sealed class ConsultGenerationJobs
             "error",
             $"error:{stage}",
             new ConsultGenerationJobStreamError(response.JobId, error, stage));
+    }
+
+    private static void AddNodeEventCandidates(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        ConsultGenerationJobResponse response)
+    {
+        // Failures ride the existing error-event path via the '-failed' status suffix.
+        if (IsAnalysisFailureStatus(response.AnalysisStatus ?? string.Empty))
+        {
+            AddEventCandidate(
+                candidates,
+                "error",
+                $"error:{response.AnalysisStatus}",
+                new ConsultGenerationJobStreamError(
+                    response.JobId,
+                    response.AnalysisError ?? "Consult generation failed.",
+                    response.AnalysisStatus));
+        }
+
+        if (response.Nodes == null || response.NodeOutputs == null)
+        {
+            return;
+        }
+
+        var totalNodeCount = response.Nodes.Count;
+        var emitted = 0;
+
+        foreach (var node in response.Nodes)
+        {
+            if (!response.NodeOutputs.TryGetValue(node.Id, out var output))
+            {
+                continue;
+            }
+
+            // A completed node emits its completion; the running map node emits its
+            // start (the "Generating sections" moment). Skipped/failed nodes surface
+            // through the error event and job history instead.
+            var isCompleted = output.Status == ConsultGenerationNodeStatuses.Completed;
+            var isRunningMap = output.Status == ConsultGenerationNodeStatuses.Running
+                && node.Kind == WorkflowNodeKinds.Map;
+
+            if (!isCompleted && !isRunningMap)
+            {
+                continue;
+            }
+
+            emitted++;
+            AddEventCandidate(
+                candidates,
+                ConsultGenerationNodeEvents.EventName,
+                $"node:{node.Id}",
+                new ConsultGenerationJobNodeCompletedEvent(
+                    response.JobId,
+                    node.Id,
+                    node.Label,
+                    isCompleted ? $"{node.Label} completed." : $"{node.Label} started.",
+                    emitted,
+                    totalNodeCount));
+        }
     }
 
     private static void AddAnalysisEventCandidates(
@@ -1404,6 +1472,20 @@ public sealed record ConsultGenerationJobStreamError(
     string JobId,
     string Error,
     string? Stage = null);
+
+public static class ConsultGenerationNodeEvents
+{
+    /// <summary>The single SSE event name for every DAG node; the payload carries the node id and label.</summary>
+    public const string EventName = "node-completed";
+}
+
+public sealed record ConsultGenerationJobNodeCompletedEvent(
+    string JobId,
+    string NodeId,
+    string Label,
+    string Message,
+    int CompletedNodeCount,
+    int TotalNodeCount);
 
 public sealed record ConsultGenerationJobStageEvent(
     string JobId,
