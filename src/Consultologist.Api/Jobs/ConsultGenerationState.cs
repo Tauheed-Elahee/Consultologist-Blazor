@@ -504,6 +504,7 @@ public static class ConsultGenerationJobStatuses
 public static class ConsultGenerationActivityNames
 {
     public const string RunProseStep = "run-prose-step";
+    public const string RunPromptNode = "run-prompt-node";
 }
 
 public static class ConsultGenerationAnalysisStatuses

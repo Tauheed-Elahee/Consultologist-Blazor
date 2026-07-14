@@ -27,7 +27,17 @@ internal static class ConsultGenerationProvenance
             },
             CanonicalJsonOptions);
 
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
-        return Convert.ToHexStringLower(hash);
+        return Sha256Hex(canonical);
+    }
+
+    /// <summary>
+    /// Lowercase-hex SHA-256 of the UTF-8 text — the per-node provenance hash: a node's
+    /// InputHash covers the exact rendered prompt the agent receives (template +
+    /// prelude + variables), its OutputHash the raw assistant text, so two runs can be
+    /// compared node by node (dag-improvements #6).
+    /// </summary>
+    public static string Sha256Hex(string text)
+    {
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     }
 }

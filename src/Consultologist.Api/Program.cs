@@ -81,5 +81,6 @@ builder.Services.AddScoped<IdentifyProblemActivity>();
 builder.Services.AddScoped<CreateTypicalTrajectoryActivity>();
 builder.Services.AddScoped<CreatePatientTrajectoryActivity>();
 builder.Services.AddScoped<RunProseStepActivity>();
+builder.Services.AddScoped<RunPromptNodeActivity>();
 
 builder.Build().Run();
