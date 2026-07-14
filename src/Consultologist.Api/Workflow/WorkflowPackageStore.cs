@@ -16,7 +16,7 @@ public interface IWorkflowPackageStore
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
     private const string ContainerName = "workflow-packages";
-    public const int SupportedSpecVersion = 3;
+    public const int SupportedSpecVersion = 4;
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -90,16 +90,27 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
             : null;
 
-        // v3 declares its section steps; v2 predates them, so the engine synthesizes
-        // the canonical three-step list (normative in package-format-v3.md); v1 has none.
+        // Every spec version resolves to one node DAG and one section-step list, so a
+        // single interpreter path serves them all: v4 declares nodes natively and its
+        // map body lowers to section steps for run-prose-step; v3 declares steps and
+        // synthesizes the canonical DAG; v2 synthesizes both; v1 has neither.
         var sectionSteps = manifest.SpecVersion switch
         {
-            >= 3 => manifest.SectionSteps,
+            >= 4 => WorkflowNodeDefaults.LowerMapSteps(
+                manifest.Nodes!.Single(n => string.Equals(n.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))),
+            3 => manifest.SectionSteps,
             2 => WorkflowSectionStepDefaults.V2Synthesized,
             _ => null
         };
 
-        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps);
+        var nodes = manifest.SpecVersion switch
+        {
+            >= 4 => manifest.Nodes,
+            >= 2 => WorkflowNodeDefaults.V3SynthesizedDag(sectionSteps!),
+            _ => null
+        };
+
+        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -120,6 +131,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         var paths = (manifest.Prompts ?? new List<WorkflowPromptSpec>()).Select(p => p.File)
             .Concat((manifest.Preludes ?? new Dictionary<string, string>()).Values)
+            .Concat((manifest.Schemas ?? new Dictionary<string, string>()).Values)
             .Distinct(StringComparer.Ordinal);
 
         foreach (var path in paths)

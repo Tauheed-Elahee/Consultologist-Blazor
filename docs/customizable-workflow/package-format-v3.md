@@ -1,5 +1,9 @@
 # Workflow Package Format — specVersion 3 (Section Steps)
 
+> Superseded for new packages by [package-format-v4.md](package-format-v4.md)
+> (milestone 4, DAG-as-data). v3 packages remain fully valid; v4 defines the DAG the
+> engine synthesizes for them.
+
 Normative specification for `specVersion: 3` packages, authored for milestone 3
 (issue #5). v3 is a strict superset of v2: it adds the **section step sequence** to the
 package — the per-section prose pipeline becomes N ordered string→string steps declared

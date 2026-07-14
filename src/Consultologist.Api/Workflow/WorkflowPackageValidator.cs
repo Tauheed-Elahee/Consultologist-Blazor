@@ -1,12 +1,14 @@
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Scriban;
 using Scriban.Runtime;
 
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Validates a specVersion-2 or -3 package per docs/customizable-workflow/
-/// package-format-v2.md and package-format-v3.md. Used at load time by the store
+/// Validates a specVersion-2, -3, or -4 package per docs/customizable-workflow/
+/// package-format-v2.md, -v3.md, and -v4.md. Used at load time by the store
 /// (the engine's enforcement point) and by tests; the same checks apply at publish time.
 /// </summary>
 public static class WorkflowPackageValidator
@@ -45,6 +47,7 @@ public static class WorkflowPackageValidator
         var prompts = manifest.Prompts ?? new List<WorkflowPromptSpec>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var isV3 = manifest.SpecVersion >= 3;
+        var isV4 = manifest.SpecVersion >= 4;
 
         foreach (var prompt in prompts)
         {
@@ -59,9 +62,10 @@ public static class WorkflowPackageValidator
                 continue;
             }
 
-            // Analysis prompts keep the closed variable contract in every specVersion;
-            // in v3 the prose prompts' variable names are free-form (covered by bindings).
-            if (!isV3 || WorkflowPromptContract.AnalysisPromptIds.Contains(prompt.Id))
+            // v2 keeps the closed variable contract for every prompt; v3 keeps it for
+            // the analysis prompts only; in v4 the analysis closure lifts — variable
+            // names are free-form everywhere, covered by per-node binding rules.
+            if (!isV3 || (!isV4 && WorkflowPromptContract.AnalysisPromptIds.Contains(prompt.Id)))
             {
                 foreach (var variable in prompt.Variables.Where(v => !WorkflowPromptContract.KnownVariables.Contains(v)))
                 {
@@ -83,7 +87,10 @@ public static class WorkflowPackageValidator
             ValidateTemplate(prompt, templateText, errors, warnings);
         }
 
-        var requiredIds = isV3 ? WorkflowPromptContract.AnalysisPromptIds : WorkflowPromptContract.RequiredPromptIds;
+        // v4 has no required prompt ids — node references define what must exist.
+        var requiredIds = isV4
+            ? Enumerable.Empty<string>()
+            : isV3 ? WorkflowPromptContract.AnalysisPromptIds : WorkflowPromptContract.RequiredPromptIds;
         foreach (var missing in requiredIds.Except(ids))
         {
             errors.Add($"Required prompt id '{missing}' is missing from the manifest.");
@@ -97,16 +104,368 @@ public static class WorkflowPackageValidator
             }
         }
 
-        if (isV3)
+        if (isV4)
         {
-            ValidateSectionSteps(manifest, errors);
+            if (manifest.SectionSteps is { Count: > 0 })
+            {
+                errors.Add("sectionSteps was replaced by nodes in specVersion 4.");
+            }
+
+            ValidateNodes(manifest, files, errors);
         }
-        else if (manifest.SectionSteps is { Count: > 0 })
+        else
         {
-            errors.Add("sectionSteps requires specVersion 3.");
+            if (manifest.Nodes is { Count: > 0 })
+            {
+                errors.Add("nodes requires specVersion 4.");
+            }
+
+            if (isV3)
+            {
+                ValidateSectionSteps(manifest, errors);
+            }
+            else if (manifest.SectionSteps is { Count: > 0 })
+            {
+                errors.Add("sectionSteps requires specVersion 3.");
+            }
         }
 
         return new ValidationResult(errors, warnings);
+    }
+
+    private static void ValidateNodes(
+        WorkflowPackageManifest manifest,
+        IReadOnlyDictionary<string, string> files,
+        List<string> errors)
+    {
+        var nodes = manifest.Nodes ?? new List<WorkflowNodeSpec>();
+        if (nodes.Count == 0)
+        {
+            errors.Add("nodes is required and must not be empty in specVersion 4.");
+            return;
+        }
+
+        var promptsById = (manifest.Prompts ?? new List<WorkflowPromptSpec>())
+            .GroupBy(p => p.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var nodesById = new Dictionary<string, WorkflowNodeSpec>(StringComparer.Ordinal);
+        var promptReferenceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var edges = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        foreach (var node in nodes)
+        {
+            if (!nodesById.TryAdd(node.Id, node))
+            {
+                errors.Add($"Duplicate node id '{node.Id}'.");
+            }
+        }
+
+        var conceptListNodeIds = nodes
+            .Where(n => n.Output != null)
+            .Select(n => n.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var mapNodes = nodes.Where(n => string.Equals(n.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal)).ToList();
+
+        if (mapNodes.Count != 1)
+        {
+            errors.Add($"specVersion 4.0 requires exactly one map node (found {mapNodes.Count}).");
+        }
+
+        void CheckBinding(string nodeId, string variable, WorkflowBindingValue binding, bool inMapStep, bool isFirstMapStep)
+        {
+            if (!WorkflowNodeBindingSources.TryParse(binding.From, out var source, out var parseError))
+            {
+                errors.Add($"Node '{nodeId}' binds '{variable}' to {parseError}.");
+                return;
+            }
+
+            switch (source)
+            {
+                case WorkflowNodeBindingSource.Input { Name: "sections" }:
+                    errors.Add($"Node '{nodeId}' binds '{variable}' to 'input:sections', which is only valid as a map node's 'over'.");
+                    return;
+                case WorkflowNodeBindingSource.Item { Field: "id" }:
+                    errors.Add($"Node '{nodeId}' binds '{variable}' to 'item:id', which is reserved and not yet bindable in specVersion 4.0.");
+                    return;
+                case WorkflowNodeBindingSource.Item when !inMapStep:
+                case WorkflowNodeBindingSource.PreviousStepOutput when !inMapStep:
+                    errors.Add($"Node '{nodeId}' binds '{variable}' to '{binding.From}', which is only valid inside map steps.");
+                    return;
+                case WorkflowNodeBindingSource.PreviousStepOutput when isFirstMapStep:
+                    errors.Add($"Node '{nodeId}' first map step cannot bind '{WorkflowNodeBindingSources.PreviousStepOutput}'.");
+                    return;
+                case WorkflowNodeBindingSource.NodeOutput target:
+                    if (!nodesById.TryGetValue(target.NodeId, out var targetNode))
+                    {
+                        errors.Add($"Node '{nodeId}' binds '{variable}' to unknown node '{target.NodeId}'.");
+                        return;
+                    }
+
+                    if (string.Equals(targetNode.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))
+                    {
+                        errors.Add($"Node '{nodeId}' binds '{variable}' to map node '{target.NodeId}', whose aggregate output is not bindable.");
+                        return;
+                    }
+
+                    if (!inMapStep)
+                    {
+                        edges.TryAdd(nodeId, new HashSet<string>(StringComparer.Ordinal));
+                        edges[nodeId].Add(target.NodeId);
+                    }
+
+                    var rendersConcepts = binding.As != null || conceptListNodeIds.Contains(target.NodeId);
+                    if (binding.As != null && !WorkflowConceptRenderers.All.Contains(binding.As))
+                    {
+                        errors.Add($"Node '{nodeId}' binding '{variable}' uses unknown renderer '{binding.As}' (expected 'concept-bullets' or 'concept-context').");
+                    }
+                    else if (rendersConcepts && !conceptListNodeIds.Contains(target.NodeId))
+                    {
+                        errors.Add($"Node '{nodeId}' binding '{variable}' renders node '{target.NodeId}' with '{binding.As}' but '{target.NodeId}' declares no concept-list output.");
+                    }
+
+                    return;
+                default:
+                    if (binding.As != null)
+                    {
+                        errors.Add($"Node '{nodeId}' binding '{variable}' declares renderer '{binding.As}' on non-node source '{binding.From}'.");
+                    }
+
+                    return;
+            }
+        }
+
+        void CheckBindingsMatchPrompt(string ownerId, string promptId, IReadOnlyDictionary<string, WorkflowBindingValue> bindings)
+        {
+            if (!promptsById.TryGetValue(promptId, out var prompt))
+            {
+                errors.Add($"Node '{ownerId}' references undeclared prompt '{promptId}'.");
+                return;
+            }
+
+            promptReferenceCounts[promptId] = promptReferenceCounts.GetValueOrDefault(promptId) + 1;
+
+            var declared = new HashSet<string>(prompt.Variables, StringComparer.Ordinal);
+            if (!declared.SetEquals(bindings.Keys))
+            {
+                errors.Add(
+                    $"Node '{ownerId}' bindings [{string.Join(", ", bindings.Keys.Order(StringComparer.Ordinal))}] " +
+                    $"must exactly match prompt '{promptId}' variables [{string.Join(", ", prompt.Variables.Order(StringComparer.Ordinal))}].");
+            }
+        }
+
+        foreach (var node in nodes)
+        {
+            if (string.IsNullOrWhiteSpace(node.Label))
+            {
+                errors.Add($"Node '{node.Id}' has no label.");
+            }
+
+            switch (node.Kind)
+            {
+                case WorkflowNodeKinds.Prompt:
+                    if (node.Prompt is null)
+                    {
+                        errors.Add($"Node '{node.Id}' is a prompt node but declares no prompt.");
+                        break;
+                    }
+
+                    var bindings = node.Bindings ?? new Dictionary<string, WorkflowBindingValue>();
+                    CheckBindingsMatchPrompt(node.Id, node.Prompt, bindings);
+                    foreach (var (variable, binding) in bindings)
+                    {
+                        CheckBinding(node.Id, variable, binding, inMapStep: false, isFirstMapStep: false);
+                    }
+
+                    ValidateNodeOutput(node, manifest, files, errors);
+                    break;
+
+                case WorkflowNodeKinds.Map:
+                    ValidateMapNode(node, errors, CheckBinding, CheckBindingsMatchPrompt);
+                    break;
+
+                default:
+                    errors.Add($"Node '{node.Id}' has unknown kind '{node.Kind}' (expected 'prompt' or 'map').");
+                    break;
+            }
+        }
+
+        foreach (var orphan in promptsById.Keys.Where(id => promptReferenceCounts.GetValueOrDefault(id) == 0))
+        {
+            errors.Add($"Prompt '{orphan}' is not referenced by any node.");
+        }
+
+        foreach (var (promptId, count) in promptReferenceCounts.Where(pair => pair.Value > 1))
+        {
+            errors.Add($"Prompt '{promptId}' is referenced by more than one node.");
+        }
+
+        ValidateAcyclic(nodes, edges, errors);
+    }
+
+    private static void ValidateMapNode(
+        WorkflowNodeSpec node,
+        List<string> errors,
+        Action<string, string, WorkflowBindingValue, bool, bool> checkBinding,
+        Action<string, string, IReadOnlyDictionary<string, WorkflowBindingValue>> checkBindingsMatchPrompt)
+    {
+        if (!string.Equals(node.Over, WorkflowNodeBindingSources.InputSections, StringComparison.Ordinal))
+        {
+            errors.Add($"Map node '{node.Id}' 'over' must be 'input:sections' in specVersion 4.0.");
+        }
+
+        var steps = node.Steps ?? new List<WorkflowMapStepSpec>();
+        if (steps.Count == 0)
+        {
+            errors.Add($"Map node '{node.Id}' has no steps.");
+            return;
+        }
+
+        var stepIds = new HashSet<string>(StringComparer.Ordinal);
+        var upstreamNodes = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var step = steps[i];
+
+            if (!stepIds.Add(step.StepId))
+            {
+                errors.Add($"Duplicate section step id '{step.StepId}' (give reused prompts an explicit 'id').");
+            }
+
+            if (string.IsNullOrWhiteSpace(step.Label))
+            {
+                errors.Add($"Section step '{step.StepId}' has no label.");
+            }
+
+            checkBindingsMatchPrompt(node.Id, step.Prompt, step.Bindings);
+
+            foreach (var (variable, binding) in step.Bindings)
+            {
+                checkBinding(node.Id, variable, binding, true, i == 0);
+
+                if (binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+                {
+                    upstreamNodes.Add(binding.From[WorkflowNodeBindingSources.NodePrefix.Length..]);
+
+                    if (!string.Equals(binding.As, WorkflowConceptRenderers.ConceptContext, StringComparison.Ordinal))
+                    {
+                        errors.Add($"Map steps may bind at most one upstream node, rendered as 'concept-context', in specVersion 4.0.");
+                    }
+                }
+            }
+        }
+
+        if (upstreamNodes.Count > 1)
+        {
+            errors.Add($"Map steps may bind at most one upstream node, rendered as 'concept-context', in specVersion 4.0.");
+        }
+    }
+
+    private static void ValidateNodeOutput(
+        WorkflowNodeSpec node,
+        WorkflowPackageManifest manifest,
+        IReadOnlyDictionary<string, string> files,
+        List<string> errors)
+    {
+        if (node.Output is null)
+        {
+            return;
+        }
+
+        if (manifest.Schemas is null || !manifest.Schemas.TryGetValue(node.Output.Schema, out var schemaPath))
+        {
+            errors.Add($"Node '{node.Id}' output schema '{node.Output.Schema}' is not declared in schemas.");
+            return;
+        }
+
+        if (!files.TryGetValue(schemaPath, out var schemaText))
+        {
+            errors.Add($"Schema '{node.Output.Schema}' file '{schemaPath}' is missing from the package.");
+            return;
+        }
+
+        JsonNode? schema;
+        try
+        {
+            schema = JsonNode.Parse(schemaText);
+        }
+        catch (JsonException ex)
+        {
+            errors.Add($"Schema '{node.Output.Schema}' does not parse as JSON: {ex.Message}");
+            return;
+        }
+
+        // The v4.0 closure: every declared schema must be structurally identical to the
+        // engine's canonical concept-list schema (modulo title/description) — the
+        // schema is welded to the attested structured-output agent
+        // (package-format-v4.md). This subsumes the structured-outputs-subset check.
+        var canonical = CanonicalizeSchema(JsonNode.Parse(ConceptOutputContract.SchemaJson));
+        if (CanonicalizeSchema(schema) != canonical)
+        {
+            errors.Add($"Schema '{node.Output.Schema}' must be structurally identical to the engine concept-list schema in specVersion 4.0 (modulo title/description).");
+        }
+
+        if (node.Output.FailIfEmpty != null && string.IsNullOrWhiteSpace(node.Output.FailIfEmpty))
+        {
+            errors.Add($"Node '{node.Id}' failIfEmpty must not be blank.");
+        }
+    }
+
+    /// <summary>Sorted-key serialization with title/description stripped recursively.</summary>
+    internal static string CanonicalizeSchema(JsonNode? node)
+    {
+        if (node is JsonObject obj)
+        {
+            var parts = obj
+                .Where(pair => pair.Key is not ("title" or "description"))
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{JsonSerializer.Serialize(pair.Key)}:{CanonicalizeSchema(pair.Value)}");
+            return "{" + string.Join(",", parts) + "}";
+        }
+
+        if (node is JsonArray array)
+        {
+            return "[" + string.Join(",", array.Select(CanonicalizeSchema)) + "]";
+        }
+
+        return node?.ToJsonString() ?? "null";
+    }
+
+    private static void ValidateAcyclic(
+        IReadOnlyList<WorkflowNodeSpec> nodes,
+        IReadOnlyDictionary<string, HashSet<string>> edges,
+        List<string> errors)
+    {
+        // Kahn's algorithm, seeded in manifest order for deterministic error text.
+        // Duplicate ids are already reported; deduplicate so the walk still runs.
+        nodes = nodes.DistinctBy(n => n.Id, StringComparer.Ordinal).ToList();
+        var remainingDeps = nodes.ToDictionary(
+            n => n.Id,
+            n => new HashSet<string>(edges.GetValueOrDefault(n.Id) ?? new HashSet<string>(), StringComparer.Ordinal),
+            StringComparer.Ordinal);
+        var resolved = new HashSet<string>(StringComparer.Ordinal);
+        var progressed = true;
+
+        while (progressed)
+        {
+            progressed = false;
+            foreach (var node in nodes)
+            {
+                if (resolved.Contains(node.Id) || remainingDeps[node.Id].Except(resolved).Any())
+                {
+                    continue;
+                }
+
+                resolved.Add(node.Id);
+                progressed = true;
+            }
+        }
+
+        if (resolved.Count < nodes.Count)
+        {
+            var cyclic = nodes.Where(n => !resolved.Contains(n.Id)).Select(n => n.Id);
+            errors.Add($"nodes contain a cycle involving: {string.Join(", ", cyclic)}.");
+        }
     }
 
     private static void ValidateSectionSteps(WorkflowPackageManifest manifest, List<string> errors)
