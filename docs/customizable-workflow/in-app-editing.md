@@ -5,6 +5,14 @@ exploration continues** — tracked by the "in-app workflow-package editor" issu
 Sibling design: [output-contract-catalog.md](output-contract-catalog.md) (#55);
 the two are independent (no shared files; either can land first).
 
+> **Superseded in part 2026-07-15** by
+> [package-format-v5-design.md](package-format-v5-design.md): under the v5 fork
+> model the account standards override retires (all customization forks the
+> package), so this document's two-layer standards story and the "My standards" tab
+> become per-section editing of the fork's data collection; the publish contract
+> carries `data/` and `parent`. The publish pipeline, naming, access rule, and
+> trust posture here remain authoritative.
+
 ## The decision that shapes everything
 
 In-app editing = **authoring a new immutable package version**, published to the

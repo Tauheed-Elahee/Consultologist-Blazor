@@ -46,7 +46,8 @@ point-in-time investigations and migration plans.
   [decoupling roadmap](customizable-workflow/decoupling-roadmap.md),
   [DAG-as-data design](customizable-workflow/dag-as-data-design.md),
   [output-contract catalog](customizable-workflow/output-contract-catalog.md),
-  [in-app editing](customizable-workflow/in-app-editing.md)
+  [in-app editing](customizable-workflow/in-app-editing.md),
+  [package format v5 design](customizable-workflow/package-format-v5-design.md)
 
 ## Research
 
