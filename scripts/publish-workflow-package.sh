@@ -50,6 +50,12 @@ if [[ "$SPEC_VERSION" -ge 2 && ! -d "$PACKAGE_DIR/prompts" ]]; then
 	exit 1
 fi
 
+HAS_SCHEMAS=$(python3 -c "import json;print(1 if json.load(open('$MANIFEST')).get('schemas') else 0)")
+if [[ "$HAS_SCHEMAS" == "1" && ! -d "$PACKAGE_DIR/schemas" ]]; then
+	echo "error: the manifest declares schemas but $PACKAGE_DIR/schemas is missing" >&2
+	exit 1
+fi
+
 echo "Publishing $NAME@$VERSION ..."
 az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 	--file "$MANIFEST" --name "$NAME/$VERSION/manifest.json" --output none
@@ -60,6 +66,13 @@ if [[ -d "$PACKAGE_DIR/prompts" ]]; then
 	for f in "$PACKAGE_DIR"/prompts/*.md; do
 		az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 			--file "$f" --name "$NAME/$VERSION/prompts/$(basename "$f")" --output none
+	done
+fi
+
+if [[ -d "$PACKAGE_DIR/schemas" ]]; then
+	for f in "$PACKAGE_DIR"/schemas/*.json; do
+		az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
+			--file "$f" --name "$NAME/$VERSION/schemas/$(basename "$f")" --output none
 	done
 fi
 
