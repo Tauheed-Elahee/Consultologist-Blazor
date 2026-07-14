@@ -50,6 +50,9 @@ public sealed class ConsultGenerationOrchestrator
         var sectionSteps = input.SectionSteps is { Count: > 0 }
             ? input.SectionSteps
             : throw new InvalidOperationException("Consult generation input carries no section steps; the job start snapshots them from the workflow package.");
+        var nodes = input.Nodes is { Count: > 0 }
+            ? input.Nodes
+            : throw new InvalidOperationException("Consult generation input carries no workflow nodes; the job start snapshots them from the workflow package.");
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -62,7 +65,8 @@ public sealed class ConsultGenerationOrchestrator
                 input.EffectiveInputHash,
                 input.AgentVersion,
                 sectionSteps,
-                input.ConceptAgentVersion));
+                input.ConceptAgentVersion,
+                nodes));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -75,148 +79,127 @@ public sealed class ConsultGenerationOrchestrator
         var totalSectionCount = request.Sections.Count;
         var completedSectionCount = 0;
         var failedSectionCount = 0;
+        var totalNodeCount = nodes.Count;
+        var completedNodeCount = 0;
 
         context.SetCustomStatus(new
         {
             status = ConsultGenerationJobStatuses.Running,
             totalSectionCount,
             completedSectionCount,
-            failedSectionCount
+            failedSectionCount,
+            completedNodeCount,
+            totalNodeCount
         });
 
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisStage),
-            ConsultGenerationAnalysisUpdate.Stage(ConsultGenerationAnalysisStatuses.AnalysisStarted, 1));
+        // The interpreter: a topological wave walk over the snapshotted node
+        // descriptors. Determinism rules — node start order derives only from manifest
+        // order plus recorded activity completions; no clock, no Guid, no environment
+        // reads; variable rendering is pure over recorded results.
+        var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal);
+        var pendingNodeTasks = new Dictionary<Task<NodeRunResult>, string>();
+        var started = new HashSet<string>(StringComparer.Ordinal);
+        var promptNodes = nodes.Where(node => node.Kind == WorkflowNodeKinds.Prompt).ToList();
 
-        var patientConcepts = await context.CallActivityAsync<ConceptExtractionResult>(
-            nameof(ExtractPatientConceptsActivity),
-            new ConsultGenerationConceptActivityInput(request.ConsultDraft, input.WorkflowPackage),
-            AgentActivityRetryOptions);
-
-        if (patientConcepts.Concepts.Count == 0)
+        void StartReadyPromptNodes()
         {
-            await FailPreprocessingAsync(
-                context,
+            foreach (var node in promptNodes)
+            {
+                if (started.Contains(node.Id) || !NodeDependencies(node).All(outputs.ContainsKey))
+                {
+                    continue;
+                }
+
+                started.Add(node.Id);
+                var variables = ConsultNodeVariableResolver.Resolve(node, request.ConsultDraft, nodesById, outputs);
+
+                pendingNodeTasks[context.CallActivityAsync<NodeRunResult>(
+                    ConsultGenerationActivityNames.RunPromptNode,
+                    new ConsultPromptNodeActivityInput(
+                        node.Id,
+                        node.PromptId!,
+                        variables,
+                        input.WorkflowPackage,
+                        node.HasJsonOutput,
+                        node.ConceptSource),
+                    AgentActivityRetryOptions)] = node.Id;
+            }
+        }
+
+        StartReadyPromptNodes();
+
+        while (pendingNodeTasks.Count > 0)
+        {
+            var completedTask = await Task.WhenAny(pendingNodeTasks.Keys);
+            var nodeId = pendingNodeTasks[completedTask];
+            pendingNodeTasks.Remove(completedTask);
+            var node = nodesById[nodeId];
+
+            var result = await completedTask;
+
+            if (node.FailIfEmpty != null && (result.Concepts?.Count ?? 0) == 0)
+            {
+                await FailNodeAsync(
+                    context,
+                    entityId,
+                    node,
+                    nodes,
+                    outputs,
+                    totalSectionCount,
+                    completedSectionCount,
+                    failedSectionCount,
+                    logger);
+                return;
+            }
+
+            outputs[nodeId] = result;
+            completedNodeCount++;
+
+            await context.Entities.CallEntityAsync(
                 entityId,
-                ConsultGenerationAnalysisStatuses.ConceptExtractionFailed,
-                "The consult could not be processed because clinical concepts could not be extracted from the draft.",
+                nameof(ConsultGenerationJobEntity.MarkNodeCompleted),
+                new ConsultGenerationNodeUpdate(
+                    node.Id,
+                    node.Label,
+                    result.Concepts,
+                    result.InputHash,
+                    result.OutputHash,
+                    completedNodeCount,
+                    totalNodeCount));
+
+            context.SetCustomStatus(new
+            {
+                status = ConsultGenerationJobStatuses.Running,
                 totalSectionCount,
                 completedSectionCount,
                 failedSectionCount,
-                logger);
-            return;
+                completedNodeCount,
+                totalNodeCount
+            });
+
+            StartReadyPromptNodes();
         }
 
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisStage),
-            ConsultGenerationAnalysisUpdate.Stage(
-                ConsultGenerationAnalysisStatuses.ConceptsExtracted,
-                2,
-                patientConcepts.Concepts,
-                null,
-                null,
-                null,
-                patientConcepts.ValidationWarnings));
-
-        var problemContext = await context.CallActivityAsync<ConceptExtractionResult>(
-            nameof(IdentifyProblemActivity),
-            new ConsultGenerationProblemActivityInput(patientConcepts.Concepts, input.WorkflowPackage),
-            AgentActivityRetryOptions);
-
-        if (problemContext.Concepts.Count == 0)
+        if (started.Count < promptNodes.Count)
         {
-            await FailPreprocessingAsync(
-                context,
-                entityId,
-                ConsultGenerationAnalysisStatuses.ProblemIdentificationFailed,
-                "No valid disease or problem concept was identified.",
-                totalSectionCount,
-                completedSectionCount,
-                failedSectionCount,
-                logger);
-            return;
+            // Unreachable for validated packages (the graph is acyclic and complete);
+            // defensive so a bad snapshot fails loud instead of hanging.
+            throw new InvalidOperationException("Workflow nodes could not all be scheduled; the node graph is not executable.");
         }
 
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisStage),
-            ConsultGenerationAnalysisUpdate.Stage(
-                ConsultGenerationAnalysisStatuses.ProblemIdentified,
-                3,
-                null,
-                problemContext.Concepts,
-                null,
-                null,
-                problemContext.ValidationWarnings));
-
-        var typicalTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
-            nameof(CreateTypicalTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, Array.Empty<ClinicalConcept>(), input.WorkflowPackage),
-            AgentActivityRetryOptions);
-
-        if (typicalTrajectory.Concepts.Count == 0)
-        {
-            await FailPreprocessingAsync(
-                context,
-                entityId,
-                ConsultGenerationAnalysisStatuses.TypicalTrajectoryFailed,
-                "No valid typical trajectory concepts were generated.",
-                totalSectionCount,
-                completedSectionCount,
-                failedSectionCount,
-                logger);
-            return;
-        }
+        // The (single, terminal) map node runs after the prompt waves — a deliberate
+        // scheduling conservatism the v4.0 closure permits; revisit if a package ever
+        // wants a side analysis node concurrent with section generation.
+        var mapNode = nodes.Single(node => node.Kind == WorkflowNodeKinds.Map);
+        var mapConcepts = mapNode.ConceptsNodeId != null
+            ? outputs[mapNode.ConceptsNodeId].Concepts ?? Array.Empty<ClinicalConcept>()
+            : Array.Empty<ClinicalConcept>();
 
         await context.Entities.CallEntityAsync(
             entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisStage),
-            ConsultGenerationAnalysisUpdate.Stage(
-                ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated,
-                4,
-                null,
-                null,
-                typicalTrajectory.Concepts,
-                null,
-                typicalTrajectory.ValidationWarnings));
-
-        var patientTrajectory = await context.CallActivityAsync<ConceptExtractionResult>(
-            nameof(CreatePatientTrajectoryActivity),
-            new ConsultGenerationTrajectoryActivityInput(problemContext.Concepts, patientConcepts.Concepts, typicalTrajectory.Concepts, input.WorkflowPackage),
-            AgentActivityRetryOptions);
-
-        if (patientTrajectory.Concepts.Count == 0)
-        {
-            await FailPreprocessingAsync(
-                context,
-                entityId,
-                ConsultGenerationAnalysisStatuses.PatientTrajectoryFailed,
-                "No valid patient trajectory concepts were generated.",
-                totalSectionCount,
-                completedSectionCount,
-                failedSectionCount,
-                logger);
-            return;
-        }
-
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisStage),
-            ConsultGenerationAnalysisUpdate.Stage(
-                ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated,
-                5,
-                null,
-                null,
-                null,
-                patientTrajectory.Concepts,
-                patientTrajectory.ValidationWarnings));
-
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkSectionGenerationStarted),
-            ConsultGenerationAnalysisUpdate.Stage(ConsultGenerationAnalysisStatuses.SectionGenerationStarted, 6));
+            nameof(ConsultGenerationJobEntity.MarkMapNodeStarted),
+            new ConsultGenerationNodeUpdate(mapNode.Id, mapNode.Label, null, null, null, completedNodeCount, totalNodeCount));
 
         logger.LogInformation(
             "ConsultGenerationOrchestrator section generation started. JobId={JobId}, SectionCount={SectionCount}",
@@ -232,7 +215,7 @@ public sealed class ConsultGenerationOrchestrator
                 context,
                 entityId,
                 request.ConsultDraft,
-                patientTrajectory.Concepts,
+                mapConcepts,
                 section,
                 input.WorkflowPackage,
                 sectionSteps);
@@ -280,9 +263,13 @@ public sealed class ConsultGenerationOrchestrator
                 status = ConsultGenerationJobStatuses.Running,
                 totalSectionCount,
                 completedSectionCount,
-                failedSectionCount
+                failedSectionCount,
+                completedNodeCount,
+                totalNodeCount
             });
         }
+
+        completedNodeCount++;
 
         var finalStatus = completedSectionCount > 0
             ? ConsultGenerationJobStatuses.Completed
@@ -310,7 +297,9 @@ public sealed class ConsultGenerationOrchestrator
             status = finalStatus,
             totalSectionCount,
             completedSectionCount,
-            failedSectionCount
+            failedSectionCount,
+            completedNodeCount,
+            totalNodeCount
         });
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -343,26 +332,46 @@ public sealed class ConsultGenerationOrchestrator
         }
     }
 
-    private static async Task FailPreprocessingAsync(
+    private static IEnumerable<string> NodeDependencies(ConsultNodeDescriptor node)
+    {
+        return (node.Bindings ?? new Dictionary<string, ConsultNodeBindingDescriptor>())
+            .Values
+            .Where(binding => binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+            .Select(binding => binding.From[WorkflowNodeBindingSources.NodePrefix.Length..]);
+    }
+
+    private static async Task FailNodeAsync(
         TaskOrchestrationContext context,
         EntityInstanceId entityId,
-        string analysisStatus,
-        string analysisError,
+        ConsultNodeDescriptor failedNode,
+        IReadOnlyList<ConsultNodeDescriptor> nodes,
+        IReadOnlyDictionary<string, NodeRunResult> outputs,
         int totalSectionCount,
         int completedSectionCount,
         int failedSectionCount,
         ILogger logger)
     {
+        // Keeps the "-failed" suffix convention the SSE failure path keys on.
+        var analysisStatus = $"{failedNode.Id}-failed";
+        var analysisError = failedNode.FailIfEmpty!;
+
         logger.LogWarning(
-            "Consult generation preprocessing failed. JobId={JobId}, Stage={Stage}, Reason={Reason}",
+            "Consult generation node failed. JobId={JobId}, NodeId={NodeId}, Reason={Reason}",
             context.InstanceId,
-            analysisStatus,
+            failedNode.Id,
             analysisError);
+
+        // The orchestrator holds the graph, so it computes the unreached set — every
+        // node neither completed nor the failed one, in manifest order.
+        var skippedNodes = nodes
+            .Where(node => node.Id != failedNode.Id && !outputs.ContainsKey(node.Id))
+            .Select(node => new ConsultSectionStepDescriptor(node.Id, node.Label))
+            .ToList();
 
         await context.Entities.CallEntityAsync(
             entityId,
-            nameof(ConsultGenerationJobEntity.MarkAnalysisFailed),
-            ConsultGenerationAnalysisUpdate.Failure(analysisStatus, analysisError));
+            nameof(ConsultGenerationJobEntity.MarkNodeFailed),
+            new ConsultGenerationNodeFailure(failedNode.Id, failedNode.Label, analysisStatus, analysisError, skippedNodes));
 
         context.SetCustomStatus(new
         {
@@ -424,169 +433,61 @@ public sealed class ConsultGenerationOrchestrator
     }
 }
 
-public sealed class ExtractPatientConceptsActivity
+/// <summary>
+/// Resolves a prompt node's bindings to rendered variable values — pure functions over
+/// the orchestration input and recorded activity results, so orchestrator-side use is
+/// replay-safe. Renderer implementations stay where the byte-pinning tests point:
+/// ConsultGenerationConceptFormatter and AgentSectionGenerator.FormatConcepts.
+/// </summary>
+internal static class ConsultNodeVariableResolver
 {
-    private readonly AgentSectionGenerator _agent;
-    private readonly IWorkflowPromptProvider _promptProvider;
-    private readonly ILogger<ExtractPatientConceptsActivity> _logger;
-
-    public ExtractPatientConceptsActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<ExtractPatientConceptsActivity> logger)
+    public static Dictionary<string, string> Resolve(
+        ConsultNodeDescriptor node,
+        string consultDraft,
+        IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
+        IReadOnlyDictionary<string, NodeRunResult> outputs)
     {
-        _agent = agent;
-        _promptProvider = promptProvider;
-        _logger = logger;
-    }
+        var variables = new Dictionary<string, string>(StringComparer.Ordinal);
 
-    [Function(nameof(ExtractPatientConceptsActivity))]
-    public async Task<ConceptExtractionResult> RunAsync(
-        [ActivityTrigger] ConsultGenerationConceptActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        var prompt = await _promptProvider.RenderAsync(
-            input.WorkflowPackage,
-            WorkflowPromptContract.ExtractPatientConcepts,
-            new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = input.ConsultDraft },
-            cancellationToken);
-
-        return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ConceptsExtracted, "patient", prompt, cancellationToken);
-    }
-}
-
-public sealed class IdentifyProblemActivity
-{
-    private readonly AgentSectionGenerator _agent;
-    private readonly IWorkflowPromptProvider _promptProvider;
-    private readonly ILogger<IdentifyProblemActivity> _logger;
-
-    public IdentifyProblemActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<IdentifyProblemActivity> logger)
-    {
-        _agent = agent;
-        _promptProvider = promptProvider;
-        _logger = logger;
-    }
-
-    [Function(nameof(IdentifyProblemActivity))]
-    public async Task<ConceptExtractionResult> RunAsync(
-        [ActivityTrigger] ConsultGenerationProblemActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        var prompt = await _promptProvider.RenderAsync(
-            input.WorkflowPackage,
-            WorkflowPromptContract.IdentifyProblem,
-            new Dictionary<string, string>
+        foreach (var (variable, binding) in node.Bindings ?? new Dictionary<string, ConsultNodeBindingDescriptor>())
+        {
+            variables[variable] = binding.From switch
             {
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(input.PatientConcepts)
-            },
-            cancellationToken);
+                WorkflowNodeBindingSources.InputConsultDraft => consultDraft,
+                _ when binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                    => RenderNodeOutput(node.Id, variable, binding, nodesById, outputs),
+                _ => throw new InvalidOperationException(
+                    $"Node '{node.Id}' binding '{variable}' has source '{binding.From}', which a prompt node cannot resolve.")
+            };
+        }
 
-        return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.ProblemIdentified, "problem", prompt, cancellationToken);
-    }
-}
-
-public sealed class CreateTypicalTrajectoryActivity
-{
-    private readonly AgentSectionGenerator _agent;
-    private readonly IWorkflowPromptProvider _promptProvider;
-    private readonly ILogger<CreateTypicalTrajectoryActivity> _logger;
-
-    public CreateTypicalTrajectoryActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<CreateTypicalTrajectoryActivity> logger)
-    {
-        _agent = agent;
-        _promptProvider = promptProvider;
-        _logger = logger;
+        return variables;
     }
 
-    [Function(nameof(CreateTypicalTrajectoryActivity))]
-    public async Task<ConceptExtractionResult> RunAsync(
-        [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
-        CancellationToken cancellationToken)
+    public static string Render(string renderer, IReadOnlyList<ClinicalConcept> concepts) => renderer switch
     {
-        var prompt = await _promptProvider.RenderAsync(
-            input.WorkflowPackage,
-            WorkflowPromptContract.CreateTypicalTrajectory,
-            new Dictionary<string, string>
-            {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(input.ProblemContext)
-            },
-            cancellationToken);
+        WorkflowConceptRenderers.ConceptBullets => ConsultGenerationConceptFormatter.Format(concepts),
+        WorkflowConceptRenderers.ConceptContext => AgentSectionGenerator.FormatConcepts(concepts),
+        _ => throw new InvalidOperationException($"Unknown concept renderer '{renderer}'.")
+    };
 
-        return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated, "typical-trajectory", prompt, cancellationToken);
-    }
-}
-
-public sealed class CreatePatientTrajectoryActivity
-{
-    private readonly AgentSectionGenerator _agent;
-    private readonly IWorkflowPromptProvider _promptProvider;
-    private readonly ILogger<CreatePatientTrajectoryActivity> _logger;
-
-    public CreatePatientTrajectoryActivity(AgentSectionGenerator agent, IWorkflowPromptProvider promptProvider, ILogger<CreatePatientTrajectoryActivity> logger)
+    private static string RenderNodeOutput(
+        string nodeId,
+        string variable,
+        ConsultNodeBindingDescriptor binding,
+        IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
+        IReadOnlyDictionary<string, NodeRunResult> outputs)
     {
-        _agent = agent;
-        _promptProvider = promptProvider;
-        _logger = logger;
-    }
+        var targetId = binding.From[WorkflowNodeBindingSources.NodePrefix.Length..];
+        var target = nodesById[targetId];
+        var result = outputs[targetId];
 
-    [Function(nameof(CreatePatientTrajectoryActivity))]
-    public async Task<ConceptExtractionResult> RunAsync(
-        [ActivityTrigger] ConsultGenerationTrajectoryActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        var prompt = await _promptProvider.RenderAsync(
-            input.WorkflowPackage,
-            WorkflowPromptContract.CreatePatientTrajectory,
-            new Dictionary<string, string>
-            {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(input.ProblemContext),
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(input.PatientConcepts),
-                [WorkflowPromptContract.TypicalTrajectoryConcepts] = ConsultGenerationConceptFormatter.Format(input.TypicalTrajectoryConcepts)
-            },
-            cancellationToken);
+        if (!target.HasJsonOutput)
+        {
+            return result.RawOutput;
+        }
 
-        return await ConsultGenerationPreprocessingRunner.RunConceptPromptAsync(_agent, _logger, ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated, "patient-trajectory", prompt, cancellationToken);
-    }
-}
-
-public sealed record ConsultGenerationConceptActivityInput(string ConsultDraft, string? WorkflowPackage = null);
-
-public sealed record ConsultGenerationProblemActivityInput(IReadOnlyList<ClinicalConcept> PatientConcepts, string? WorkflowPackage = null);
-
-public sealed record ConsultGenerationTrajectoryActivityInput(
-    IReadOnlyList<ClinicalConcept> ProblemContext,
-    IReadOnlyList<ClinicalConcept> PatientConcepts,
-    IReadOnlyList<ClinicalConcept> TypicalTrajectoryConcepts,
-    string? WorkflowPackage = null);
-
-public sealed record ConceptExtractionResult(
-    IReadOnlyList<ClinicalConcept> Concepts,
-    IReadOnlyList<ConsultGenerationValidationWarning> ValidationWarnings);
-
-public static class ConsultGenerationPreprocessingRunner
-{
-    public static async Task<ConceptExtractionResult> RunConceptPromptAsync(
-        AgentSectionGenerator agent,
-        ILogger logger,
-        string warningStage,
-        string source,
-        string prompt,
-        CancellationToken cancellationToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var rawResponse = await agent.SendPromptAsync(warningStage, prompt, useConceptAgent: true, cancellationToken);
-        var concepts = ConceptOutputContract.Deserialize(rawResponse, source);
-
-        logger.LogInformation(
-            "SNOMED preprocessing completed. Stage={Stage}, ConceptCount={ConceptCount}, ElapsedMs={ElapsedMs}",
-            warningStage,
-            concepts.Count,
-            stopwatch.ElapsedMilliseconds);
-
-        Console.Error.WriteLine(
-            $"[SNOMEDPreprocessing] Stage={warningStage}; ConceptCount={concepts.Count}; ElapsedMs={stopwatch.ElapsedMilliseconds}");
-
-        // ValidationWarnings is a dead field since structured outputs replaced the
-        // bullet parser: schema violations throw instead of dropping lines. The record
-        // shape survives until the DAG phase's drain window retires it.
-        return new ConceptExtractionResult(concepts, Array.Empty<ConsultGenerationValidationWarning>());
+        return Render(binding.As ?? WorkflowConceptRenderers.ConceptBullets, result.Concepts
+            ?? throw new InvalidOperationException($"Node '{nodeId}' binding '{variable}' targets '{targetId}', which recorded no concepts."));
     }
 }
