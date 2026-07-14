@@ -60,6 +60,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.AgentVersion ??= input.AgentVersion;
         State.SectionSteps ??= input.SectionSteps?.ToList();
         State.ConceptAgentVersion ??= input.ConceptAgentVersion;
+        State.Nodes ??= input.Nodes?.ToList();
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -159,11 +160,88 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State = state;
     }
 
+    public void MarkNodeCompleted(ConsultGenerationNodeUpdate input)
+    {
+        var state = EnsureState();
+        state.SchemaVersion = 3;
+
+        var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
+        node.Status = ConsultGenerationNodeStatuses.Completed;
+        node.Concepts = input.Concepts?.ToList();
+        node.InputHash = input.InputHash;
+        node.OutputHash = input.OutputHash;
+        node.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        state.CompletedStageCount = input.CompletedNodeCount;
+        state.TotalStageCount = input.TotalNodeCount;
+        state.History.Add(new JobHistoryEvent("success", input.Label, null, DateTimeOffset.UtcNow));
+        State = state;
+    }
+
+    public void MarkMapNodeStarted(ConsultGenerationNodeUpdate input)
+    {
+        var state = EnsureState();
+        state.SchemaVersion = 3;
+
+        var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
+        node.Status = ConsultGenerationNodeStatuses.Running;
+
+        foreach (var section in state.Sections.Values.Where(section => section.Status == ConsultGenerationSectionStatuses.Pending))
+        {
+            section.Status = ConsultGenerationSectionStatuses.Running;
+        }
+
+        state.History.Add(new JobHistoryEvent("success", input.Label, null, DateTimeOffset.UtcNow));
+        State = state;
+    }
+
+    public async Task MarkNodeFailed(ConsultGenerationNodeFailure input)
+    {
+        var state = EnsureState();
+        state.SchemaVersion = 3;
+
+        var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
+        node.Status = ConsultGenerationNodeStatuses.Failed;
+        node.Error = input.Error;
+        node.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        state.AnalysisStatus = input.Status;
+        state.AnalysisError = input.Error;
+        state.History.Add(new JobHistoryEvent("failure", input.Label, input.Error, DateTimeOffset.UtcNow));
+
+        // The orchestrator holds the graph, so it computes the unreached set; skipped
+        // nodes get entries and Skipped status here.
+        foreach (var skipped in input.SkippedNodes)
+        {
+            var skippedNode = state.GetOrAddNodeOutput(skipped.Id, skipped.Label);
+            skippedNode.Status = ConsultGenerationNodeStatuses.Skipped;
+            state.History.Add(new JobHistoryEvent("skipped", skipped.Label, null, DateTimeOffset.UtcNow));
+        }
+
+        foreach (var section in state.Sections.Values.OrderBy(s => s.Id, StringComparer.Ordinal))
+        {
+            state.History.Add(new JobHistoryEvent("skipped", $"Section not reached: {section.Name}", null, DateTimeOffset.UtcNow));
+        }
+
+        state.Status = ConsultGenerationJobStatuses.Failed;
+        state.CompletedAtUtc = DateTimeOffset.UtcNow;
+        State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
+    }
+
     public async Task FinalizeJob(ConsultGenerationJobFinalize input)
     {
         var state = EnsureState();
         state.Status = input.Status;
         state.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        foreach (var node in (state.NodeOutputs?.Values ?? Enumerable.Empty<ConsultNodeOutputState>())
+            .Where(node => node.Status == ConsultGenerationNodeStatuses.Running))
+        {
+            node.Status = ConsultGenerationNodeStatuses.Completed;
+            node.CompletedAtUtc = DateTimeOffset.UtcNow;
+        }
 
         if (input.Status == ConsultGenerationJobStatuses.Completed)
         {
@@ -267,7 +345,8 @@ public sealed record ConsultGenerationOrchestrationInput(
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null);
+    string? ConceptAgentVersion = null,
+    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -277,7 +356,24 @@ public sealed record ConsultGenerationJobInitialize(
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null);
+    string? ConceptAgentVersion = null,
+    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null);
+
+public sealed record ConsultGenerationNodeUpdate(
+    string NodeId,
+    string Label,
+    IReadOnlyList<ClinicalConcept>? Concepts,
+    string? InputHash,
+    string? OutputHash,
+    int CompletedNodeCount,
+    int TotalNodeCount);
+
+public sealed record ConsultGenerationNodeFailure(
+    string NodeId,
+    string Label,
+    string Status,
+    string Error,
+    IReadOnlyList<ConsultSectionStepDescriptor> SkippedNodes);
 
 /// <summary>
 /// Input of the generic prose-step activity. Carries the step id rather than the step
@@ -371,6 +467,8 @@ public sealed class ConsultGenerationJobState
     public string? AgentVersion { get; set; }
     public string? ConceptAgentVersion { get; set; }
     public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
+    public List<ConsultNodeDescriptor>? Nodes { get; set; }
+    public Dictionary<string, ConsultNodeOutputState>? NodeOutputs { get; set; }
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -407,6 +505,19 @@ public sealed class ConsultGenerationJobState
             TotalSectionCount,
             Sections.Values.Count(s => s.Status == ConsultGenerationSectionStatuses.Completed),
             Sections.Values.Count(s => s.Status == ConsultGenerationSectionStatuses.Failed));
+    }
+
+    public ConsultNodeOutputState GetOrAddNodeOutput(string nodeId, string label)
+    {
+        NodeOutputs ??= new Dictionary<string, ConsultNodeOutputState>(StringComparer.Ordinal);
+
+        if (!NodeOutputs.TryGetValue(nodeId, out var node))
+        {
+            node = new ConsultNodeOutputState { NodeId = nodeId, Label = label };
+            NodeOutputs[nodeId] = node;
+        }
+
+        return node;
     }
 
     public ConsultGenerationSectionState GetOrAddSection(string sectionId, string sectionName)
@@ -476,7 +587,18 @@ public sealed class ConsultGenerationJobState
             EffectiveInputHash: EffectiveInputHash,
             AgentVersion: AgentVersion,
             SectionSteps: SectionSteps,
-            ConceptAgentVersion: ConceptAgentVersion);
+            ConceptAgentVersion: ConceptAgentVersion,
+            Nodes: Nodes,
+            NodeOutputs: NodeOutputs?.ToDictionary(
+                pair => pair.Key,
+                pair => new ConsultGenerationNodeStatusResponse(
+                    pair.Value.NodeId,
+                    pair.Value.Label,
+                    pair.Value.Status,
+                    pair.Value.InputHash,
+                    pair.Value.OutputHash,
+                    pair.Value.CompletedAtUtc,
+                    pair.Value.Error)));
     }
 }
 
@@ -491,6 +613,27 @@ public sealed class ConsultGenerationSectionState
     public string? ProseStepStatus { get; set; }
     public int CompletedProseStepCount { get; set; }
     public int TotalProseStepCount { get; set; } = ConsultGenerationSectionProseSteps.TotalStepCount;
+}
+
+/// <summary>Per-node run state: status, concepts (for JSON nodes), and provenance hashes.</summary>
+public sealed class ConsultNodeOutputState
+{
+    public string NodeId { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Status { get; set; } = ConsultGenerationNodeStatuses.Running;
+    public List<ClinicalConcept>? Concepts { get; set; }
+    public string? InputHash { get; set; }
+    public string? OutputHash { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+    public string? Error { get; set; }
+}
+
+public static class ConsultGenerationNodeStatuses
+{
+    public const string Running = "Running";
+    public const string Completed = "Completed";
+    public const string Failed = "Failed";
+    public const string Skipped = "Skipped";
 }
 
 public static class ConsultGenerationJobStatuses
