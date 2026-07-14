@@ -127,6 +127,16 @@ compatibility checking) open when a second output shape exists. Also closed in v
 exactly one map node, `over: input:sections`, terminal (its aggregate output is not
 bindable — reject `node:<map-id>` references with a clear error).
 
+**Deferred tightening for the canonical schema** (noted 2026-07-14, phase A review):
+the concept `id` is deliberately a string, never a JSON number — SCTIDs run to 18
+digits and overflow IEEE-754 doubles past 2^53−1 (the phase-A verification job itself
+extracted `12240181000119103`, 17 digits), the last digit is a Verhoeff check digit,
+and Snowstorm/FHIR both treat concept ids as strings. When the schema becomes
+package-declared here, add `"pattern": "^[0-9]{6,18}$"` to the string branch of `id`
+so non-digit ids are rejected at generation time — the strict structured-outputs
+subset supports `pattern` on strings. Held out of the phase-A agent definition to
+avoid churning `concept-extraction` for a tightening no observed output has violated.
+
 ### Validator additions (dispatch on specVersion 4)
 
 - `nodes` non-empty; unique ids; every `node:` reference resolves; graph acyclic (Kahn
