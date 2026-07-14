@@ -75,53 +75,6 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public void MarkAnalysisStage(ConsultGenerationAnalysisUpdate input)
-    {
-        var state = EnsureState();
-        ApplyAnalysisUpdate(state, input);
-        State = state;
-    }
-
-    public void MarkSectionGenerationStarted(ConsultGenerationAnalysisUpdate input)
-    {
-        var state = EnsureState();
-        ApplyAnalysisUpdate(state, input);
-
-        foreach (var section in state.Sections.Values.Where(section => section.Status == ConsultGenerationSectionStatuses.Pending))
-        {
-            section.Status = ConsultGenerationSectionStatuses.Running;
-        }
-
-        State = state;
-    }
-
-    public async Task MarkAnalysisFailed(ConsultGenerationAnalysisUpdate input)
-    {
-        var state = EnsureState();
-        var completedBeforeFailure = state.CompletedStageCount;
-        ApplyAnalysisUpdate(state, input);
-
-        for (var i = completedBeforeFailure + 1; i < ConsultGenerationAnalysisStatuses.OrderedStages.Length; i++)
-        {
-            state.History.Add(new JobHistoryEvent(
-                "skipped",
-                GetStageHistoryLabel(ConsultGenerationAnalysisStatuses.OrderedStages[i]),
-                null,
-                DateTimeOffset.UtcNow));
-        }
-
-        foreach (var section in state.Sections.Values.OrderBy(s => s.Id, StringComparer.Ordinal))
-        {
-            state.History.Add(new JobHistoryEvent("skipped", $"Section not reached: {section.Name}", null, DateTimeOffset.UtcNow));
-        }
-
-        state.Status = ConsultGenerationJobStatuses.Failed;
-        state.CompletedAtUtc = DateTimeOffset.UtcNow;
-        State = state;
-
-        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
-    }
-
     public async Task CompleteSection(SectionGenerationResult result)
     {
         var state = EnsureState();
@@ -241,6 +194,14 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         {
             node.Status = ConsultGenerationNodeStatuses.Completed;
             node.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+            // The map node completes here rather than through MarkNodeCompleted, so
+            // the stage/node count catches up here too (was reported 4/5 on completed
+            // jobs otherwise).
+            if (input.Status == ConsultGenerationJobStatuses.Completed)
+            {
+                state.CompletedStageCount = state.TotalStageCount;
+            }
         }
 
         if (input.Status == ConsultGenerationJobStatuses.Completed)
@@ -281,61 +242,6 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         return State ?? ConsultGenerationJobState.Create(string.Empty, string.Empty, Array.Empty<ConsultGenerationSectionRequest>());
     }
 
-    private static void ApplyAnalysisUpdate(ConsultGenerationJobState state, ConsultGenerationAnalysisUpdate input)
-    {
-        state.SchemaVersion = 2;
-        state.AnalysisStatus = input.AnalysisStatus;
-        state.AnalysisError = input.AnalysisError;
-        state.CompletedStageCount = input.CompletedStageCount;
-        state.TotalStageCount = ConsultGenerationAnalysisStatuses.TotalStageCount;
-
-        if (input.PatientConcepts != null)
-        {
-            state.PatientConcepts = input.PatientConcepts.ToList();
-        }
-
-        if (input.ProblemContext != null)
-        {
-            state.ProblemContext = input.ProblemContext.ToList();
-        }
-
-        if (input.TypicalTrajectoryConcepts != null)
-        {
-            state.TypicalTrajectoryConcepts = input.TypicalTrajectoryConcepts.ToList();
-        }
-
-        if (input.PatientTrajectoryConcepts != null)
-        {
-            state.PatientTrajectoryConcepts = input.PatientTrajectoryConcepts.ToList();
-        }
-
-        if (input.ValidationWarnings != null)
-        {
-            state.ValidationWarnings.AddRange(input.ValidationWarnings);
-        }
-
-        var isFailure = input.AnalysisStatus.EndsWith("-failed", StringComparison.Ordinal);
-        state.History.Add(new JobHistoryEvent(
-            isFailure ? "failure" : "success",
-            GetStageHistoryLabel(input.AnalysisStatus),
-            isFailure ? input.AnalysisError : null,
-            DateTimeOffset.UtcNow));
-    }
-
-    private static string GetStageHistoryLabel(string stage) => stage switch
-    {
-        ConsultGenerationAnalysisStatuses.AnalysisStarted => "Analysis started",
-        ConsultGenerationAnalysisStatuses.ConceptsExtracted => "Concepts extracted",
-        ConsultGenerationAnalysisStatuses.ConceptExtractionFailed => "Concept extraction failed",
-        ConsultGenerationAnalysisStatuses.ProblemIdentified => "Primary problem identified",
-        ConsultGenerationAnalysisStatuses.ProblemIdentificationFailed => "Problem identification failed",
-        ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated => "Reference trajectory created",
-        ConsultGenerationAnalysisStatuses.TypicalTrajectoryFailed => "Reference trajectory failed",
-        ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated => "Patient trajectory created",
-        ConsultGenerationAnalysisStatuses.PatientTrajectoryFailed => "Patient trajectory failed",
-        ConsultGenerationAnalysisStatuses.SectionGenerationStarted => "Section generation started",
-        _ => stage
-    };
 }
 
 public sealed record ConsultGenerationOrchestrationInput(
@@ -396,50 +302,6 @@ public sealed record ConsultGenerationSectionProseStepUpdate(
     string ProseStepStatus,
     int CompletedProseStepCount);
 
-public sealed record ConsultGenerationAnalysisUpdate(
-    string AnalysisStatus,
-    int CompletedStageCount,
-    string? AnalysisError,
-    IReadOnlyList<ClinicalConcept>? PatientConcepts,
-    IReadOnlyList<ClinicalConcept>? ProblemContext,
-    IReadOnlyList<ClinicalConcept>? TypicalTrajectoryConcepts,
-    IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts,
-    IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings)
-{
-    public static ConsultGenerationAnalysisUpdate Stage(
-        string analysisStatus,
-        int completedStageCount,
-        IReadOnlyList<ClinicalConcept>? patientConcepts = null,
-        IReadOnlyList<ClinicalConcept>? problemContext = null,
-        IReadOnlyList<ClinicalConcept>? typicalTrajectoryConcepts = null,
-        IReadOnlyList<ClinicalConcept>? patientTrajectoryConcepts = null,
-        IReadOnlyList<ConsultGenerationValidationWarning>? validationWarnings = null)
-    {
-        return new ConsultGenerationAnalysisUpdate(
-            analysisStatus,
-            completedStageCount,
-            null,
-            patientConcepts,
-            problemContext,
-            typicalTrajectoryConcepts,
-            patientTrajectoryConcepts,
-            validationWarnings);
-    }
-
-    public static ConsultGenerationAnalysisUpdate Failure(string analysisStatus, string analysisError)
-    {
-        return new ConsultGenerationAnalysisUpdate(
-            analysisStatus,
-            0,
-            analysisError,
-            null,
-            null,
-            null,
-            null,
-            null);
-    }
-}
-
 public sealed class ConsultGenerationJobState
 {
     public string JobId { get; set; } = string.Empty;
@@ -457,8 +319,9 @@ public sealed class ConsultGenerationJobState
     public List<ClinicalConcept> TypicalTrajectoryConcepts { get; set; } = new();
     public List<ClinicalConcept> PatientTrajectoryConcepts { get; set; } = new();
     public int CompletedStageCount { get; set; }
-    public int TotalStageCount { get; set; } = ConsultGenerationAnalysisStatuses.TotalStageCount;
-    public List<ConsultGenerationValidationWarning> ValidationWarnings { get; set; } = new();
+
+    // Deserialization default for pre-DAG snapshots (their fixed six-stage pipeline).
+    public int TotalStageCount { get; set; } = 6;
     public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
     public List<JobHistoryEvent> History { get; set; } = new();
     public string? FailureError { get; set; }
@@ -576,7 +439,6 @@ public sealed class ConsultGenerationJobState
             PatientTrajectoryConcepts,
             CompletedStageCount,
             TotalStageCount,
-            ValidationWarnings,
             sectionProseProgress,
             CreatedAtUtc: CreatedAtUtc,
             StartedAtUtc: StartedAtUtc,
@@ -648,32 +510,6 @@ public static class ConsultGenerationActivityNames
 {
     public const string RunProseStep = "run-prose-step";
     public const string RunPromptNode = "run-prompt-node";
-}
-
-public static class ConsultGenerationAnalysisStatuses
-{
-    public const string AnalysisStarted = "analysis-started";
-    public const string ConceptsExtracted = "concepts-extracted";
-    public const string ProblemIdentified = "problem-identified";
-    public const string TypicalTrajectoryCreated = "typical-trajectory-created";
-    public const string PatientTrajectoryCreated = "patient-trajectory-created";
-    public const string SectionGenerationStarted = "section-generation-started";
-    public const string ConceptExtractionFailed = "concept-extraction-failed";
-    public const string ProblemIdentificationFailed = "problem-identification-failed";
-    public const string TypicalTrajectoryFailed = "typical-trajectory-failed";
-    public const string PatientTrajectoryFailed = "patient-trajectory-failed";
-
-    public static readonly string[] OrderedStages =
-    [
-        AnalysisStarted,
-        ConceptsExtracted,
-        ProblemIdentified,
-        TypicalTrajectoryCreated,
-        PatientTrajectoryCreated,
-        SectionGenerationStarted
-    ];
-
-    public static int TotalStageCount => OrderedStages.Length;
 }
 
 public static class ConsultGenerationSectionProseSteps

@@ -1,6 +1,12 @@
 # Current State: What Is Hardcoded vs. Data-Driven
 
-Verified against the code on 2026-07-09.
+Verified against the code on 2026-07-09 — **historical**: milestones 1–4 have since
+shipped (registry/pinning/provenance, prompts as content, section steps as content,
+DAG-as-data with per-node output contracts). The current boundary is recorded in
+[decoupling-roadmap.md](decoupling-roadmap.md) and
+[package-format-v4.md](package-format-v4.md); everything listed as "hardcoded" below
+is now package data except the input model, the binding vocabulary, the concept
+renderers, and the policy/trust layer.
 
 ## Already data-driven
 

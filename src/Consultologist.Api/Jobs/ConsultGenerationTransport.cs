@@ -1096,16 +1096,10 @@ public sealed class ConsultGenerationJobs
         var candidates = new List<ConsultGenerationJobEventCandidate>();
 
         AddEventCandidate(candidates, "snapshot", "snapshot", response);
-        if (response.NodeOutputs != null)
-        {
-            AddNodeEventCandidates(candidates, response);
-        }
-        else
-        {
-            // Pre-DAG (SchemaVersion 2) snapshots keep replaying their stage events.
-            AddAnalysisEventCandidates(candidates, response);
-        }
-
+        // Pre-DAG (SchemaVersion 2) snapshots regenerate no stage candidates; their
+        // events were materialized while they ran and replay from the event store. The
+        // node path's failure branch covers both eras via the '-failed' status suffix.
+        AddNodeEventCandidates(candidates, response);
         AddSectionProseStepEventCandidates(candidates, response);
 
         foreach (var generatedSection in response.GeneratedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
@@ -1229,55 +1223,6 @@ public sealed class ConsultGenerationJobs
                     isCompleted ? $"{node.Label} completed." : $"{node.Label} started.",
                     emitted,
                     totalNodeCount));
-        }
-    }
-
-    private static void AddAnalysisEventCandidates(
-        List<ConsultGenerationJobEventCandidate> candidates,
-        ConsultGenerationJobResponse response)
-    {
-        if (string.IsNullOrWhiteSpace(response.AnalysisStatus))
-        {
-            return;
-        }
-
-        if (IsAnalysisFailureStatus(response.AnalysisStatus))
-        {
-            AddEventCandidate(
-                candidates,
-                "error",
-                $"error:{response.AnalysisStatus}",
-                new ConsultGenerationJobStreamError(
-                    response.JobId,
-                    response.AnalysisError ?? "Consult preprocessing failed.",
-                    response.AnalysisStatus));
-            return;
-        }
-
-        var completedStageCount = Math.Clamp(
-            response.CompletedStageCount ?? 0,
-            0,
-            ConsultGenerationAnalysisStatuses.TotalStageCount);
-
-        for (var stageCount = 1; stageCount <= completedStageCount; stageCount++)
-        {
-            var stage = GetAnalysisStageByCompletedCount(stageCount);
-
-            if (stage == null)
-            {
-                continue;
-            }
-
-            AddEventCandidate(
-                candidates,
-                stage,
-                $"analysis:{stage}",
-                new ConsultGenerationJobStageEvent(
-                    response.JobId,
-                    stage,
-                    GetAnalysisStageMessage(stage),
-                    stageCount,
-                    response.TotalStageCount ?? ConsultGenerationAnalysisStatuses.TotalStageCount));
         }
     }
 
@@ -1409,27 +1354,6 @@ public sealed class ConsultGenerationJobs
         return status.EndsWith("-failed", StringComparison.Ordinal);
     }
 
-    private static string GetAnalysisStageMessage(string stage)
-    {
-        return stage switch
-        {
-            ConsultGenerationAnalysisStatuses.AnalysisStarted => "Analysis started.",
-            ConsultGenerationAnalysisStatuses.ConceptsExtracted => "Clinical concepts extracted.",
-            ConsultGenerationAnalysisStatuses.ProblemIdentified => "Primary problem identified.",
-            ConsultGenerationAnalysisStatuses.TypicalTrajectoryCreated => "Reference trajectory created.",
-            ConsultGenerationAnalysisStatuses.PatientTrajectoryCreated => "Patient trajectory created.",
-            ConsultGenerationAnalysisStatuses.SectionGenerationStarted => "Section generation started.",
-            _ => "Consult generation stage updated."
-        };
-    }
-
-    private static string? GetAnalysisStageByCompletedCount(int completedStageCount)
-    {
-        var index = completedStageCount - 1;
-        var stages = ConsultGenerationAnalysisStatuses.OrderedStages;
-        return index >= 0 && index < stages.Length ? stages[index] : null;
-    }
-
     private sealed class CorsResultActionResult : IActionResult
     {
         private readonly IResult _result;
@@ -1486,13 +1410,6 @@ public sealed record ConsultGenerationJobNodeCompletedEvent(
     string Message,
     int CompletedNodeCount,
     int TotalNodeCount);
-
-public sealed record ConsultGenerationJobStageEvent(
-    string JobId,
-    string Stage,
-    string Message,
-    int CompletedStageCount,
-    int TotalStageCount);
 
 public sealed record ConsultGenerationSectionProseStepEvent(
     string JobId,
