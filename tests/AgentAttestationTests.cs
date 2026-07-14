@@ -46,7 +46,60 @@ public class AgentAttestationTests
                 "require_approval": "never"
               }
             ],
-            "tool_choice": "auto"
+            "tool_choice": "auto",
+            "text": { "format": { "type": "text" } }
+          }
+        }
+        """)!;
+
+    private const string StructuredManifestYaml = """
+        name: concept-extraction
+        version: "1"
+        status: active
+        definition:
+          kind: prompt
+          model: gpt-5.6-sol
+          reasoning:
+            effort: none
+          instructions: |
+            Emit concepts as JSON.
+          tools:
+            - type: mcp
+              server_label: ConsultologistSnomed
+              server_url: https://mcp.snomed.consultologist.ai/runtime/webhooks/mcp
+          tool_choice: auto
+          text:
+            format:
+              type: json_schema
+              name: concept_list
+              strict: true
+              schema: |
+                { "type": "object", "required": ["concepts"], "properties": { "concepts": { "type": "array" } } }
+        """;
+
+    private static JsonNode StructuredDeployed() => JsonNode.Parse("""
+        {
+          "definition": {
+            "kind": "prompt",
+            "model": "gpt-5.6-sol",
+            "reasoning": { "effort": "none" },
+            "instructions": "Emit concepts as JSON.",
+            "tools": [
+              {
+                "type": "mcp",
+                "server_label": "ConsultologistSnomed",
+                "server_url": "https://mcp.snomed.consultologist.ai/runtime/webhooks/mcp"
+              }
+            ],
+            "tool_choice": "auto",
+            "text": {
+              "format": {
+                "type": "json_schema",
+                "name": "concept_list",
+                "strict": true,
+                "schema": { "properties": { "concepts": { "type": "array" } }, "required": ["concepts"], "type": "object" }
+              }
+            }
           }
         }
         """)!;
@@ -123,5 +176,51 @@ public class AgentAttestationTests
         var mismatches = AttestedAgentManifest.Compare(manifest, deployed);
 
         Assert.Contains(mismatches, m => m.Contains("tools count"));
+    }
+
+    [Fact]
+    public void Compare_StructuredAgent_PassesWithReorderedSchemaKeys()
+    {
+        // The deployed fixture's schema has its keys in a different order than the
+        // manifest's JSON block — comparison must be canonical, not textual.
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+
+        Assert.Empty(AttestedAgentManifest.Compare(manifest, StructuredDeployed()));
+    }
+
+    [Fact]
+    public void Compare_DetectsTextFormatTypeDrift()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        var deployed = StructuredDeployed();
+        deployed["definition"]!["text"]!["format"]!["type"] = "text";
+
+        var mismatches = AttestedAgentManifest.Compare(manifest, deployed);
+
+        Assert.Contains(mismatches, m => m.Contains("text.format.type"));
+    }
+
+    [Fact]
+    public void Compare_DetectsSchemaDrift()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        var deployed = StructuredDeployed();
+        deployed["definition"]!["text"]!["format"]!["schema"]!["properties"]!["concepts"]!["type"] = "string";
+
+        var mismatches = AttestedAgentManifest.Compare(manifest, deployed);
+
+        Assert.Contains(mismatches, m => m.Contains("text.format.schema"));
+    }
+
+    [Fact]
+    public void Compare_DetectsStrictDrift()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        var deployed = StructuredDeployed();
+        deployed["definition"]!["text"]!["format"]!["strict"] = false;
+
+        var mismatches = AttestedAgentManifest.Compare(manifest, deployed);
+
+        Assert.Contains(mismatches, m => m.Contains("text.format.strict"));
     }
 }

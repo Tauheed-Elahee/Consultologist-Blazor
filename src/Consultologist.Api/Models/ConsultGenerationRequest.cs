@@ -51,7 +51,8 @@ public record ConsultGenerationJobResponse(
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    string? ConceptAgentVersion = null);
 
 /// <summary>
 /// The identity and display label of one per-section prose step, snapshotted from the

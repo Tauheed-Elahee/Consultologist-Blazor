@@ -59,6 +59,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.EffectiveInputHash ??= input.EffectiveInputHash;
         State.AgentVersion ??= input.AgentVersion;
         State.SectionSteps ??= input.SectionSteps?.ToList();
+        State.ConceptAgentVersion ??= input.ConceptAgentVersion;
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -265,7 +266,8 @@ public sealed record ConsultGenerationOrchestrationInput(
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    string? ConceptAgentVersion = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -274,7 +276,8 @@ public sealed record ConsultGenerationJobInitialize(
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
     string? AgentVersion = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null);
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    string? ConceptAgentVersion = null);
 
 /// <summary>
 /// Input of the generic prose-step activity. Carries the step id rather than the step
@@ -366,6 +369,7 @@ public sealed class ConsultGenerationJobState
     public string? WorkflowPackage { get; set; }
     public string? EffectiveInputHash { get; set; }
     public string? AgentVersion { get; set; }
+    public string? ConceptAgentVersion { get; set; }
     public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
 
     public static ConsultGenerationJobState Create(
@@ -471,7 +475,8 @@ public sealed class ConsultGenerationJobState
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
             AgentVersion: AgentVersion,
-            SectionSteps: SectionSteps);
+            SectionSteps: SectionSteps,
+            ConceptAgentVersion: ConceptAgentVersion);
     }
 }
 
