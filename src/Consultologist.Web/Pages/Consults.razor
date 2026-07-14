@@ -604,18 +604,6 @@
           }
           break;
 
-        case "analysis-started":
-        case "concepts-extracted":
-        case "problem-identified":
-        case "typical-trajectory-created":
-        case "patient-trajectory-created":
-        case "section-generation-started":
-          var stage = JsonSerializer.Deserialize<ConsultGenerationStageEvent>(json, SseJsonOptions);
-          aiProgressNotice = GetConsultGenerationProgressLabel(stage?.Stage ?? eventName);
-          completedAnalysisStageCount = stage?.CompletedStageCount ?? completedAnalysisStageCount;
-          totalAnalysisStageCount = stage?.TotalStageCount ?? totalAnalysisStageCount;
-          break;
-
         case "section-prose-step":
           var sectionStep = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(json, SseJsonOptions);
           if (sectionStep != null)
@@ -693,11 +681,13 @@
     totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
     completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
 
-    if (!string.IsNullOrWhiteSpace(response.AnalysisStatus)
-        && response.Status != "Failed"
-        && !IsPreprocessingFailureStage(response.AnalysisStatus))
+    if (response.Status != "Failed"
+        && response.Nodes is { Count: > 0 }
+        && response.CompletedStageCount.HasValue
+        && response.CompletedStageCount.Value < response.Nodes.Count)
     {
-      aiProgressNotice = GetConsultGenerationProgressLabel(response.AnalysisStatus);
+      // The next in-flight node's package-declared label is the progress notice.
+      aiProgressNotice = response.Nodes[response.CompletedStageCount.Value].Label;
     }
 
     if (response.CompletedStageCount.HasValue)
@@ -730,42 +720,17 @@
       && stage.EndsWith("-failed", StringComparison.Ordinal);
   }
 
-  private static string GetConsultGenerationProgressLabel(string stage)
-  {
-    return stage switch
-    {
-      "analysis-started" => "Analyzing draft",
-      "concepts-extracted" => "Extracting clinical concepts",
-      "problem-identified" => "Identifying primary problem",
-      "typical-trajectory-created" => "Building reference trajectory",
-      "patient-trajectory-created" => "Building patient trajectory",
-      "section-generation-started" => "Generating sections",
-      _ => "Generating consult"
-    };
-  }
-
   private string GetStageChecklistLabel(int stepNum)
   {
-    // Post-DAG jobs carry package-declared node labels; the fixed vocabulary remains
-    // only as the fallback for pre-DAG jobs.
+    // Labels come from the job's package-declared nodes; the generic fallback covers
+    // the moments before the first snapshot arrives.
     if (nodeLabels != null && stepNum >= 1 && stepNum <= nodeLabels.Count)
     {
       return nodeLabels[stepNum - 1];
     }
 
-    return GetAnalysisStageLabel(stepNum);
+    return $"Stage {stepNum}";
   }
-
-  private static string GetAnalysisStageLabel(int stageIndex) => stageIndex switch
-  {
-    1 => "Analysis",
-    2 => "Clinical concepts",
-    3 => "Primary problem",
-    4 => "Reference trajectory",
-    5 => "Patient trajectory",
-    6 => "Section generation",
-    _ => $"Stage {stageIndex}"
-  };
 
   private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
   {
@@ -998,13 +963,6 @@
     string Message,
     int CompletedNodeCount,
     int TotalNodeCount);
-
-  private sealed record ConsultGenerationStageEvent(
-    string JobId,
-    string Stage,
-    string Message,
-    int CompletedStageCount,
-    int TotalStageCount);
 
   private sealed record ConsultGenerationSectionProseStepEvent(
     string JobId,
