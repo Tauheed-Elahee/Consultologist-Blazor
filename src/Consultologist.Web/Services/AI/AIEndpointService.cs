@@ -296,7 +296,10 @@ public record ConsultGenerationJobResponse(
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
     string? RuntimeFailureStage = null,
     string? RuntimeFailureError = null,
-    IReadOnlyList<ConsultGenerationJobHistoryEvent>? History = null);
+    IReadOnlyList<ConsultGenerationJobHistoryEvent>? History = null,
+    IReadOnlyList<ConsultGenerationNodeDescriptor>? Nodes = null);
+
+public record ConsultGenerationNodeDescriptor(string Id, string Kind, string Label);
 
 public record ConsultGenerationJobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
