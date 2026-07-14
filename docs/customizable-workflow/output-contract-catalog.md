@@ -89,7 +89,13 @@ the *container spelling* of the same algebra — kept in v4.0 because it makes t
 "aggregate output is not bindable" closure trivially enforceable and the per-item
 pipeline visually obvious.
 
-**Decision for this slice**: keep the two-kind container spelling; do not add kinds.
+> **Superseded in part 2026-07-15** by
+> [package-format-v5-design.md](package-format-v5-design.md): the one-kind/`forEach`
+> spelling becomes the simpler design once `data:` collections make it statically
+> validatable, and #53's unification is subsumed by one-kind execution. The catalog
+> itself (schema-keyed agent selection) remains orthogonal and authoritative.
+
+**Decision for this slice** (as originally recorded): keep the two-kind container spelling; do not add kinds.
 Revisit the one-kind/`forEach` spelling only if a workflow needs per-item graphs more
 complex than a linear step chain (the moment item-wise alignment and collection
 fan-in semantics must be defined anyway). Future kinds grow along the **executor axis
