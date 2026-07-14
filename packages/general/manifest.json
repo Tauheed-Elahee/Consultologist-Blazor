@@ -1,10 +1,13 @@
 {
 	"name": "general",
-	"version": "v2026.07.4",
-	"specVersion": 3,
+	"version": "v2026.07.5",
+	"specVersion": 4,
 	"templating": { "engine": "scriban", "engineVersion": "7.2.5" },
 	"preludes": {
 		"snomed-tool-guidance": "prompts/_snomed-tool-guidance.md"
+	},
+	"schemas": {
+		"concept-list": "schemas/concept-list.json"
 	},
 	"prompts": [
 		{ "id": "extract-patient-concepts", "file": "prompts/extract-patient-concepts.md",
@@ -23,17 +26,52 @@
 		{ "id": "section-instructions", "file": "prompts/section-instructions.md",
 		  "variables": ["patient_section_draft", "section_name", "section_standard"] }
 	],
-	"sectionSteps": [
-		{ "prompt": "standard-section-draft", "label": "Drafting section",
-		  "bindings": { "section_name": "section_name",
-		                "patient_trajectory_concepts": "patient_trajectory_concepts" } },
-		{ "prompt": "patient-section-draft", "label": "Applying patient information",
-		  "bindings": { "standard_section_draft": "previous_step_output",
-		                "consult_draft": "consult_draft",
-		                "section_name": "section_name" } },
-		{ "prompt": "section-instructions", "label": "Applying section instructions",
-		  "bindings": { "patient_section_draft": "previous_step_output",
-		                "section_name": "section_name",
-		                "section_standard": "section_standard" } }
+	"nodes": [
+		{ "id": "extract-patient-concepts", "kind": "prompt",
+		  "label": "Extracting clinical concepts",
+		  "prompt": "extract-patient-concepts",
+		  "bindings": { "consult_draft": "input:consult_draft" },
+		  "output": { "schema": "concept-list",
+		              "failIfEmpty": "The consult could not be processed because clinical concepts could not be extracted from the draft." } },
+
+		{ "id": "identify-problem", "kind": "prompt",
+		  "label": "Identifying primary problem",
+		  "prompt": "identify-problem",
+		  "bindings": { "patient_concepts": "node:extract-patient-concepts" },
+		  "output": { "schema": "concept-list",
+		              "failIfEmpty": "No valid disease or problem concept was identified." } },
+
+		{ "id": "create-typical-trajectory", "kind": "prompt",
+		  "label": "Building reference trajectory",
+		  "prompt": "create-typical-trajectory",
+		  "bindings": { "problem_concepts": "node:identify-problem" },
+		  "output": { "schema": "concept-list",
+		              "failIfEmpty": "No valid typical trajectory concepts were generated." } },
+
+		{ "id": "create-patient-trajectory", "kind": "prompt",
+		  "label": "Building patient trajectory",
+		  "prompt": "create-patient-trajectory",
+		  "bindings": { "problem_concepts": "node:identify-problem",
+		                "patient_concepts": "node:extract-patient-concepts",
+		                "typical_trajectory_concepts": "node:create-typical-trajectory" },
+		  "output": { "schema": "concept-list",
+		              "failIfEmpty": "No valid patient trajectory concepts were generated." } },
+
+		{ "id": "sections", "kind": "map",
+		  "label": "Generating sections",
+		  "over": "input:sections",
+		  "steps": [
+			{ "prompt": "standard-section-draft", "label": "Drafting section",
+			  "bindings": { "section_name": "item:name",
+			                "patient_trajectory_concepts": { "from": "node:create-patient-trajectory", "as": "concept-context" } } },
+			{ "prompt": "patient-section-draft", "label": "Applying patient information",
+			  "bindings": { "standard_section_draft": "previous_step_output",
+			                "consult_draft": "input:consult_draft",
+			                "section_name": "item:name" } },
+			{ "prompt": "section-instructions", "label": "Applying section instructions",
+			  "bindings": { "patient_section_draft": "previous_step_output",
+			                "section_name": "item:name",
+			                "section_standard": "item:standard" } }
+		  ] }
 	]
 }

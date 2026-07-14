@@ -45,6 +45,7 @@ public class PackageSourceValidationTests
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         var paths = (manifest.Prompts ?? new List<WorkflowPromptSpec>()).Select(p => p.File)
             .Concat((manifest.Preludes ?? new Dictionary<string, string>()).Values)
+            .Concat((manifest.Schemas ?? new Dictionary<string, string>()).Values)
             .Distinct(StringComparer.Ordinal);
 
         foreach (var path in paths)
@@ -63,26 +64,55 @@ public class PackageSourceValidationTests
     }
 
     [Fact]
-    public void GeneralPackageSource_DeclaresTheCanonicalSectionSteps()
+    public void GeneralPackageSource_DeclaresTheCanonicalDag()
     {
         var packageDir = Path.Combine(FindRepoRoot(), "packages", "general");
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(
             File.ReadAllText(Path.Combine(packageDir, "manifest.json")), JsonOptions)!;
 
-        Assert.True(manifest.SpecVersion >= 3, "the repo package is expected to be specVersion 3 or newer");
-        Assert.NotNull(manifest.SectionSteps);
+        Assert.True(manifest.SpecVersion >= 4, "the repo package is expected to be specVersion 4 or newer");
+        Assert.NotNull(manifest.Nodes);
 
-        // The first v3 package is the verbatim v2 pipeline; its declared steps must
-        // equal the synthesis the engine applies to v2 packages.
+        // The first v4 package is the verbatim current pipeline: its declared nodes
+        // must equal the DAG the engine synthesizes for v2/v3 packages, so behavior is
+        // byte-stable across the format cutover.
+        var synthesized = WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized);
+
         Assert.Equal(
-            WorkflowSectionStepDefaults.V2Synthesized.Select(step => (step.StepId, step.Label)),
-            manifest.SectionSteps!.Select(step => (step.StepId, step.Label)));
+            synthesized.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.Over)),
+            manifest.Nodes!.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.Over)));
 
-        foreach (var (declared, synthesized) in manifest.SectionSteps!.Zip(WorkflowSectionStepDefaults.V2Synthesized))
+        foreach (var (declared, expected) in manifest.Nodes!.Zip(synthesized))
         {
+            Assert.Equal(expected.Output, declared.Output);
             Assert.Equal(
-                synthesized.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal),
-                declared.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal));
+                (expected.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal),
+                (declared.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal));
+
+            var expectedSteps = expected.Steps ?? new List<WorkflowMapStepSpec>();
+            var declaredSteps = declared.Steps ?? new List<WorkflowMapStepSpec>();
+            Assert.Equal(expectedSteps.Select(s => (s.StepId, s.Label)), declaredSteps.Select(s => (s.StepId, s.Label)));
+
+            foreach (var (declaredStep, expectedStep) in declaredSteps.Zip(expectedSteps))
+            {
+                Assert.Equal(
+                    expectedStep.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal),
+                    declaredStep.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal));
+            }
         }
+    }
+
+    [Fact]
+    public void GeneralPackageSchema_IsCanonicallyIdenticalToTheEngineContract()
+    {
+        var schemaPath = Path.Combine(FindRepoRoot(), "packages", "general", "schemas", "concept-list.json");
+        Assert.True(File.Exists(schemaPath), $"schema file not found at {schemaPath}");
+
+        var packageSchema = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(schemaPath));
+        var engineSchema = System.Text.Json.Nodes.JsonNode.Parse(ConceptOutputContract.SchemaJson);
+
+        Assert.Equal(
+            WorkflowPackageValidator.CanonicalizeSchema(engineSchema),
+            WorkflowPackageValidator.CanonicalizeSchema(packageSchema));
     }
 }
