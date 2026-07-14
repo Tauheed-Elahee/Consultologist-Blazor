@@ -1,8 +1,17 @@
 # Consult Generation Workflow
 
+> **Superseded 2026-07-14 (milestone 4)**: the pipeline described below — fixed
+> analysis stages, stage-named SSE events, per-stage activities — is the pre-DAG
+> generation. The engine is now a topological interpreter over a package-declared node
+> DAG (normative format: [customizable-workflow/package-format-v4.md](customizable-workflow/package-format-v4.md);
+> design: [customizable-workflow/dag-as-data-design.md](customizable-workflow/dag-as-data-design.md)).
+> Stage event names shown here still replay from the event store for pre-DAG jobs but
+> are no longer emitted. This document remains as the record of the wire mechanics
+> (SSE/resume/polling), which are unchanged.
+
 ## High-Level Workflow
 
-This is the current workflow before the proposed SNOMED preprocessing changes.
+This is the pre-milestone-4 workflow, kept for the transport-mechanics record.
 
 1. The user enters a draft consult and clicks **Create consult**.
 

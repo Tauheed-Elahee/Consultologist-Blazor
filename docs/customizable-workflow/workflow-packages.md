@@ -118,6 +118,18 @@ when a specialty needs a structurally different pipeline.
 > package `general@v2026.07.4`; production-verified 9/9 with 27/27 prompts byte-matched
 > against the package source (job `9a558ff3…`).
 
+> **Milestone 4 implemented 2026-07-14** (#6, PRs #45/#47/#49–#52): specVersion 4 —
+> the analysis DAG became package data: `nodes` with implicit edges via `node:`
+> binding references, schema file refs welded to the attested structured-output agent
+> (`concept-extraction`, published from `agents/*.yaml`), per-node `failIfEmpty`
+> policy, and one terminal map node subsuming the section fan-out. The orchestrator is
+> a topological wave interpreter; the bullet parser is gone (structured outputs);
+> per-node input/output hashes extend the provenance record to a step-level
+> verification chain. v2/v3 packages stay valid via synthesis. First package
+> `general@v2026.07.5`; production-verified across three runs of the baseline input
+> with byte-identical first-node prompts across format generations (jobs `2b06412d…`,
+> `8725c440…`, `913dda03…`).
+
 UI consequences: the Templates page grows from "edit section standards" toward a package
 view with per-account overrides; progress displays become generic step lists rather than
 hardcoded stage names (done for the prose steps in milestone 3 — the client renders

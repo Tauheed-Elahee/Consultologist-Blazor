@@ -13,7 +13,7 @@ sequenceDiagram
     participant Durable as Durable Task
     participant Entity as ConsultGenerationJobEntity
     participant Orchestrator as ConsultGenerationOrchestrator
-    participant Activity as GenerateConsultSectionActivity
+    participant Activity as run-prompt-node / run-prose-step activities
     participant Agent as AgentSectionGenerator
     participant SSE as /events SSE stream
 
@@ -104,14 +104,22 @@ sequenceDiagram
 The `/events` endpoint emits these server-sent event names:
 
 - `snapshot`: initial full `ConsultGenerationJobResponse`.
-- analysis stage events: preprocessing progress such as `analysis-started`, `concepts-extracted`, and `section-generation-started`.
-- section prose step events: per-section prose progress such as `section-standard-draft-created`, `section-patient-draft-created`, and `section-instructions-applied`.
+- `node-completed`: one DAG node's completion (or the map node's start), with
+  `JobId`, `NodeId`, package-declared `Label`, `Message`, and node counts
+  (milestone 4; replaces the fixed analysis stage events).
+- `section-prose-step`: per-section prose progress with the step id, package-declared
+  `Label`, `Message`, and step counts (milestone 3; replaces the fixed step-named
+  events).
 - `section-completed`: one completed section with `JobId`, `SectionId`, and generated `Text`.
 - `section-failed`: one failed section with `JobId`, `SectionId`, and `Error`.
 - `heartbeat`: stream keepalive with `JobId` and current `Status`.
 - `done`: final full `ConsultGenerationJobResponse`.
 - `error`: stream-level failure with `JobId` and `Error`.
 
+Legacy event names (`analysis-started`, `concepts-extracted`, …,
+`section-standard-draft-created`, …) are never emitted for new jobs but replay from
+the event store for jobs that ran before milestones 3–4; the client ignores them.
+
 Semantic events include persisted `id:` values in the form `{jobId}:{sequence:D12}`. Heartbeat events are not persisted and do not advance the semantic event sequence.
 
-The Blazor page treats `snapshot`, analysis stage events, section prose step events, `section-completed`, `section-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.
+The Blazor page treats `snapshot`, `node-completed`, `section-prose-step`, `section-completed`, `section-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.
