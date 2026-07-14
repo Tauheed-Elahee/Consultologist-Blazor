@@ -39,8 +39,6 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
-    [property: JsonIgnore]
-    IReadOnlyList<ConsultGenerationValidationWarning>? ValidationWarnings = null,
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
     string? RuntimeFailureStage = null,
     string? RuntimeFailureError = null,
@@ -112,11 +110,6 @@ public sealed record ClinicalConcept(
     bool IsActive,
     string Source,
     string? Support = null);
-
-public sealed record ConsultGenerationValidationWarning(
-    string Stage,
-    int DroppedLineCount,
-    string Reason);
 
 public sealed record ConsultGenerationSectionProseProgress(
     string SectionId,

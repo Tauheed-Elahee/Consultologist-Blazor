@@ -262,14 +262,18 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
-    public void FinalizeJob_CompletesTheRunningMapNode()
+    public void FinalizeJob_CompletesTheRunningMapNode_AndCatchesUpTheCounts()
     {
         var (entity, state) = CreateEntity();
+        entity.MarkNodeCompleted(new ConsultGenerationNodeUpdate("extract", "Extracting clinical concepts", null, "i", "o", 4, 5));
         entity.MarkMapNodeStarted(new ConsultGenerationNodeUpdate("sections", "Generating sections", null, null, null, 4, 5));
 
         entity.FinalizeJob(new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Completed)).GetAwaiter().GetResult();
 
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, state().NodeOutputs!["sections"].Status);
+        // The map completes here, not through MarkNodeCompleted — the count catches up
+        // (completed jobs previously reported 4/5).
+        Assert.Equal(state().TotalStageCount, state().CompletedStageCount);
     }
 }
 
@@ -321,9 +325,11 @@ public class SchemaVersion2SnapshotToleranceTests
 
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(response);
 
-        // Legacy stage events still regenerate from the count -> OrderedStages loop.
-        Assert.Contains(candidates, c => c.EventKey == "analysis:concepts-extracted");
+        // Legacy snapshots regenerate no stage or node candidates; their events were
+        // materialized while they ran and replay from the event store.
+        Assert.DoesNotContain(candidates, c => c.EventKey.StartsWith("analysis:"));
         Assert.DoesNotContain(candidates, c => c.EventType == ConsultGenerationNodeEvents.EventName);
+        Assert.Contains(candidates, c => c.EventType == "snapshot");
     }
 }
 
