@@ -134,7 +134,7 @@
                                     <li class="job-progress__stage @(done ? "job-progress__stage--completed" : current ? "job-progress__stage--current" : "job-progress__stage--pending")">
                                         <span class="job-progress__stage-icon" aria-hidden="true">@(done ? "✓" : "○")</span>
                                         <span class="job-progress__stage-text">
-                                            <span class="job-progress__stage-label">@GetAnalysisStageLabel(stepNum)</span>
+                                            <span class="job-progress__stage-label">@GetStageChecklistLabel(stepNum)</span>
                                             @if (current && !string.IsNullOrEmpty(aiProgressNotice))
                                             {
                                                 <span class="job-progress__stage-caption">@aiProgressNotice</span>
@@ -216,6 +216,7 @@
   private int totalSectionCount;
   private int completedAnalysisStageCount;
   private int totalAnalysisStageCount;
+  private List<string>? nodeLabels;
   private CancellationTokenSource? activeEventStreamCancellationTokenSource;
   private string? activeEventStreamCancellationReason;
   private SseAttemptState? activeSseAttempt;
@@ -269,6 +270,7 @@
     totalSectionCount = 0;
     completedAnalysisStageCount = 0;
     totalAnalysisStageCount = 0;
+    nodeLabels = null;
 
     if (string.IsNullOrWhiteSpace(consultDraft))
     {
@@ -591,6 +593,17 @@
           }
           break;
 
+        case "node-completed":
+          var nodeEvent = JsonSerializer.Deserialize<ConsultGenerationNodeCompletedEvent>(json, SseJsonOptions);
+          if (nodeEvent != null)
+          {
+            aiProgressNotice = string.IsNullOrWhiteSpace(nodeEvent.Label) ? "Generating consult" : nodeEvent.Label;
+            // Node events are per-key deduped server-side; keep counts monotonic.
+            completedAnalysisStageCount = Math.Max(completedAnalysisStageCount, nodeEvent.CompletedNodeCount);
+            totalAnalysisStageCount = nodeEvent.TotalNodeCount;
+          }
+          break;
+
         case "analysis-started":
         case "concepts-extracted":
         case "problem-identified":
@@ -691,6 +704,8 @@
       completedAnalysisStageCount = response.CompletedStageCount.Value;
     if (response.TotalStageCount.HasValue)
       totalAnalysisStageCount = response.TotalStageCount.Value;
+    if (response.Nodes is { Count: > 0 })
+      nodeLabels = response.Nodes.Select(node => node.Label).ToList();
 
     if (response.Status == "Failed" && !string.IsNullOrWhiteSpace(response.AnalysisError))
     {
@@ -727,6 +742,18 @@
       "section-generation-started" => "Generating sections",
       _ => "Generating consult"
     };
+  }
+
+  private string GetStageChecklistLabel(int stepNum)
+  {
+    // Post-DAG jobs carry package-declared node labels; the fixed vocabulary remains
+    // only as the fallback for pre-DAG jobs.
+    if (nodeLabels != null && stepNum >= 1 && stepNum <= nodeLabels.Count)
+    {
+      return nodeLabels[stepNum - 1];
+    }
+
+    return GetAnalysisStageLabel(stepNum);
   }
 
   private static string GetAnalysisStageLabel(int stageIndex) => stageIndex switch
@@ -963,6 +990,14 @@
     string JobId,
     string SectionId,
     string Error);
+
+  private sealed record ConsultGenerationNodeCompletedEvent(
+    string JobId,
+    string NodeId,
+    string Label,
+    string Message,
+    int CompletedNodeCount,
+    int TotalNodeCount);
 
   private sealed record ConsultGenerationStageEvent(
     string JobId,

@@ -181,18 +181,11 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
-            // Guard-then-implement: the DAG interpreter arrives with #42; until then,
-            // specVersion-4 packages validate and load but cannot run jobs.
-            if (package.Manifest.SpecVersion >= 4)
-            {
-                _logger.LogWarning("Workflow package {Package} is specVersion {SpecVersion}; the engine does not yet interpret specVersion 4.", package.Ref, package.Manifest.SpecVersion);
-                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} is specVersion {package.Manifest.SpecVersion}; the engine does not yet interpret specVersion 4 packages." }, cancellationToken);
-            }
-
             var resolvedPackageRef = package.Ref;
             var sectionSteps = package.SectionSteps
                 .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
                 .ToList();
+            var nodes = package.Nodes!.Select(DescribeNode).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
             // See docs/customizable-workflow/provenance.md.
@@ -216,7 +209,8 @@ public sealed class ConsultGenerationJobs
                     effectiveInputHash,
                     agentVersion,
                     sectionSteps,
-                    conceptAgentVersion));
+                    conceptAgentVersion,
+                    nodes));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -232,7 +226,8 @@ public sealed class ConsultGenerationJobs
                     effectiveInputHash,
                     agentVersion,
                     sectionSteps,
-                    conceptAgentVersion),
+                    conceptAgentVersion,
+                    nodes),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -599,6 +594,39 @@ public sealed class ConsultGenerationJobs
 
             writer.TryComplete();
         }
+    }
+
+    /// <summary>
+    /// Snapshots one package node into the job's descriptor form: bindings flattened,
+    /// the map node's single upstream concepts source extracted, and the legacy
+    /// concept-source stamp applied for the four canonical analysis node ids.
+    /// </summary>
+    private static ConsultNodeDescriptor DescribeNode(WorkflowNodeSpec node)
+    {
+        var steps = node.Steps?
+            .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
+            .ToList();
+
+        var conceptsNodeId = node.Steps?
+            .SelectMany(step => step.Bindings.Values)
+            .Where(binding => binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+            .Select(binding => binding.From[WorkflowNodeBindingSources.NodePrefix.Length..])
+            .FirstOrDefault();
+
+        return new ConsultNodeDescriptor(
+            node.Id,
+            node.Kind,
+            node.Label,
+            node.Prompt,
+            node.Bindings?.ToDictionary(
+                pair => pair.Key,
+                pair => new ConsultNodeBindingDescriptor(pair.Value.From, pair.Value.As),
+                StringComparer.Ordinal),
+            HasJsonOutput: node.Output != null,
+            FailIfEmpty: node.Output?.FailIfEmpty,
+            Steps: steps,
+            ConceptsNodeId: conceptsNodeId,
+            ConceptSource: WorkflowNodeDefaults.WellKnownConceptSources.GetValueOrDefault(node.Id, node.Id));
     }
 
     private static string BuildStatusUrl(HttpRequestData req, string jobId)
@@ -1068,7 +1096,16 @@ public sealed class ConsultGenerationJobs
         var candidates = new List<ConsultGenerationJobEventCandidate>();
 
         AddEventCandidate(candidates, "snapshot", "snapshot", response);
-        AddAnalysisEventCandidates(candidates, response);
+        if (response.NodeOutputs != null)
+        {
+            AddNodeEventCandidates(candidates, response);
+        }
+        else
+        {
+            // Pre-DAG (SchemaVersion 2) snapshots keep replaying their stage events.
+            AddAnalysisEventCandidates(candidates, response);
+        }
+
         AddSectionProseStepEventCandidates(candidates, response);
 
         foreach (var generatedSection in response.GeneratedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
@@ -1134,6 +1171,65 @@ public sealed class ConsultGenerationJobs
             "error",
             $"error:{stage}",
             new ConsultGenerationJobStreamError(response.JobId, error, stage));
+    }
+
+    private static void AddNodeEventCandidates(
+        List<ConsultGenerationJobEventCandidate> candidates,
+        ConsultGenerationJobResponse response)
+    {
+        // Failures ride the existing error-event path via the '-failed' status suffix.
+        if (IsAnalysisFailureStatus(response.AnalysisStatus ?? string.Empty))
+        {
+            AddEventCandidate(
+                candidates,
+                "error",
+                $"error:{response.AnalysisStatus}",
+                new ConsultGenerationJobStreamError(
+                    response.JobId,
+                    response.AnalysisError ?? "Consult generation failed.",
+                    response.AnalysisStatus));
+        }
+
+        if (response.Nodes == null || response.NodeOutputs == null)
+        {
+            return;
+        }
+
+        var totalNodeCount = response.Nodes.Count;
+        var emitted = 0;
+
+        foreach (var node in response.Nodes)
+        {
+            if (!response.NodeOutputs.TryGetValue(node.Id, out var output))
+            {
+                continue;
+            }
+
+            // A completed node emits its completion; the running map node emits its
+            // start (the "Generating sections" moment). Skipped/failed nodes surface
+            // through the error event and job history instead.
+            var isCompleted = output.Status == ConsultGenerationNodeStatuses.Completed;
+            var isRunningMap = output.Status == ConsultGenerationNodeStatuses.Running
+                && node.Kind == WorkflowNodeKinds.Map;
+
+            if (!isCompleted && !isRunningMap)
+            {
+                continue;
+            }
+
+            emitted++;
+            AddEventCandidate(
+                candidates,
+                ConsultGenerationNodeEvents.EventName,
+                $"node:{node.Id}",
+                new ConsultGenerationJobNodeCompletedEvent(
+                    response.JobId,
+                    node.Id,
+                    node.Label,
+                    isCompleted ? $"{node.Label} completed." : $"{node.Label} started.",
+                    emitted,
+                    totalNodeCount));
+        }
     }
 
     private static void AddAnalysisEventCandidates(
@@ -1283,24 +1379,9 @@ public sealed class ConsultGenerationJobs
 
     private static string GetRuntimeFailureAction(string failureText)
     {
-        if (failureText.Contains(nameof(ExtractPatientConceptsActivity), StringComparison.Ordinal))
+        if (failureText.Contains(ConsultGenerationActivityNames.RunPromptNode, StringComparison.Ordinal))
         {
-            return "extracting patient concepts";
-        }
-
-        if (failureText.Contains(nameof(IdentifyProblemActivity), StringComparison.Ordinal))
-        {
-            return "identifying the primary problem";
-        }
-
-        if (failureText.Contains(nameof(CreateTypicalTrajectoryActivity), StringComparison.Ordinal))
-        {
-            return "building the reference trajectory";
-        }
-
-        if (failureText.Contains(nameof(CreatePatientTrajectoryActivity), StringComparison.Ordinal))
-        {
-            return "building the patient trajectory";
+            return "running an analysis step";
         }
 
         if (failureText.Contains(ConsultGenerationActivityNames.RunProseStep, StringComparison.Ordinal))
@@ -1391,6 +1472,20 @@ public sealed record ConsultGenerationJobStreamError(
     string JobId,
     string Error,
     string? Stage = null);
+
+public static class ConsultGenerationNodeEvents
+{
+    /// <summary>The single SSE event name for every DAG node; the payload carries the node id and label.</summary>
+    public const string EventName = "node-completed";
+}
+
+public sealed record ConsultGenerationJobNodeCompletedEvent(
+    string JobId,
+    string NodeId,
+    string Label,
+    string Message,
+    int CompletedNodeCount,
+    int TotalNodeCount);
 
 public sealed record ConsultGenerationJobStageEvent(
     string JobId,
