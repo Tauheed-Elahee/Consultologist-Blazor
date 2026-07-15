@@ -16,8 +16,10 @@ Foundry agents and streams progress to the browser over server-sent events (SSE)
 │   ├── Consultologist.Web/      Blazor WASM frontend (Pages/, Shared/, Services/, wwwroot/)
 │   └── Consultologist.Api/      Azure Functions backend (deployed separately)
 ├── tests/                       xUnit tests for the API project
+├── packages/                    workflow-package sources (prompts, data, schemas, manifest)
+├── agents/                      attested Azure AI Foundry agent manifests + output-contract catalog
 ├── docs/                        design docs and research notes — see docs/README.md
-├── scripts/                     smoke-test scripts
+├── scripts/                     smoke tests, package publishing, dag.mmd regeneration
 ├── build/                       centralized bin/obj output (gitignored)
 └── .github/workflows/           frontend deploy, API deploy, tests
 ```
@@ -68,6 +70,24 @@ Sign in with an Entra account, then sign out from the header when done.
 ```bash
 dotnet test
 ```
+
+## Workflow packages
+
+Consult workflows are versioned, immutable packages (`packages/general/`): a manifest
+declaring the node DAG, prompt templates, data collections, and output schemas —
+published to an Azure Blob registry with `scripts/publish-workflow-package.sh`. See
+[`docs/customizable-workflow/`](./docs/customizable-workflow/README.md).
+
+`packages/general/dag.mmd` is a **generated** view of the manifest's DAG — never edit
+it by hand. After changing `manifest.json`, run:
+
+```bash
+./scripts/update-dag-diagram.sh
+```
+
+and commit the regenerated file with the manifest. Generation is local and
+pre-commit; `git push` only *verifies*: CI regenerates in memory and fails the build
+if the committed diagram is stale.
 
 ## Deployment
 
