@@ -48,9 +48,13 @@ yet; these notes are the input to a future milestone plan.
   the node DAG (implicit edges, one map node), schema file refs welded to attested
   agents, per-node failure policy, the v4.0 closures
 - [package-format-v5-design.md](package-format-v5-design.md) — converged design
-  (2026-07-15, not implemented): fork-everything with derivedFrom lineage, data/
+  (2026-07-15): fork-everything with derivedFrom lineage, data/
   collections replacing the standards straddle, one node kind with forEach,
-  per-item provenance
+  per-item provenance; executing as Milestone 5 (#59)
+- [package-format-v5.md](package-format-v5.md) — normative specVersion-5 format:
+  derivedFrom fork lineage, the data table and self-describing collections, one
+  node kind with forEach, item-aligned edges, the result contract, per-item
+  provenance and the versioned draft-only input hash
 - [in-app-editing.md](in-app-editing.md) — design (2026-07-15, not yet
   implemented): the Templates page as a package editor publishing immutable
   per-account versions, the acct-* access rule, and the publish pipeline

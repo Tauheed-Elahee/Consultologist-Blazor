@@ -84,8 +84,11 @@ public class WorkflowNodeBindingSourceParserTests
     [InlineData("item:name")]
     [InlineData("item:standard")]
     [InlineData("item:id")]
+    [InlineData("item:title")] // any field name parses; vocabulary closures are validator rules
     [InlineData("previous_step_output")]
     [InlineData("node:extract-patient-concepts")]
+    [InlineData("data:standards")]
+    [InlineData("data:clinic-guidelines")]
     public void Parses_EveryVocabularyForm(string raw)
     {
         Assert.True(WorkflowNodeBindingSources.TryParse(raw, out var source, out var error), error);
@@ -95,8 +98,8 @@ public class WorkflowNodeBindingSourceParserTests
     [Theory]
     [InlineData("consult_draft")]
     [InlineData("input:patient_age")]
-    [InlineData("item:title")]
     [InlineData("node:")]
+    [InlineData("data:")]
     [InlineData("output:x")]
     public void Rejects_UnknownForms(string raw)
     {

@@ -629,7 +629,7 @@ public sealed class ConsultGenerationJobs
 
         return new ConsultNodeDescriptor(
             node.Id,
-            node.Kind,
+            node.Kind ?? WorkflowNodeKinds.Prompt,
             node.Label,
             node.Prompt,
             node.Bindings?.ToDictionary(

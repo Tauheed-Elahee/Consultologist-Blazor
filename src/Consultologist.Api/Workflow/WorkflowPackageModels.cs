@@ -13,7 +13,10 @@ public sealed record WorkflowPackageManifest(
     List<WorkflowPromptSpec>? Prompts = null,
     List<WorkflowSectionStepSpec>? SectionSteps = null,
     Dictionary<string, string>? Schemas = null,
-    List<WorkflowNodeSpec>? Nodes = null);
+    List<WorkflowNodeSpec>? Nodes = null,
+    string? DerivedFrom = null,
+    Dictionary<string, string>? Data = null,
+    string? Result = null);
 
 public sealed record WorkflowTemplatingSpec(
     string Engine,
@@ -40,22 +43,54 @@ public sealed record WorkflowSectionStepSpec(
 }
 
 /// <summary>
-/// One node of the specVersion-4 workflow DAG. Edges are implicit in the bindings'
-/// node: references. See docs/customizable-workflow/package-format-v4.md.
+/// One node of the workflow DAG. Edges are implicit in the bindings' node:
+/// references. specVersion 4 declares Kind (prompt/map) with Over/Steps on the map
+/// node; specVersion 5 has one kind (Kind absent) with ForEach as the multiplicity
+/// property. See package-format-v4.md and -v5.md.
 /// </summary>
 public sealed record WorkflowNodeSpec(
     string Id,
-    string Kind,
+    string? Kind,
     string Label,
     string? Prompt = null,
     Dictionary<string, WorkflowBindingValue>? Bindings = null,
     WorkflowNodeOutputSpec? Output = null,
     string? Over = null,
-    List<WorkflowMapStepSpec>? Steps = null);
+    List<WorkflowMapStepSpec>? Steps = null,
+    string? ForEach = null);
 
 public sealed record WorkflowNodeOutputSpec(
     string Schema,
     string? FailIfEmpty = null);
+
+/// <summary>
+/// One item of a resolved data collection: the declared fields materialized —
+/// per-item file content becomes the "content" field
+/// (docs/customizable-workflow/package-format-v5.md).
+/// </summary>
+public sealed record WorkflowDataItem(
+    string Id,
+    IReadOnlyDictionary<string, string> Fields);
+
+/// <summary>A resolved data collection: the declared item shape plus the items, in index order.</summary>
+public sealed record WorkflowDataCollection(
+    IReadOnlyList<string> Fields,
+    IReadOnlyList<WorkflowDataItem> Items);
+
+/// <summary>The resolved data table of a specVersion-5 package.</summary>
+public sealed record WorkflowPackageData(
+    IReadOnlyDictionary<string, string> Scalars,
+    IReadOnlyDictionary<string, WorkflowDataCollection> Collections);
+
+/// <summary>The parsed shape of a collection's index.json.</summary>
+public sealed record WorkflowDataIndexFile(
+    List<string>? Fields,
+    List<WorkflowDataIndexItem>? Items);
+
+public sealed record WorkflowDataIndexItem(
+    string? Id,
+    string? Name,
+    string? File);
 
 public sealed record WorkflowMapStepSpec(
     string Prompt,
@@ -142,7 +177,8 @@ public sealed record WorkflowPackage(
     IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
     IReadOnlyList<WorkflowSectionStepSpec>? SectionSteps = null,
     IReadOnlyList<WorkflowNodeSpec>? Nodes = null,
-    IReadOnlyDictionary<string, string>? SchemaContracts = null)
+    IReadOnlyDictionary<string, string>? SchemaContracts = null,
+    WorkflowPackageData? Data = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 
