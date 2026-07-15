@@ -64,19 +64,66 @@ files live under `data/`. The namespace rule that keeps provenance coherent:
 | `node:…` | per-node output hashes |
 | `data:…` | the package ref (versioned workflow content) |
 
-**Standards become a data collection**: `data/standards.json` as an index —
-`[{ "id": "hpi", "name": "History of Present Illness", "file":
-"data/standards/hpi.md" }]` — with per-standard `.md` files (the prompts-pattern
-spelling: declarations + prose files; JSON-inline prose was rejected as
-authoring-hostile). With the override layer gone, standards are fully
-package-determined: the input/data straddle that milestone-era provenance carried
-(standards hashed as input *because* the unversioned override made them vary outside
-any artifact) **dissolves**. Collections declare their item shape, so `item:` fields
-become statically validatable instead of engine-hardcoded.
+**Layout (decided 2026-07-15): each collection is a self-contained subdirectory with
+an `index.json` describing itself** — item index plus the declared item shape — with
+collection-relative file paths and per-item `.md` prose files (JSON-inline prose was
+rejected as authoring-hostile):
+
+```
+packages/general/
+├── manifest.json
+├── prompts/…
+├── schemas/…
+└── data/
+    ├── clinic-guidelines.md          # scalar: one bindable text
+    └── standards/                    # collection: self-describing directory
+        ├── index.json
+        ├── hpi.md
+        ├── pmh.md
+        └── …
+```
+
+```json
+// data/standards/index.json
+{
+  "fields": ["id", "name", "content"],
+  "items": [
+    { "id": "hpi", "name": "History of Present Illness", "file": "hpi.md" },
+    { "id": "pmh", "name": "Past Medical History", "file": "pmh.md" }
+  ]
+}
+```
+
+The top manifest's `data` table maps an id to **either a file (scalar) or a
+directory (collection)** — one table, two shapes, distinguished by what the path is:
+
+```json
+"data": {
+  "clinic-guidelines": "data/clinic-guidelines.md",
+  "standards": "data/standards/"
+}
+```
+
+Rationale for the directory-with-`index.json` spelling over a flat index beside the
+files: the collection becomes a cohesive unit (one directory = one collection —
+copy, diff, and fork it as a whole, which the fork model's per-directory diffs
+reward); it scales to multiple collections without paired `x.json` + `x/` clutter at
+the `data/` root; and it gives the item-shape declaration (`fields`) a natural home
+next to the items it describes — the `file` content becomes the `content` field, and
+`item:` bindings validate statically against `fields`. `index.json` was chosen over
+`collection.json` for familiarity (the `index.html` convention: the directory's
+table of contents); the name is unambiguous against the package `manifest.json`.
+Cost accepted: file gathering (store, validator, publish script) becomes two-stage —
+top manifest → collection indexes → their files — bounded and mechanical.
+
+**Standards become such a collection.** With the override layer gone, standards are
+fully package-determined: the input/data straddle that milestone-era provenance
+carried (standards hashed as input *because* the unversioned override made them vary
+outside any artifact) **dissolves**.
 
 Other data enters the same way: clinic guideline excerpts, specialty glossaries,
-letter scaffolds — any static reference text, versioned and diffed independently of
-the templates that consume it.
+letter scaffolds — scalars or collections, versioned and diffed independently of the
+templates that consume them.
 
 **Input-model consequence (must be explicit, never silent)**: with sections
 package-determined, the effective-input hash can shrink to the draft — the sections'
