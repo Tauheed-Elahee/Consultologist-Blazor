@@ -125,6 +125,27 @@ Other data enters the same way: clinic guideline excerpts, specialty glossaries,
 letter scaffolds — scalars or collections, versioned and diffed independently of the
 templates that consume them.
 
+**Why `prompts/` does not get an `index.json` (decided 2026-07-15)**: the question
+was asked directly — if collections describe themselves, shouldn't the prompts
+directory too? No. In a data collection the index earns its keep because the top
+manifest deliberately knows nothing beyond the directory pointer, and two consumers
+need the item declarations: `forEach` needs the item list to schedule per-item work,
+and `item:` bindings need `fields` to validate statically. The collection describes
+itself because nobody else does. Prompts already have their index — the manifest's
+`prompts` table — and it sits there for a structural reason: a prompt's `variables`
+are one half of a validation contract whose other half is the node `bindings` beside
+it (the validator checks them set-equal). Splitting prompt declarations into
+`prompts/index.json` would put the two halves of one contract in different files,
+buy no new capability (nothing iterates prompts; nothing binds `item:` against
+them), and extend the two-stage gathering cost to a second directory for nothing.
+Even the fork/diff argument fails: editing prompt *text* is already file-local, and
+a variable change forces a same-edit binding change — naturally manifest-local. The
+asymmetry is the feature: **"has an `index.json`" marks a bindable data collection**
+(homogeneous items, forEach-iterable, declared shape) versus workflow structure the
+engine consumes by id — the same boundary the binding namespaces draw. The
+underlying rule, once more: put a fact next to its consumer, and never write it in
+two places.
+
 **Input-model consequence (must be explicit, never silent)**: with sections
 package-determined, the effective-input hash can shrink to the draft — the sections'
 content is redundant with the package ref. That is a provenance-semantics version
