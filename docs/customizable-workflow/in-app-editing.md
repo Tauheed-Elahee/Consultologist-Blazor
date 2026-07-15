@@ -10,7 +10,7 @@ the two are independent (no shared files; either can land first).
 > model the account standards override retires (all customization forks the
 > package), so this document's two-layer standards story and the "My standards" tab
 > become per-section editing of the fork's data collection; the publish contract
-> carries `data/` and `parent`. The publish pipeline, naming, access rule, and
+> carries `data/` and `derivedFrom`. The publish pipeline, naming, access rule, and
 > trust posture here remain authoritative.
 
 ## The decision that shapes everything
