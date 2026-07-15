@@ -10,24 +10,29 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace Consultologist.Api.Agents;
 
 /// <summary>
-/// Startup check that the deployed Foundry agent version matches the git-attested
-/// manifest bundled with the app (agents/{name}.yaml). Git is the source of truth;
-/// portal-side drift is logged loudly, or fails the host when
-/// AgentAttestation__Enforce=true. See docs/customizable-workflow/provenance.md.
+/// Startup check over every output-contract catalog entry: the deployed Foundry agent
+/// must match the git-attested manifest bundled with the app (agents/{name}.yaml), and
+/// the catalog's declared schema must match the schema welded into that manifest. Git
+/// is the source of truth; drift is logged loudly, or fails the host when
+/// AgentAttestation__Enforce=true. See docs/customizable-workflow/provenance.md and
+/// output-contract-catalog.md.
 /// </summary>
 public sealed class AgentAttestationService : IHostedService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TokenCredential _credential;
+    private readonly OutputContractCatalog _catalog;
     private readonly ILogger<AgentAttestationService> _logger;
 
     public AgentAttestationService(
         IHttpClientFactory httpClientFactory,
         TokenCredential credential,
+        OutputContractCatalog catalog,
         ILogger<AgentAttestationService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _credential = credential;
+        _catalog = catalog;
         _logger = logger;
     }
 
@@ -68,14 +73,6 @@ public sealed class AgentAttestationService : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    // Every pinned agent gets attested: the prose agent and (when configured) the
-    // structured-output concept agent.
-    private static readonly (string NameKey, string VersionKey)[] AgentPins =
-    {
-        ("AzureAI__AgentName", "AzureAI__AgentVersion"),
-        ("AzureAI__ConceptAgentName", "AzureAI__ConceptAgentVersion")
-    };
-
     private async Task<List<string>?> RunAsync(CancellationToken cancellationToken)
     {
         var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
@@ -87,53 +84,84 @@ public sealed class AgentAttestationService : IHostedService
             return null;
         }
 
-        var ranAny = false;
         var mismatches = new List<string>();
 
-        foreach (var (nameKey, versionKey) in AgentPins)
+        // Every catalog entry's agent gets attested against its git manifest, plus the
+        // catalog↔manifest schema cross-check: an entry whose declared schema drifts
+        // from the schema welded into its agent definition is a config defect, not a
+        // deployment drift, but fails the same way — the catalog must never promise a
+        // shape its agent doesn't enforce.
+        foreach (var entry in _catalog.Entries.Values)
         {
-            var agentName = Environment.GetEnvironmentVariable(nameKey);
-            var agentVersion = Environment.GetEnvironmentVariable(versionKey);
-
-            if (string.IsNullOrWhiteSpace(agentName) || string.IsNullOrWhiteSpace(agentVersion))
-            {
-                _logger.LogInformation("Agent attestation skipped for {NameKey}: not configured.", nameKey);
-                continue;
-            }
-
-            var manifestPath = Path.Combine(
-                Environment.GetEnvironmentVariable("AgentAttestation__ManifestDirectory")
-                    ?? Path.Combine(AppContext.BaseDirectory, "agents"),
-                $"{agentName}.yaml");
+            var manifestPath = Path.Combine(OutputContractCatalog.ResolveDirectory(), $"{entry.AgentName}.yaml");
 
             if (!File.Exists(manifestPath))
             {
-                _logger.LogWarning("Agent attestation skipped for {AgentName}: manifest not found at {ManifestPath}.", agentName, manifestPath);
+                mismatches.Add($"{entry.AgentName}@{entry.AgentVersion}: catalog contract '{entry.ContractId}' has no git manifest at {manifestPath}");
                 continue;
             }
 
-            ranAny = true;
             var manifest = AttestedAgentManifest.Load(await File.ReadAllTextAsync(manifestPath, cancellationToken));
             var agentMismatches = new List<string>();
 
-            if (!string.Equals(manifest.Version, agentVersion, StringComparison.Ordinal))
+            if (!string.Equals(manifest.Version, entry.AgentVersion, StringComparison.Ordinal))
             {
-                agentMismatches.Add($"pinned version {agentVersion} != manifest version {manifest.Version}");
+                agentMismatches.Add($"pinned version {entry.AgentVersion} != manifest version {manifest.Version}");
             }
 
-            var deployed = await FetchDeployedDefinitionAsync(endpoint, agentName, agentVersion, apiVersion, cancellationToken);
+            agentMismatches.AddRange(CompareCatalogSchema(entry, manifest));
+
+            var deployed = await FetchDeployedDefinitionAsync(endpoint, entry.AgentName, entry.AgentVersion, apiVersion, cancellationToken);
             agentMismatches.AddRange(AttestedAgentManifest.Compare(manifest, deployed));
 
             if (agentMismatches.Count == 0)
             {
-                _logger.LogInformation("Agent attestation passed. Agent={AgentName}@{AgentVersion}", agentName, agentVersion);
-                Console.Error.WriteLine($"[AgentAttestation] passed: {agentName}@{agentVersion}");
+                _logger.LogInformation(
+                    "Agent attestation passed. Contract={ContractId}, Agent={AgentName}@{AgentVersion}",
+                    entry.ContractId,
+                    entry.AgentName,
+                    entry.AgentVersion);
+                Console.Error.WriteLine($"[AgentAttestation] passed: {entry.ContractId} -> {entry.AgentName}@{entry.AgentVersion}");
             }
 
-            mismatches.AddRange(agentMismatches.Select(m => $"{agentName}@{agentVersion}: {m}"));
+            mismatches.AddRange(agentMismatches.Select(m => $"{entry.AgentName}@{entry.AgentVersion}: {m}"));
         }
 
-        return ranAny ? mismatches : null;
+        return mismatches;
+    }
+
+    /// <summary>
+    /// The git-side half of the attestation: the catalog's schema and the manifest's
+    /// published text.format must agree before either is compared to the deployment.
+    /// </summary>
+    internal static List<string> CompareCatalogSchema(OutputContractEntry entry, AttestedAgentManifest manifest)
+    {
+        var mismatches = new List<string>();
+        var format = manifest.Definition.Text?.Format;
+
+        if (entry.SchemaJson is null)
+        {
+            if (string.Equals(format?.Type, "json_schema", StringComparison.Ordinal))
+            {
+                mismatches.Add($"catalog contract '{entry.ContractId}' declares no schema but the manifest publishes a json_schema text format");
+            }
+
+            return mismatches;
+        }
+
+        if (!string.Equals(format?.Type, "json_schema", StringComparison.Ordinal))
+        {
+            mismatches.Add($"catalog contract '{entry.ContractId}' declares a schema but the manifest text.format.type is '{format?.Type ?? "(none)"}'");
+            return mismatches;
+        }
+
+        if (AttestedAgentManifest.CanonicalJson(JsonNode.Parse(entry.SchemaJson))
+            != AttestedAgentManifest.CanonicalJson(string.IsNullOrWhiteSpace(format.Schema) ? null : JsonNode.Parse(format.Schema)))
+        {
+            mismatches.Add($"catalog contract '{entry.ContractId}' schema differs from the manifest text.format.schema");
+        }
+
+        return mismatches;
     }
 
     private async Task<JsonNode> FetchDeployedDefinitionAsync(
@@ -283,7 +311,7 @@ public sealed class AttestedAgentManifest
         (text ?? string.Empty).Replace("\r\n", "\n").TrimEnd();
 
     /// <summary>Order-insensitive JSON equality: objects re-serialized with sorted keys.</summary>
-    private static string CanonicalJson(JsonNode? node)
+    internal static string CanonicalJson(JsonNode? node)
     {
         if (node is null)
         {

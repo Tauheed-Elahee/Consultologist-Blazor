@@ -223,4 +223,55 @@ public class AgentAttestationTests
 
         Assert.Contains(mismatches, m => m.Contains("text.format.strict"));
     }
+
+    [Fact]
+    public void CatalogSchema_MatchingManifest_Passes()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        // Same schema, reordered keys: canonical comparison must pass.
+        var entry = new OutputContractEntry(
+            "concept-list",
+            "concept-extraction",
+            "1",
+            """{ "properties": { "concepts": { "type": "array" } }, "required": ["concepts"], "type": "object" }""");
+
+        Assert.Empty(AgentAttestationService.CompareCatalogSchema(entry, manifest));
+    }
+
+    [Fact]
+    public void CatalogSchema_DriftFromManifest_Fails()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        var entry = new OutputContractEntry(
+            "concept-list",
+            "concept-extraction",
+            "1",
+            """{ "type": "object", "required": ["items"], "properties": { "items": { "type": "array" } } }""");
+
+        var mismatches = AgentAttestationService.CompareCatalogSchema(entry, manifest);
+
+        Assert.Contains(mismatches, m => m.Contains("differs from the manifest text.format.schema"));
+    }
+
+    [Fact]
+    public void CatalogSchema_TextEntryAgainstStructuredManifest_Fails()
+    {
+        var manifest = AttestedAgentManifest.Load(StructuredManifestYaml);
+        var entry = new OutputContractEntry("text", "concept-extraction", "1", SchemaJson: null);
+
+        var mismatches = AgentAttestationService.CompareCatalogSchema(entry, manifest);
+
+        Assert.Contains(mismatches, m => m.Contains("declares no schema"));
+    }
+
+    [Fact]
+    public void CatalogSchema_SchemaEntryAgainstProseManifest_Fails()
+    {
+        var manifest = AttestedAgentManifest.Load(ManifestYaml);
+        var entry = new OutputContractEntry("concept-list", "test-json", "47", """{ "type": "object" }""");
+
+        var mismatches = AgentAttestationService.CompareCatalogSchema(entry, manifest);
+
+        Assert.Contains(mismatches, m => m.Contains("text.format.type is 'text'"));
+    }
 }
