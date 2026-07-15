@@ -48,19 +48,22 @@ public sealed class ConsultGenerationJobs
     private readonly IConsultGenerationJobEventStore _eventStore;
     private readonly IWorkflowPackageStore _packageStore;
     private readonly IWorkflowPackagePinResolver _pinResolver;
+    private readonly OutputContractCatalog _catalog;
 
     public ConsultGenerationJobs(
         ILogger<ConsultGenerationJobs> logger,
         IAccountAuthorizer authorizer,
         IConsultGenerationJobEventStore eventStore,
         IWorkflowPackageStore packageStore,
-        IWorkflowPackagePinResolver pinResolver)
+        IWorkflowPackagePinResolver pinResolver,
+        OutputContractCatalog catalog)
     {
         _logger = logger;
         _authorizer = authorizer;
         _eventStore = eventStore;
         _packageStore = packageStore;
         _pinResolver = pinResolver;
+        _catalog = catalog;
     }
 
     [Function("StartConsultGenerationJob")]
@@ -185,13 +188,19 @@ public sealed class ConsultGenerationJobs
             var sectionSteps = package.SectionSteps
                 .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
                 .ToList();
-            var nodes = package.Nodes!.Select(DescribeNode).ToList();
+            var nodes = package.Nodes!.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
-            // See docs/customizable-workflow/provenance.md.
+            // Every catalog contract's agent version is recorded, keyed by contract id;
+            // the legacy scalar fields mirror the text/concept-list entries until the
+            // next response SchemaVersion bump. See docs/customizable-workflow/provenance.md.
             var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
-            var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
-            var conceptAgentVersion = Environment.GetEnvironmentVariable("AzureAI__ConceptAgentVersion");
+            var agentVersions = _catalog.Entries.Values.ToDictionary(
+                entry => entry.ContractId,
+                entry => entry.AgentVersion,
+                StringComparer.Ordinal);
+            var agentVersion = agentVersions.GetValueOrDefault(OutputContracts.Text);
+            var conceptAgentVersion = agentVersions.GetValueOrDefault(OutputContracts.ConceptList);
 
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
@@ -210,7 +219,8 @@ public sealed class ConsultGenerationJobs
                     agentVersion,
                     sectionSteps,
                     conceptAgentVersion,
-                    nodes));
+                    nodes,
+                    agentVersions));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -227,7 +237,8 @@ public sealed class ConsultGenerationJobs
                     agentVersion,
                     sectionSteps,
                     conceptAgentVersion,
-                    nodes),
+                    nodes,
+                    agentVersions),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -598,10 +609,13 @@ public sealed class ConsultGenerationJobs
 
     /// <summary>
     /// Snapshots one package node into the job's descriptor form: bindings flattened,
-    /// the map node's single upstream concepts source extracted, and the legacy
-    /// concept-source stamp applied for the four canonical analysis node ids.
+    /// the node's schema resolved to its catalog contract id, the map node's single
+    /// upstream concepts source extracted, and the legacy concept-source stamp applied
+    /// for the four canonical analysis node ids.
     /// </summary>
-    private static ConsultNodeDescriptor DescribeNode(WorkflowNodeSpec node)
+    private static ConsultNodeDescriptor DescribeNode(
+        WorkflowNodeSpec node,
+        IReadOnlyDictionary<string, string>? schemaContracts)
     {
         var steps = node.Steps?
             .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
@@ -622,7 +636,11 @@ public sealed class ConsultGenerationJobs
                 pair => pair.Key,
                 pair => new ConsultNodeBindingDescriptor(pair.Value.From, pair.Value.As),
                 StringComparer.Ordinal),
-            HasJsonOutput: node.Output != null,
+            OutputContract: node.Output is null
+                ? null
+                : schemaContracts?.GetValueOrDefault(node.Output.Schema)
+                    ?? throw new InvalidOperationException(
+                        $"Node '{node.Id}' declares schema '{node.Output.Schema}' with no resolved output contract."),
             FailIfEmpty: node.Output?.FailIfEmpty,
             Steps: steps,
             ConceptsNodeId: conceptsNodeId,

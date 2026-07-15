@@ -59,6 +59,7 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
     return credential;
 });
 
+builder.Services.AddSingleton(_ => OutputContractCatalog.Load());
 builder.Services.AddScoped<AgentSectionGenerator>();
 builder.Services.AddSingleton<IBearerTokenValidator, BearerTokenValidator>();
 builder.Services.AddSingleton<IAccountStore, AccountStore>();

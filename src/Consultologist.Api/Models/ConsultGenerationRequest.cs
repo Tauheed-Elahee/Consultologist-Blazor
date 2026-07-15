@@ -52,7 +52,8 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
-    IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null);
+    IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null,
+    IReadOnlyDictionary<string, string>? AgentVersions = null);
 
 /// <summary>
 /// The identity and display label of one per-section prose step, snapshotted from the
@@ -71,7 +72,7 @@ public sealed record ConsultNodeDescriptor(
     string Label,
     string? PromptId = null,
     IReadOnlyDictionary<string, ConsultNodeBindingDescriptor>? Bindings = null,
-    bool HasJsonOutput = false,
+    string? OutputContract = null,
     string? FailIfEmpty = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? Steps = null,
     string? ConceptsNodeId = null,

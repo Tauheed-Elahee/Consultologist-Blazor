@@ -64,7 +64,7 @@ public class NodeVariableResolverTests
             pair => pair.Key,
             pair => new ConsultNodeBindingDescriptor(pair.Value.From, pair.Value.As),
             StringComparer.Ordinal),
-        HasJsonOutput: node.Output != null,
+        OutputContract: node.Output is null ? null : OutputContracts.ConceptList,
         FailIfEmpty: node.Output?.FailIfEmpty);
 
     private static Dictionary<string, string> Resolve(string nodeId) =>
@@ -259,6 +259,29 @@ public class ConsultGenerationNodeEntityTests
         Assert.Equal(ConsultGenerationNodeStatuses.Skipped, s.NodeOutputs["sections"].Status);
         Assert.Contains(s.History, h => h is { Kind: "skipped", Label: "Building reference trajectory" });
         Assert.Contains(s.History, h => h.Kind == "skipped" && h.Label.Contains("History of Present Illness"));
+    }
+
+    [Fact]
+    public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
+    {
+        var (entity, state) = CreateEntity();
+        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") };
+
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", sections,
+            AgentVersions: new Dictionary<string, string> { ["text"] = "47", ["concept-list"] = "1" })).GetAwaiter().GetResult();
+
+        // Write-once: a second Initialize (Durable replay) must not overwrite.
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", sections,
+            AgentVersions: new Dictionary<string, string> { ["text"] = "99" })).GetAwaiter().GetResult();
+
+        Assert.Equal("47", state().AgentVersions!["text"]);
+        Assert.Equal("1", state().AgentVersions!["concept-list"]);
+
+        var response = state().ToResponse();
+        Assert.Equal("47", response.AgentVersions!["text"]);
+        Assert.Equal("1", response.AgentVersions!["concept-list"]);
     }
 
     [Fact]

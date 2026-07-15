@@ -57,7 +57,7 @@ public class PackageSourceValidationTests
             }
         }
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, "validation errors: " + string.Join(" | ", result.Errors));
         Assert.True(result.Warnings.Count == 0, "validation warnings: " + string.Join(" | ", result.Warnings));
@@ -109,7 +109,7 @@ public class PackageSourceValidationTests
         Assert.True(File.Exists(schemaPath), $"schema file not found at {schemaPath}");
 
         var packageSchema = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(schemaPath));
-        var engineSchema = System.Text.Json.Nodes.JsonNode.Parse(ConceptOutputContract.SchemaJson);
+        var engineSchema = System.Text.Json.Nodes.JsonNode.Parse(TestOutputContracts.ConceptListSchema);
 
         Assert.Equal(
             WorkflowPackageValidator.CanonicalizeSchema(engineSchema),

@@ -37,6 +37,10 @@
     <!-- Bundle the attested agent manifests so startup can verify the deployed
          agent version matches git (docs/customizable-workflow/provenance.md). -->
     <None Include="..\..\agents\*.yaml" Link="agents\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The output-contract catalog and its schema files ride along: schema-id keyed
+         agent selection, attested per entry (output-contract-catalog.md). -->
+    <None Include="..\..\agents\output-contracts.json" Link="agents\output-contracts.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\agents\schemas\*.json" Link="agents\schemas\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -61,6 +61,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.SectionSteps ??= input.SectionSteps?.ToList();
         State.ConceptAgentVersion ??= input.ConceptAgentVersion;
         State.Nodes ??= input.Nodes?.ToList();
+        State.AgentVersions ??= input.AgentVersions?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -252,7 +253,8 @@ public sealed record ConsultGenerationOrchestrationInput(
     string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     string? ConceptAgentVersion = null,
-    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null);
+    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
+    IReadOnlyDictionary<string, string>? AgentVersions = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -263,7 +265,8 @@ public sealed record ConsultGenerationJobInitialize(
     string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     string? ConceptAgentVersion = null,
-    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null);
+    IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
+    IReadOnlyDictionary<string, string>? AgentVersions = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -329,6 +332,11 @@ public sealed class ConsultGenerationJobState
     public string? EffectiveInputHash { get; set; }
     public string? AgentVersion { get; set; }
     public string? ConceptAgentVersion { get; set; }
+
+    // Contract id → agent version for every catalog entry the deployment would use;
+    // the two scalar fields above mirror the text/concept-list entries until the next
+    // response SchemaVersion bump retires them.
+    public Dictionary<string, string>? AgentVersions { get; set; }
     public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
     public List<ConsultNodeDescriptor>? Nodes { get; set; }
     public Dictionary<string, ConsultNodeOutputState>? NodeOutputs { get; set; }
@@ -460,7 +468,8 @@ public sealed class ConsultGenerationJobState
                     pair.Value.InputHash,
                     pair.Value.OutputHash,
                     pair.Value.CompletedAtUtc,
-                    pair.Value.Error)));
+                    pair.Value.Error)),
+            AgentVersions: AgentVersions);
     }
 }
 
