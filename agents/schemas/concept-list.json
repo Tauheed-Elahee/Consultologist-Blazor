@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["concepts"],
+  "properties": {
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["term", "type", "id", "isSnomedConcept", "isActive", "support"],
+        "properties": {
+          "term":            { "type": "string" },
+          "type":            { "type": "string" },
+          "id":              { "type": ["string", "null"] },
+          "isSnomedConcept": { "type": "boolean" },
+          "isActive":        { "type": "boolean" },
+          "support":         { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

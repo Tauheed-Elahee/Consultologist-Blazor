@@ -1,0 +1,13 @@
+{
+  "contracts": {
+    "text": {
+      "agentName": "test-json",
+      "agentVersion": "47"
+    },
+    "concept-list": {
+      "agentName": "concept-extraction",
+      "agentVersion": "1",
+      "schemaFile": "schemas/concept-list.json"
+    }
+  }
+}
