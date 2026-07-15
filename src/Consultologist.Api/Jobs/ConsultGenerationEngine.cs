@@ -1,19 +1,8 @@
-using System.Diagnostics;
-using System.Net;
-using System.Text.Json;
-using System.Text.RegularExpressions;
-using System.Threading.Channels;
-using System.Net.ServerSentEvents;
 using Consultologist.Api.Agents;
-using Consultologist.Api.Auth;
 using Consultologist.Api.Models;
 using Consultologist.Api.Workflow;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Logging;
 
@@ -47,12 +36,24 @@ public sealed class ConsultGenerationOrchestrator
 
         try
         {
-        var sectionSteps = input.SectionSteps is { Count: > 0 }
-            ? input.SectionSteps
-            : throw new InvalidOperationException("Consult generation input carries no section steps; the job start snapshots them from the workflow package.");
         var nodes = input.Nodes is { Count: > 0 }
             ? input.Nodes
             : throw new InvalidOperationException("Consult generation input carries no workflow nodes; the job start snapshots them from the workflow package.");
+        var resultNodeId = input.ResultNodeId
+            ?? throw new InvalidOperationException("Consult generation input names no result node; the job start snapshots it from the workflow package.");
+
+        // The work items: package data collections arrive snapshotted in the input
+        // (specVersion 5); earlier spec versions fan over the request's sections.
+        var items = input.Items is { Count: > 0 }
+            ? input.Items
+            : request.Sections
+                .Select(section => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["id"] = section.Id,
+                    ["name"] = section.Name,
+                    ["standard"] = section.Standard
+                })
+                .ToList();
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -64,28 +65,30 @@ public sealed class ConsultGenerationOrchestrator
                 input.WorkflowPackage,
                 input.EffectiveInputHash,
                 input.AgentVersion,
-                sectionSteps,
+                input.SectionSteps,
                 input.ConceptAgentVersion,
                 nodes,
-                input.AgentVersions));
+                input.AgentVersions,
+                input.EffectiveInputHashVersion));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
         logger.LogInformation(
-            "ConsultGenerationOrchestrator started. JobId={JobId}, AppUserId={AppUserId}, SectionCount={SectionCount}",
+            "ConsultGenerationOrchestrator started. JobId={JobId}, AppUserId={AppUserId}, ItemCount={ItemCount}, NodeCount={NodeCount}",
             context.InstanceId,
             input.AppUserId,
-            request.Sections.Count);
+            items.Count,
+            nodes.Count);
 
-        var totalSectionCount = request.Sections.Count;
+        var totalSectionCount = items.Count;
         var completedSectionCount = 0;
         var failedSectionCount = 0;
         var totalNodeCount = nodes.Count;
         var completedNodeCount = 0;
 
-        context.SetCustomStatus(new
+        void PublishStatus(string status) => context.SetCustomStatus(new
         {
-            status = ConsultGenerationJobStatuses.Running,
+            status,
             totalSectionCount,
             completedSectionCount,
             failedSectionCount,
@@ -93,191 +96,230 @@ public sealed class ConsultGenerationOrchestrator
             totalNodeCount
         });
 
-        // The interpreter: a topological wave walk over the snapshotted node
-        // descriptors. Determinism rules — node start order derives only from manifest
-        // order plus recorded activity completions; no clock, no Guid, no environment
-        // reads; variable rendering is pure over recorded results.
-        var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
-        var outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal);
-        var pendingNodeTasks = new Dictionary<Task<NodeRunResult>, string>();
-        var started = new HashSet<string>(StringComparer.Ordinal);
-        var promptNodes = nodes.Where(node => node.Kind == WorkflowNodeKinds.Prompt).ToList();
+        PublishStatus(ConsultGenerationJobStatuses.Running);
 
-        void StartReadyPromptNodes()
+        // The one-kind interpreter: a per-(node, item) ready loop over the snapshotted
+        // descriptors. A scalar node runs once; a forEach node runs once per item,
+        // instance i depending item-aligned on same-collection upstream instances.
+        // Determinism rules — start order derives only from manifest order plus
+        // recorded activity completions; variable rendering is pure over recorded
+        // results (docs/customizable-workflow/package-format-v5.md).
+        var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var chainNodes = nodes.Where(node => node.ForEach != null).ToList();
+        var outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal);
+        var pendingTasks = new Dictionary<Task<NodeRunResult>, (string NodeId, string? ItemId)>();
+        var started = new HashSet<string>(StringComparer.Ordinal);
+        var failedItems = new HashSet<string>(StringComparer.Ordinal);
+        var nodeLevelCompleted = new HashSet<string>(StringComparer.Ordinal);
+
+        string ItemName(string itemId) =>
+            items.First(item => item["id"] == itemId).GetValueOrDefault("name", itemId);
+
+        void StartInstance(ConsultNodeDescriptor node, IReadOnlyDictionary<string, string>? item)
         {
-            foreach (var node in promptNodes)
+            var instanceKey = ConsultNodeScheduler.InstanceKey(node.Id, item?["id"]);
+            started.Add(instanceKey);
+
+            var variables = ConsultNodeVariableResolver.Resolve(
+                node, request.ConsultDraft, item, input.DataScalars, nodesById, outputs);
+
+            pendingTasks[context.CallActivityAsync<NodeRunResult>(
+                ConsultGenerationActivityNames.RunPromptNode,
+                new ConsultPromptNodeActivityInput(
+                    instanceKey,
+                    node.PromptId!,
+                    variables,
+                    input.WorkflowPackage,
+                    node.OutputContract,
+                    node.ConceptSource),
+                AgentActivityRetryOptions)] = (node.Id, item?["id"]);
+        }
+
+        void StartReadyInstances()
+        {
+            foreach (var node in nodes)
             {
-                if (started.Contains(node.Id) || !NodeDependencies(node).All(outputs.ContainsKey))
+                if (node.ForEach is null)
+                {
+                    if (!started.Contains(node.Id)
+                        && ConsultNodeScheduler.InstanceReady(node, null, nodesById, outputs))
+                    {
+                        StartInstance(node, null);
+                    }
+
+                    continue;
+                }
+
+                foreach (var item in items)
+                {
+                    var itemId = item["id"];
+
+                    if (failedItems.Contains(itemId)
+                        || started.Contains(ConsultNodeScheduler.InstanceKey(node.Id, itemId)))
+                    {
+                        continue;
+                    }
+
+                    if (ConsultNodeScheduler.InstanceReady(node, itemId, nodesById, outputs))
+                    {
+                        StartInstance(node, item);
+                    }
+                }
+            }
+        }
+
+        async Task MarkFullyCompletedChainNodesAsync()
+        {
+            // A forEach node completes at the node level once every item is either
+            // done for it or failed earlier in its chain — this is what drives the
+            // stage checklist and the node-completed events.
+            foreach (var node in chainNodes)
+            {
+                if (nodeLevelCompleted.Contains(node.Id))
                 {
                     continue;
                 }
 
-                started.Add(node.Id);
-                var variables = ConsultNodeVariableResolver.Resolve(node, request.ConsultDraft, nodesById, outputs);
+                var allSettled = items.All(item =>
+                    failedItems.Contains(item["id"])
+                    || outputs.ContainsKey(ConsultNodeScheduler.InstanceKey(node.Id, item["id"])));
 
-                pendingNodeTasks[context.CallActivityAsync<NodeRunResult>(
-                    ConsultGenerationActivityNames.RunPromptNode,
-                    new ConsultPromptNodeActivityInput(
-                        node.Id,
-                        node.PromptId!,
-                        variables,
-                        input.WorkflowPackage,
-                        node.OutputContract,
-                        node.ConceptSource),
-                    AgentActivityRetryOptions)] = node.Id;
+                if (!allSettled)
+                {
+                    continue;
+                }
+
+                nodeLevelCompleted.Add(node.Id);
+                completedNodeCount++;
+
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.MarkNodeCompleted),
+                    new ConsultGenerationNodeUpdate(node.Id, node.Label, null, null, null, completedNodeCount, totalNodeCount));
             }
         }
 
-        StartReadyPromptNodes();
-
-        while (pendingNodeTasks.Count > 0)
+        async Task FailItemAsync(string itemId, string error)
         {
-            var completedTask = await Task.WhenAny(pendingNodeTasks.Keys);
-            var nodeId = pendingNodeTasks[completedTask];
-            pendingNodeTasks.Remove(completedTask);
-            var node = nodesById[nodeId];
-
-            var result = await completedTask;
-
-            if (node.FailIfEmpty != null && (result.Concepts?.Count ?? 0) == 0)
-            {
-                await FailNodeAsync(
-                    context,
-                    entityId,
-                    node,
-                    nodes,
-                    outputs,
-                    totalSectionCount,
-                    completedSectionCount,
-                    failedSectionCount,
-                    logger);
-                return;
-            }
-
-            outputs[nodeId] = result;
-            completedNodeCount++;
+            failedItems.Add(itemId);
+            failedSectionCount++;
 
             await context.Entities.CallEntityAsync(
                 entityId,
-                nameof(ConsultGenerationJobEntity.MarkNodeCompleted),
-                new ConsultGenerationNodeUpdate(
-                    node.Id,
-                    node.Label,
-                    result.Concepts,
-                    result.InputHash,
-                    result.OutputHash,
-                    completedNodeCount,
-                    totalNodeCount));
+                nameof(ConsultGenerationJobEntity.FailSection),
+                new SectionGenerationResult(itemId, ItemName(itemId), false, null, error));
 
-            context.SetCustomStatus(new
-            {
-                status = ConsultGenerationJobStatuses.Running,
-                totalSectionCount,
-                completedSectionCount,
-                failedSectionCount,
-                completedNodeCount,
-                totalNodeCount
-            });
-
-            StartReadyPromptNodes();
+            // Downstream item-aligned instances never start; nodes waiting only on
+            // this item may now be node-level complete.
+            await MarkFullyCompletedChainNodesAsync();
         }
 
-        if (started.Count < promptNodes.Count)
+        StartReadyInstances();
+
+        while (pendingTasks.Count > 0)
+        {
+            var completedTask = await Task.WhenAny(pendingTasks.Keys);
+            var (nodeId, itemId) = pendingTasks[completedTask];
+            pendingTasks.Remove(completedTask);
+            var node = nodesById[nodeId];
+
+            if (itemId is null)
+            {
+                // Scalar node: an activity failure (post-retries) is a runtime job
+                // failure, and an empty declared-required output fails the job with
+                // the node's message — unchanged semantics from the wave interpreter.
+                var result = await completedTask;
+
+                if (node.FailIfEmpty != null && (result.Concepts?.Count ?? 0) == 0)
+                {
+                    await FailNodeAsync(
+                        context, entityId, node, nodes, outputs,
+                        totalSectionCount, completedSectionCount, failedSectionCount, logger);
+                    return;
+                }
+
+                outputs[nodeId] = result;
+                completedNodeCount++;
+
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.MarkNodeCompleted),
+                    new ConsultGenerationNodeUpdate(
+                        node.Id, node.Label, result.Concepts, result.InputHash, result.OutputHash,
+                        completedNodeCount, totalNodeCount));
+            }
+            else
+            {
+                // forEach instance: failures are per-item — the section fails, the
+                // job continues (the section-failure semantics the map era had).
+                NodeRunResult result;
+
+                try
+                {
+                    result = await completedTask;
+                }
+                catch (Exception ex)
+                {
+                    await FailItemAsync(itemId, $"{node.Label} failed: {ex.Message}");
+                    PublishStatus(ConsultGenerationJobStatuses.Running);
+                    StartReadyInstances();
+                    continue;
+                }
+
+                if (node.FailIfEmpty != null && (result.Concepts?.Count ?? 0) == 0)
+                {
+                    await FailItemAsync(itemId, node.FailIfEmpty);
+                    PublishStatus(ConsultGenerationJobStatuses.Running);
+                    StartReadyInstances();
+                    continue;
+                }
+
+                outputs[ConsultNodeScheduler.InstanceKey(nodeId, itemId)] = result;
+
+                var completedChainCount = chainNodes.Count(chainNode =>
+                    outputs.ContainsKey(ConsultNodeScheduler.InstanceKey(chainNode.Id, itemId)));
+
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.MarkNodeItemCompleted),
+                    new ConsultGenerationNodeItemUpdate(
+                        node.Id, node.Label, itemId, ItemName(itemId),
+                        result.Concepts, result.InputHash, result.OutputHash,
+                        completedChainCount, chainNodes.Count));
+
+                if (nodeId == resultNodeId)
+                {
+                    completedSectionCount++;
+
+                    await context.Entities.CallEntityAsync(
+                        entityId,
+                        nameof(ConsultGenerationJobEntity.CompleteSection),
+                        new SectionGenerationResult(itemId, ItemName(itemId), true, result.RawOutput.Trim(), null));
+                }
+
+                await MarkFullyCompletedChainNodesAsync();
+            }
+
+            PublishStatus(ConsultGenerationJobStatuses.Running);
+            StartReadyInstances();
+        }
+
+        var expectedInstances = nodes.Sum(node => node.ForEach is null
+            ? 1
+            : items.Count(item => !failedItems.Contains(item["id"])));
+        if (started.Count(key => outputs.ContainsKey(key)) < expectedInstances && failedItems.Count == 0)
         {
             // Unreachable for validated packages (the graph is acyclic and complete);
             // defensive so a bad snapshot fails loud instead of hanging.
             throw new InvalidOperationException("Workflow nodes could not all be scheduled; the node graph is not executable.");
         }
 
-        // The (single, terminal) map node runs after the prompt waves — a deliberate
-        // scheduling conservatism the v4.0 closure permits; revisit if a package ever
-        // wants a side analysis node concurrent with section generation.
-        var mapNode = nodes.Single(node => node.Kind == WorkflowNodeKinds.Map);
-        var mapConcepts = mapNode.ConceptsNodeId != null
-            ? outputs[mapNode.ConceptsNodeId].Concepts ?? Array.Empty<ClinicalConcept>()
-            : Array.Empty<ClinicalConcept>();
-
-        await context.Entities.CallEntityAsync(
-            entityId,
-            nameof(ConsultGenerationJobEntity.MarkMapNodeStarted),
-            new ConsultGenerationNodeUpdate(mapNode.Id, mapNode.Label, null, null, null, completedNodeCount, totalNodeCount));
-
-        logger.LogInformation(
-            "ConsultGenerationOrchestrator section generation started. JobId={JobId}, SectionCount={SectionCount}",
-            context.InstanceId,
-            totalSectionCount);
-
-        var pendingTasks = new List<Task<SectionGenerationResult>>();
-        var taskSections = new Dictionary<Task<SectionGenerationResult>, ConsultGenerationSectionRequest>();
-
-        foreach (var section in request.Sections)
-        {
-            var task = GenerateSectionPipelineAsync(
-                context,
-                entityId,
-                request.ConsultDraft,
-                mapConcepts,
-                section,
-                input.WorkflowPackage,
-                sectionSteps);
-
-            pendingTasks.Add(task);
-            taskSections[task] = section;
-        }
-
-        while (pendingTasks.Count > 0)
-        {
-            var completedTask = await Task.WhenAny(pendingTasks);
-            pendingTasks.Remove(completedTask);
-            var section = taskSections[completedTask];
-
-            SectionGenerationResult result;
-
-            try
-            {
-                result = await completedTask;
-            }
-            catch (Exception ex)
-            {
-                result = new SectionGenerationResult(section.Id, section.Name, false, null, ex.Message);
-            }
-
-            if (result.Success)
-            {
-                completedSectionCount++;
-                await context.Entities.CallEntityAsync(
-                    entityId,
-                    nameof(ConsultGenerationJobEntity.CompleteSection),
-                    result);
-            }
-            else
-            {
-                failedSectionCount++;
-                await context.Entities.CallEntityAsync(
-                    entityId,
-                    nameof(ConsultGenerationJobEntity.FailSection),
-                    result);
-            }
-
-            context.SetCustomStatus(new
-            {
-                status = ConsultGenerationJobStatuses.Running,
-                totalSectionCount,
-                completedSectionCount,
-                failedSectionCount,
-                completedNodeCount,
-                totalNodeCount
-            });
-        }
-
-        completedNodeCount++;
-
         var finalStatus = completedSectionCount > 0
             ? ConsultGenerationJobStatuses.Completed
             : ConsultGenerationJobStatuses.Failed;
 
         logger.LogInformation(
-            "ConsultGenerationOrchestrator section generation completed. JobId={JobId}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
+            "ConsultGenerationOrchestrator completed. JobId={JobId}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
             context.InstanceId,
             completedSectionCount,
             failedSectionCount,
@@ -288,20 +330,7 @@ public sealed class ConsultGenerationOrchestrator
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus));
 
-        logger.LogInformation(
-            "ConsultGenerationOrchestrator finalized. JobId={JobId}, Status={Status}",
-            context.InstanceId,
-            finalStatus);
-
-        context.SetCustomStatus(new
-        {
-            status = finalStatus,
-            totalSectionCount,
-            completedSectionCount,
-            failedSectionCount,
-            completedNodeCount,
-            totalNodeCount
-        });
+        PublishStatus(finalStatus);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -331,14 +360,6 @@ public sealed class ConsultGenerationOrchestrator
 
             throw;
         }
-    }
-
-    private static IEnumerable<string> NodeDependencies(ConsultNodeDescriptor node)
-    {
-        return (node.Bindings ?? new Dictionary<string, ConsultNodeBindingDescriptor>())
-            .Values
-            .Where(binding => binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
-            .Select(binding => binding.From[WorkflowNodeBindingSources.NodePrefix.Length..]);
     }
 
     private static async Task FailNodeAsync(
@@ -384,67 +405,58 @@ public sealed class ConsultGenerationOrchestrator
             analysisError
         });
     }
+}
 
-    private static async Task<SectionGenerationResult> GenerateSectionPipelineAsync(
-        TaskOrchestrationContext context,
-        EntityInstanceId entityId,
-        string consultDraft,
-        IReadOnlyList<ClinicalConcept> patientTrajectoryConcepts,
-        ConsultGenerationSectionRequest section,
-        string? workflowPackage,
-        IReadOnlyList<ConsultSectionStepDescriptor> steps)
+/// <summary>
+/// The pure scheduling calculus of the one-kind interpreter: instance identity and
+/// per-(node, item) readiness. Kept free of Durable types so the wave semantics are
+/// unit-testable (docs/customizable-workflow/package-format-v5.md).
+/// </summary>
+internal static class ConsultNodeScheduler
+{
+    /// <summary>Scalar nodes key by id; forEach instances by "nodeId:itemId".</summary>
+    public static string InstanceKey(string nodeId, string? itemId)
+        => itemId is null ? nodeId : $"{nodeId}:{itemId}";
+
+    /// <summary>
+    /// A scalar node is ready when every node: dependency completed; a forEach
+    /// instance additionally requires same-collection dependencies item-aligned
+    /// (the validator guarantees no aggregate or cross-collection edges exist).
+    /// </summary>
+    public static bool InstanceReady(
+        ConsultNodeDescriptor node,
+        string? itemId,
+        IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
+        IReadOnlyDictionary<string, NodeRunResult> outputs)
     {
-        var currentStepLabel = steps[0].Label;
+        return NodeDependencies(node).All(dependencyId =>
+            outputs.ContainsKey(InstanceKey(
+                dependencyId,
+                nodesById[dependencyId].ForEach is null ? null : itemId)));
+    }
 
-        try
-        {
-            string? previousStepOutput = null;
-
-            for (var i = 0; i < steps.Count; i++)
-            {
-                currentStepLabel = steps[i].Label;
-
-                previousStepOutput = await context.CallActivityAsync<string>(
-                    ConsultGenerationActivityNames.RunProseStep,
-                    new ConsultProseStepActivityInput(
-                        steps[i].Id,
-                        consultDraft,
-                        patientTrajectoryConcepts,
-                        section,
-                        previousStepOutput,
-                        workflowPackage),
-                    AgentActivityRetryOptions);
-
-                await context.Entities.CallEntityAsync(
-                    entityId,
-                    nameof(ConsultGenerationJobEntity.MarkSectionProseStep),
-                    new ConsultGenerationSectionProseStepUpdate(
-                        section.Id,
-                        section.Name,
-                        steps[i].Id,
-                        i + 1));
-            }
-
-            return new SectionGenerationResult(section.Id, section.Name, true, previousStepOutput!.Trim(), null);
-        }
-        catch (Exception ex)
-        {
-            return new SectionGenerationResult(section.Id, section.Name, false, null, $"{currentStepLabel} failed: {ex.Message}");
-        }
+    public static IEnumerable<string> NodeDependencies(ConsultNodeDescriptor node)
+    {
+        return (node.Bindings ?? new Dictionary<string, ConsultNodeBindingDescriptor>())
+            .Values
+            .Where(binding => binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+            .Select(binding => binding.From[WorkflowNodeBindingSources.NodePrefix.Length..]);
     }
 }
 
 /// <summary>
-/// Resolves a prompt node's bindings to rendered variable values — pure functions over
-/// the orchestration input and recorded activity results, so orchestrator-side use is
-/// replay-safe. Renderer implementations stay where the byte-pinning tests point:
-/// ConsultGenerationConceptFormatter and AgentSectionGenerator.FormatConcepts.
+/// Resolves a node instance's bindings to rendered variable values — pure functions
+/// over the orchestration input and recorded activity results, so orchestrator-side
+/// use is replay-safe. Renderer implementations stay where the byte-pinning tests
+/// point: ConsultGenerationConceptFormatter and AgentSectionGenerator.FormatConcepts.
 /// </summary>
 internal static class ConsultNodeVariableResolver
 {
     public static Dictionary<string, string> Resolve(
         ConsultNodeDescriptor node,
         string consultDraft,
+        IReadOnlyDictionary<string, string>? item,
+        IReadOnlyDictionary<string, string>? dataScalars,
         IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
         IReadOnlyDictionary<string, NodeRunResult> outputs)
     {
@@ -455,10 +467,22 @@ internal static class ConsultNodeVariableResolver
             variables[variable] = binding.From switch
             {
                 WorkflowNodeBindingSources.InputConsultDraft => consultDraft,
+                _ when binding.From.StartsWith("item:", StringComparison.Ordinal)
+                    => (item ?? throw new InvalidOperationException(
+                            $"Node '{node.Id}' binding '{variable}' reads '{binding.From}' outside a forEach instance."))
+                        .GetValueOrDefault(binding.From["item:".Length..])
+                        ?? throw new InvalidOperationException(
+                            $"Node '{node.Id}' binding '{variable}' reads item field '{binding.From["item:".Length..]}', which the item does not carry."),
+                _ when binding.From.StartsWith(WorkflowNodeBindingSources.DataPrefix, StringComparison.Ordinal)
+                    => (dataScalars ?? throw new InvalidOperationException(
+                            $"Node '{node.Id}' binding '{variable}' reads '{binding.From}' but the job carries no data scalars."))
+                        .GetValueOrDefault(binding.From[WorkflowNodeBindingSources.DataPrefix.Length..])
+                        ?? throw new InvalidOperationException(
+                            $"Node '{node.Id}' binding '{variable}' reads unknown data entry '{binding.From[WorkflowNodeBindingSources.DataPrefix.Length..]}'."),
                 _ when binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
-                    => RenderNodeOutput(node.Id, variable, binding, nodesById, outputs),
+                    => RenderNodeOutput(node.Id, variable, binding, item, nodesById, outputs),
                 _ => throw new InvalidOperationException(
-                    $"Node '{node.Id}' binding '{variable}' has source '{binding.From}', which a prompt node cannot resolve.")
+                    $"Node '{node.Id}' binding '{variable}' has source '{binding.From}', which a node cannot resolve.")
             };
         }
 
@@ -476,12 +500,17 @@ internal static class ConsultNodeVariableResolver
         string nodeId,
         string variable,
         ConsultNodeBindingDescriptor binding,
+        IReadOnlyDictionary<string, string>? item,
         IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
         IReadOnlyDictionary<string, NodeRunResult> outputs)
     {
         var targetId = binding.From[WorkflowNodeBindingSources.NodePrefix.Length..];
         var target = nodesById[targetId];
-        var result = outputs[targetId];
+        var result = outputs[ConsultNodeScheduler.InstanceKey(
+            targetId,
+            target.ForEach is null ? null : item?["id"]
+                ?? throw new InvalidOperationException(
+                    $"Node '{nodeId}' binding '{variable}' targets forEach node '{targetId}' outside a forEach instance."))];
 
         if (target.OutputContract is null)
         {

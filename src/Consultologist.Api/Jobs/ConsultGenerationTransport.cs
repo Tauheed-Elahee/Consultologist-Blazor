@@ -178,17 +178,28 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.ServiceUnavailable, new { error = "Workflow package registry is unavailable." }, cancellationToken);
             }
 
-            if (package.SectionSteps is not { Count: > 0 })
+            if (package.Nodes is not { Count: > 0 } || package.ResultNodeId is null)
             {
-                _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no section steps; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
+                _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no executable nodes; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
+            // The v5 input model (server-resolved sections, draft-only hash) is the
+            // next slice; guard-then-implement, as with v4 (#71).
+            if (package.Manifest.SpecVersion >= 5)
+            {
+                _logger.LogWarning("Workflow package {Package} is specVersion {SpecVersion}; the v5 input model is not wired yet.", package.Ref, package.Manifest.SpecVersion);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} requires the specVersion-5 input model, which this engine does not accept yet." }, cancellationToken);
+            }
+
             var resolvedPackageRef = package.Ref;
-            var sectionSteps = package.SectionSteps
-                .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
+            // The per-section step list is the forEach chain, in manifest order — the
+            // display/progress skeleton the section-prose-step events hang off.
+            var sectionSteps = package.Nodes
+                .Where(node => node.ForEach != null)
+                .Select(node => new ConsultSectionStepDescriptor(node.Id, node.Label))
                 .ToList();
-            var nodes = package.Nodes!.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
+            var nodes = package.Nodes.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
             // Every catalog contract's agent version is recorded, keyed by contract id;
@@ -238,7 +249,8 @@ public sealed class ConsultGenerationJobs
                     sectionSteps,
                     conceptAgentVersion,
                     nodes,
-                    agentVersions),
+                    agentVersions,
+                    package.ResultNodeId),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -609,27 +621,16 @@ public sealed class ConsultGenerationJobs
 
     /// <summary>
     /// Snapshots one package node into the job's descriptor form: bindings flattened,
-    /// the node's schema resolved to its catalog contract id, the map node's single
-    /// upstream concepts source extracted, and the legacy concept-source stamp applied
-    /// for the four canonical analysis node ids.
+    /// the node's schema resolved to its catalog contract id, forEach carried through,
+    /// and the legacy concept-source stamp applied for the four canonical analysis
+    /// node ids.
     /// </summary>
     private static ConsultNodeDescriptor DescribeNode(
         WorkflowNodeSpec node,
         IReadOnlyDictionary<string, string>? schemaContracts)
     {
-        var steps = node.Steps?
-            .Select(step => new ConsultSectionStepDescriptor(step.StepId, step.Label))
-            .ToList();
-
-        var conceptsNodeId = node.Steps?
-            .SelectMany(step => step.Bindings.Values)
-            .Where(binding => binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
-            .Select(binding => binding.From[WorkflowNodeBindingSources.NodePrefix.Length..])
-            .FirstOrDefault();
-
         return new ConsultNodeDescriptor(
             node.Id,
-            node.Kind ?? WorkflowNodeKinds.Prompt,
             node.Label,
             node.Prompt,
             node.Bindings?.ToDictionary(
@@ -642,8 +643,7 @@ public sealed class ConsultGenerationJobs
                     ?? throw new InvalidOperationException(
                         $"Node '{node.Id}' declares schema '{node.Output.Schema}' with no resolved output contract."),
             FailIfEmpty: node.Output?.FailIfEmpty,
-            Steps: steps,
-            ConceptsNodeId: conceptsNodeId,
+            ForEach: node.ForEach,
             ConceptSource: WorkflowNodeDefaults.WellKnownConceptSources.GetValueOrDefault(node.Id, node.Id));
     }
 
@@ -1217,14 +1217,11 @@ public sealed class ConsultGenerationJobs
                 continue;
             }
 
-            // A completed node emits its completion; the running map node emits its
-            // start (the "Generating sections" moment). Skipped/failed nodes surface
-            // through the error event and job history instead.
-            var isCompleted = output.Status == ConsultGenerationNodeStatuses.Completed;
-            var isRunningMap = output.Status == ConsultGenerationNodeStatuses.Running
-                && node.Kind == WorkflowNodeKinds.Map;
-
-            if (!isCompleted && !isRunningMap)
+            // A node emits its completion at the node level (a forEach node completes
+            // once every item settles; per-item progress rides the section-prose-step
+            // events). Skipped/failed nodes surface through the error event and job
+            // history instead.
+            if (output.Status != ConsultGenerationNodeStatuses.Completed)
             {
                 continue;
             }
@@ -1238,7 +1235,7 @@ public sealed class ConsultGenerationJobs
                     response.JobId,
                     node.Id,
                     node.Label,
-                    isCompleted ? $"{node.Label} completed." : $"{node.Label} started.",
+                    $"{node.Label} completed.",
                     emitted,
                     totalNodeCount));
         }
@@ -1344,12 +1341,7 @@ public sealed class ConsultGenerationJobs
     {
         if (failureText.Contains(ConsultGenerationActivityNames.RunPromptNode, StringComparison.Ordinal))
         {
-            return "running an analysis step";
-        }
-
-        if (failureText.Contains(ConsultGenerationActivityNames.RunProseStep, StringComparison.Ordinal))
-        {
-            return "generating a consult section";
+            return "running a workflow step";
         }
 
         return "running the backend workflow";

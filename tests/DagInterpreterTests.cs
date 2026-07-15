@@ -40,7 +40,9 @@ public class NodeVariableResolverTests
     };
 
     private static readonly IReadOnlyList<ConsultNodeDescriptor> Nodes =
-        WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized)
+        WorkflowNodeDefaults.LowerToOneKind(
+                WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized))
+            .Nodes
             .Select(Describe)
             .ToList();
 
@@ -57,7 +59,6 @@ public class NodeVariableResolverTests
 
     private static ConsultNodeDescriptor Describe(WorkflowNodeSpec node) => new(
         node.Id,
-        node.Kind,
         node.Label,
         node.Prompt,
         node.Bindings?.ToDictionary(
@@ -65,10 +66,11 @@ public class NodeVariableResolverTests
             pair => new ConsultNodeBindingDescriptor(pair.Value.From, pair.Value.As),
             StringComparer.Ordinal),
         OutputContract: node.Output is null ? null : OutputContracts.ConceptList,
-        FailIfEmpty: node.Output?.FailIfEmpty);
+        FailIfEmpty: node.Output?.FailIfEmpty,
+        ForEach: node.ForEach);
 
     private static Dictionary<string, string> Resolve(string nodeId) =>
-        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], Draft, NodesById, Outputs);
+        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], Draft, null, null, NodesById, Outputs);
 
     [Fact]
     public void ExtractPatientConcepts_Parity()
@@ -131,7 +133,7 @@ public class NodeVariableResolverTests
             File.ReadAllText(Path.Combine(packageDir, "manifest.json")),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
-        foreach (var node in Nodes.Where(n => n.Kind == WorkflowNodeKinds.Prompt))
+        foreach (var node in Nodes.Where(n => n.ForEach is null))
         {
             var spec = manifest.Prompts!.Single(p => p.Id == node.PromptId);
             var template = new WorkflowPromptTemplate(
@@ -161,22 +163,80 @@ public class NodeVariableResolverTests
     }
 
     [Fact]
-    public void LoweredMapSteps_FeedTheProseBuilderTheSameValues()
+    public void LoweredForEachChain_ResolvesTheSameValuesTheProseBuilderDid()
     {
-        var map = WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized)
-            .Single(n => n.Kind == WorkflowNodeKinds.Map);
-        var lowered = WorkflowNodeDefaults.LowerMapSteps(map);
-        var section = new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "Chronological prose.");
+        var firstStep = Nodes.First(n => n.ForEach != null);
+        var item = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "hpi", ["name"] = "History of Present Illness", ["standard"] = "Chronological prose."
+        };
 
-        var input = new ConsultProseStepActivityInput(
-            lowered[0].StepId, Draft, TrajectoryConcepts, section, null, "general@v2026.07.5");
-        var variables = ProseStepVariableBuilder.Build(
-            lowered[0] with { Bindings = lowered[0].Bindings }, input);
+        var variables = ConsultNodeVariableResolver.Resolve(firstStep, Draft, item, null, NodesById, Outputs);
 
         // The R3 pin: the concept-context rendering carries source: patient-trajectory.
         Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
         Assert.Contains("source: patient-trajectory", variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
-        Assert.Equal(section.Name, variables[WorkflowPromptContract.SectionName]);
+        Assert.Equal("History of Present Illness", variables[WorkflowPromptContract.SectionName]);
+    }
+}
+
+public class ConsultNodeSchedulerTests
+{
+    private static readonly ConsultNodeDescriptor Trajectory = new(
+        "create-patient-trajectory", "Building patient trajectory", OutputContract: "concept-list");
+
+    private static readonly ConsultNodeDescriptor Step1 = new(
+        "standard-section-draft", "Drafting section",
+        Bindings: new Dictionary<string, ConsultNodeBindingDescriptor>
+        {
+            ["patient_trajectory_concepts"] = new("node:create-patient-trajectory", "concept-context")
+        },
+        ForEach: "input:sections");
+
+    private static readonly ConsultNodeDescriptor Step2 = new(
+        "patient-section-draft", "Applying patient information",
+        Bindings: new Dictionary<string, ConsultNodeBindingDescriptor>
+        {
+            ["standard_section_draft"] = new("node:standard-section-draft")
+        },
+        ForEach: "input:sections");
+
+    private static readonly IReadOnlyDictionary<string, ConsultNodeDescriptor> NodesById =
+        new[] { Trajectory, Step1, Step2 }.ToDictionary(n => n.Id, StringComparer.Ordinal);
+
+    private static Dictionary<string, NodeRunResult> Outputs(params string[] keys) =>
+        keys.ToDictionary(k => k, _ => new NodeRunResult("x", null, "i", "o"), StringComparer.Ordinal);
+
+    [Fact]
+    public void InstanceKeys_ScalarById_InstancesComposite()
+    {
+        Assert.Equal("extract", ConsultNodeScheduler.InstanceKey("extract", null));
+        Assert.Equal("standard-section-draft:hpi", ConsultNodeScheduler.InstanceKey("standard-section-draft", "hpi"));
+    }
+
+    [Fact]
+    public void ForEachInstance_WaitsOnBroadcastScalarDependencies()
+    {
+        Assert.False(ConsultNodeScheduler.InstanceReady(Step1, "hpi", NodesById, Outputs()));
+        Assert.True(ConsultNodeScheduler.InstanceReady(Step1, "hpi", NodesById, Outputs("create-patient-trajectory")));
+    }
+
+    [Fact]
+    public void ItemAlignment_UnlocksPerItem_NotPerWave()
+    {
+        // The conservatism removal: section hpi's second step is ready the moment
+        // ITS first step completes — section pmh's first step is still pending.
+        var outputs = Outputs("create-patient-trajectory", "standard-section-draft:hpi");
+
+        Assert.True(ConsultNodeScheduler.InstanceReady(Step2, "hpi", NodesById, outputs));
+        Assert.False(ConsultNodeScheduler.InstanceReady(Step2, "pmh", NodesById, outputs));
+    }
+
+    [Fact]
+    public void NodeDependencies_ReadTheNodeEdges()
+    {
+        Assert.Equal(new[] { "standard-section-draft" }, ConsultNodeScheduler.NodeDependencies(Step2));
+        Assert.Empty(ConsultNodeScheduler.NodeDependencies(Trajectory));
     }
 }
 
@@ -217,7 +277,7 @@ public class ConsultGenerationNodeEntityTests
             "hash-in", "hash-out", 1, 5));
 
         var node = state().NodeOutputs!["extract-patient-concepts"];
-        Assert.Equal(3, state().SchemaVersion);
+        Assert.Equal(4, state().SchemaVersion);
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, node.Status);
         Assert.Equal("hash-in", node.InputHash);
         Assert.Equal("hash-out", node.OutputHash);
@@ -228,14 +288,32 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
-    public void MarkMapNodeStarted_SetsSectionsRunning()
+    public void MarkNodeItemCompleted_RecordsPerItemProvenanceAndSectionProgress()
     {
         var (entity, state) = CreateEntity();
 
-        entity.MarkMapNodeStarted(new ConsultGenerationNodeUpdate("sections", "Generating sections", null, null, null, 4, 5));
+        entity.MarkNodeItemCompleted(new ConsultGenerationNodeItemUpdate(
+            "standard-section-draft", "Drafting section", "hpi", "History of Present Illness",
+            null, "hash-in", "hash-out", 1, 3));
 
-        Assert.Equal(ConsultGenerationNodeStatuses.Running, state().NodeOutputs!["sections"].Status);
-        Assert.All(state().Sections.Values, s => Assert.Equal(ConsultGenerationSectionStatuses.Running, s.Status));
+        var s = state();
+        Assert.Equal(4, s.SchemaVersion);
+        var output = s.NodeOutputs!["standard-section-draft:hpi"];
+        Assert.Equal("standard-section-draft", output.NodeId);
+        Assert.Equal("hpi", output.ItemId);
+        Assert.Equal(ConsultGenerationNodeStatuses.Completed, output.Status);
+        Assert.Equal("hash-in", output.InputHash);
+        Assert.Equal("hash-out", output.OutputHash);
+
+        var section = s.Sections["hpi"];
+        Assert.Equal(ConsultGenerationSectionStatuses.Running, section.Status);
+        Assert.Equal("standard-section-draft", section.ProseStepStatus);
+        Assert.Equal(1, section.CompletedProseStepCount);
+        Assert.Equal(3, section.TotalProseStepCount);
+
+        // The per-item entry surfaces on the response under its composite key.
+        var response = s.ToResponse();
+        Assert.Equal("hash-in", response.NodeOutputs!["standard-section-draft:hpi"].InputHash);
     }
 
     [Fact]
@@ -285,17 +363,16 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
-    public void FinalizeJob_CompletesTheRunningMapNode_AndCatchesUpTheCounts()
+    public void FinalizeJob_CompletesLingeringRunningNodes_AndCatchesUpTheCounts()
     {
         var (entity, state) = CreateEntity();
         entity.MarkNodeCompleted(new ConsultGenerationNodeUpdate("extract", "Extracting clinical concepts", null, "i", "o", 4, 5));
-        entity.MarkMapNodeStarted(new ConsultGenerationNodeUpdate("sections", "Generating sections", null, null, null, 4, 5));
+        // A node left Running (legacy in-flight tolerance) completes at finalize.
+        state().GetOrAddNodeOutput("sections", "Generating sections").Status = ConsultGenerationNodeStatuses.Running;
 
         entity.FinalizeJob(new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Completed)).GetAwaiter().GetResult();
 
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, state().NodeOutputs!["sections"].Status);
-        // The map completes here, not through MarkNodeCompleted — the count catches up
-        // (completed jobs previously reported 4/5).
         Assert.Equal(state().TotalStageCount, state().CompletedStageCount);
     }
 }
@@ -365,8 +442,8 @@ public class NodeEventCandidateTests
     {
         var nodes = new[]
         {
-            new ConsultNodeDescriptor("extract", WorkflowNodeKinds.Prompt, "Extracting clinical concepts"),
-            new ConsultNodeDescriptor("sections", WorkflowNodeKinds.Map, "Generating sections")
+            new ConsultNodeDescriptor("extract", "Extracting clinical concepts"),
+            new ConsultNodeDescriptor("sections", "Generating sections", ForEach: WorkflowNodeBindingSources.InputSections)
         };
         var outputs = new Dictionary<string, ConsultGenerationNodeStatusResponse>
         {
@@ -385,15 +462,24 @@ public class NodeEventCandidateTests
     }
 
     [Fact]
-    public void Candidates_EmitNodeEventsInDescriptorOrder()
+    public void Candidates_EmitOnlyCompletedNodes_InDescriptorOrder()
     {
-        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response())
+        // A running forEach node emits nothing at the node level — its per-item
+        // progress rides the section-prose-step events instead.
+        var running = ConsultGenerationJobs.CreateSemanticEventCandidates(Response())
             .Where(c => c.EventType == ConsultGenerationNodeEvents.EventName)
             .ToList();
 
-        Assert.Equal(new[] { "node:extract", "node:sections" }, candidates.Select(c => c.EventKey));
-        Assert.Contains("Extracting clinical concepts completed.", candidates[0].PayloadJson);
-        Assert.Contains("Generating sections started.", candidates[1].PayloadJson);
+        Assert.Equal(new[] { "node:extract" }, running.Select(c => c.EventKey));
+        Assert.Contains("Extracting clinical concepts completed.", running[0].PayloadJson);
+
+        var completed = ConsultGenerationJobs.CreateSemanticEventCandidates(
+                Response(mapStatus: ConsultGenerationNodeStatuses.Completed))
+            .Where(c => c.EventType == ConsultGenerationNodeEvents.EventName)
+            .ToList();
+
+        Assert.Equal(new[] { "node:extract", "node:sections" }, completed.Select(c => c.EventKey));
+        Assert.Contains("Generating sections completed.", completed[1].PayloadJson);
     }
 
     [Fact]

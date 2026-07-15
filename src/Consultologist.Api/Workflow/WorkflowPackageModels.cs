@@ -175,10 +175,10 @@ public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
     string StandardsMarkdown,
     IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
-    IReadOnlyList<WorkflowSectionStepSpec>? SectionSteps = null,
     IReadOnlyList<WorkflowNodeSpec>? Nodes = null,
     IReadOnlyDictionary<string, string>? SchemaContracts = null,
-    WorkflowPackageData? Data = null)
+    WorkflowPackageData? Data = null,
+    string? ResultNodeId = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 

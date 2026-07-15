@@ -242,38 +242,63 @@ public class WorkflowSectionStepDefaultsTests
     }
 }
 
-public class ProseStepVariableBuilderTests
+public class ForEachInstanceResolutionTests
 {
+    // Byte parity with the deleted ProseStepVariableBuilder: a lowered map step's
+    // bindings, resolved as a forEach instance, must produce the exact values the
+    // prose-step activity used to build.
     private static readonly IReadOnlyList<ClinicalConcept> Concepts = new[]
     {
         new ClinicalConcept("Malignant neoplasm of breast", "disorder", "254837009", true, true, "draft")
     };
 
-    private static ConsultProseStepActivityInput Input(string? previousStepOutput = null) => new(
-        "step-id",
-        "Draft consult text.",
-        Concepts,
-        new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "Chronological prose."),
-        previousStepOutput,
-        "general@v2026.08.1");
+    private static readonly IReadOnlyDictionary<string, string> Item = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["id"] = "hpi",
+        ["name"] = "History of Present Illness",
+        ["standard"] = "Chronological prose."
+    };
 
-    private static WorkflowSectionStepSpec Step(params (string Variable, string Source)[] bindings) => new(
-        "prompt-id",
-        "Label",
-        bindings.ToDictionary(b => b.Variable, b => b.Source, StringComparer.Ordinal),
-        "step-id");
+    private static readonly ConsultNodeDescriptor Trajectory = new(
+        "create-patient-trajectory", "Building patient trajectory", OutputContract: "concept-list");
+
+    private static readonly ConsultNodeDescriptor PreviousStep = new(
+        "standard-section-draft", "Drafting section", ForEach: "input:sections");
+
+    private static ConsultNodeDescriptor Node(params (string Variable, string From, string? As)[] bindings) => new(
+        "patient-section-draft",
+        "Applying patient information",
+        PromptId: "patient-section-draft",
+        Bindings: bindings.ToDictionary(
+            b => b.Variable,
+            b => new ConsultNodeBindingDescriptor(b.From, b.As),
+            StringComparer.Ordinal),
+        ForEach: "input:sections");
+
+    private static readonly IReadOnlyDictionary<string, ConsultNodeDescriptor> NodesById =
+        new[] { Trajectory, PreviousStep }.ToDictionary(n => n.Id, StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, NodeRunResult> Outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+    {
+        ["create-patient-trajectory"] = new("{}", Concepts, "in", "out"),
+        ["standard-section-draft:hpi"] = new("Previous step prose.", null, "in2", "out2")
+    };
 
     [Fact]
-    public void Build_MapsEverySourceToItsInputValue()
+    public void Resolve_MapsEveryLoweredSourceToItsLegacyValue()
     {
-        var variables = ProseStepVariableBuilder.Build(
-            Step(
-                ("draft", WorkflowStepBindingSources.ConsultDraft),
-                ("name", WorkflowStepBindingSources.SectionName),
-                ("standard", WorkflowStepBindingSources.SectionStandard),
-                ("concepts", WorkflowStepBindingSources.PatientTrajectoryConcepts),
-                ("previous", WorkflowStepBindingSources.PreviousStepOutput)),
-            Input(previousStepOutput: "Previous step prose."));
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(
+                ("draft", "input:consult_draft", null),
+                ("name", "item:name", null),
+                ("standard", "item:standard", null),
+                ("concepts", "node:create-patient-trajectory", "concept-context"),
+                ("previous", "node:standard-section-draft", null)),
+            "Draft consult text.",
+            Item,
+            dataScalars: null,
+            NodesById,
+            Outputs);
 
         Assert.Equal("Draft consult text.", variables["draft"]);
         Assert.Equal("History of Present Illness", variables["name"]);
@@ -283,23 +308,46 @@ public class ProseStepVariableBuilderTests
     }
 
     [Fact]
-    public void Build_ThrowsWhenPreviousStepOutputIsBoundButAbsent()
+    public void Resolve_ItemAlignment_ReadsTheInstancesOwnUpstreamOutput()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => ProseStepVariableBuilder.Build(
-            Step(("previous", WorkflowStepBindingSources.PreviousStepOutput)),
-            Input(previousStepOutput: null)));
+        var outputs = new Dictionary<string, NodeRunResult>(Outputs.ToDictionary(p => p.Key, p => p.Value), StringComparer.Ordinal)
+        {
+            ["standard-section-draft:pmh"] = new("Other section prose.", null, "in3", "out3")
+        };
+        var pmhItem = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "pmh", ["name"] = "Past Medical History", ["standard"] = "List."
+        };
 
-        Assert.Contains("previous_step_output", ex.Message);
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("previous", "node:standard-section-draft", null)),
+            "draft", pmhItem, null, NodesById, outputs);
+
+        Assert.Equal("Other section prose.", variables["previous"]);
+    }
+
+    [Theory]
+    [InlineData("item:title", "which the item does not carry")]
+    [InlineData("data:notes", "carries no data scalars")]
+    [InlineData("not_a_source", "cannot resolve")]
+    public void Resolve_ThrowsOnUnresolvableSources(string from, string expected)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => ConsultNodeVariableResolver.Resolve(
+            Node(("value", from, null)), "draft", Item, null, NodesById, Outputs));
+
+        Assert.Contains(expected, ex.Message);
     }
 
     [Fact]
-    public void Build_ThrowsOnUnknownSource()
+    public void Resolve_DataScalars_BindByEntryId()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => ProseStepVariableBuilder.Build(
-            Step(("value", "not_a_source")),
-            Input()));
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("value", "data:clinic-guidelines", null)),
+            "draft", Item,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["clinic-guidelines"] = "Local guidance." },
+            NodesById, Outputs);
 
-        Assert.Contains("not_a_source", ex.Message);
+        Assert.Equal("Local guidance.", variables["value"]);
     }
 }
 
