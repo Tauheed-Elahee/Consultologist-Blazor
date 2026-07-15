@@ -23,10 +23,18 @@ PACKAGE_DIR="$2"
 
 MANIFEST="$PACKAGE_DIR/manifest.json"
 STANDARDS="$PACKAGE_DIR/standards.md"
-[[ -f "$MANIFEST" && -f "$STANDARDS" ]] || { echo "error: $PACKAGE_DIR must contain manifest.json and standards.md" >&2; exit 1; }
+[[ -f "$MANIFEST" ]] || { echo "error: $PACKAGE_DIR must contain manifest.json" >&2; exit 1; }
 
 NAME=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['name'])")
 VERSION=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])")
+SPEC_VERSION_EARLY=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['specVersion'])")
+
+# standards.md is the pre-v5 section source; v5 packages ship sections as a data
+# collection instead (package-format-v5.md).
+if [[ "$SPEC_VERSION_EARLY" -lt 5 && ! -f "$STANDARDS" ]]; then
+	echo "error: specVersion $SPEC_VERSION_EARLY packages must contain standards.md" >&2
+	exit 1
+fi
 
 if ! [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[1-9][0-9]*$ ]]; then
 	echo "error: version '$VERSION' is not vYYYY.MM.N (zero-padded month, counter >= 1)" >&2
@@ -56,11 +64,19 @@ if [[ "$HAS_SCHEMAS" == "1" && ! -d "$PACKAGE_DIR/schemas" ]]; then
 	exit 1
 fi
 
+HAS_DATA=$(python3 -c "import json;print(1 if json.load(open('$MANIFEST')).get('data') else 0)")
+if [[ "$HAS_DATA" == "1" && ! -d "$PACKAGE_DIR/data" ]]; then
+	echo "error: the manifest declares data but $PACKAGE_DIR/data is missing" >&2
+	exit 1
+fi
+
 echo "Publishing $NAME@$VERSION ..."
 az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 	--file "$MANIFEST" --name "$NAME/$VERSION/manifest.json" --output none
-az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
-	--file "$STANDARDS" --name "$NAME/$VERSION/standards.md" --output none
+if [[ -f "$STANDARDS" ]]; then
+	az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
+		--file "$STANDARDS" --name "$NAME/$VERSION/standards.md" --output none
+fi
 
 if [[ -d "$PACKAGE_DIR/prompts" ]]; then
 	for f in "$PACKAGE_DIR"/prompts/*.md; do
@@ -74,6 +90,16 @@ if [[ -d "$PACKAGE_DIR/schemas" ]]; then
 		az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
 			--file "$f" --name "$NAME/$VERSION/schemas/$(basename "$f")" --output none
 	done
+fi
+
+# Data collections and scalars upload recursively, preserving collection-relative
+# paths (index.json + item files; package-format-v5.md).
+if [[ -d "$PACKAGE_DIR/data" ]]; then
+	while IFS= read -r -d '' f; do
+		rel="${f#"$PACKAGE_DIR"/}"
+		az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
+			--file "$f" --name "$NAME/$VERSION/$rel" --output none
+	done < <(find "$PACKAGE_DIR/data" -type f -print0)
 fi
 
 # The derived DAG diagram rides along when present (generated, never authored;

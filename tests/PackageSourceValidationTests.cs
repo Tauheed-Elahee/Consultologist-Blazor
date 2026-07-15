@@ -35,12 +35,6 @@ public class PackageSourceValidationTests
 
         Assert.Equal("general", manifest.Name);
         Assert.True(CalVerVersion.TryParse(manifest.Version, out _), $"version '{manifest.Version}' is not CalVer");
-        Assert.True(File.Exists(Path.Combine(packageDir, "standards.md")));
-
-        if (manifest.SpecVersion < 2)
-        {
-            return; // v1 has no prompt content to validate
-        }
 
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         var paths = (manifest.Prompts ?? new List<WorkflowPromptSpec>()).Select(p => p.File)
@@ -57,48 +51,79 @@ public class PackageSourceValidationTests
             }
         }
 
+        // Two-stage data gathering, exactly as the store does it: the data table
+        // names scalars and collection indexes; each index names its item files.
+        foreach (var (_, dataPath) in manifest.Data ?? new Dictionary<string, string>())
+        {
+            if (!dataPath.EndsWith('/'))
+            {
+                AddFileIfPresent(files, packageDir, dataPath);
+                continue;
+            }
+
+            var indexPath = dataPath + WorkflowDataResolver.IndexFileName;
+            if (!AddFileIfPresent(files, packageDir, indexPath))
+            {
+                continue;
+            }
+
+            var index = JsonSerializer.Deserialize<WorkflowDataIndexFile>(files[indexPath], JsonOptions);
+            foreach (var item in index?.Items ?? new List<WorkflowDataIndexItem>())
+            {
+                if (!string.IsNullOrWhiteSpace(item.File))
+                {
+                    AddFileIfPresent(files, packageDir, dataPath + item.File);
+                }
+            }
+        }
+
         var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, "validation errors: " + string.Join(" | ", result.Errors));
         Assert.True(result.Warnings.Count == 0, "validation warnings: " + string.Join(" | ", result.Warnings));
     }
 
+    private static bool AddFileIfPresent(Dictionary<string, string> files, string packageDir, string path)
+    {
+        var full = Path.Combine(packageDir, path.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(full))
+        {
+            return false;
+        }
+
+        files[path] = File.ReadAllText(full);
+        return true;
+    }
+
     [Fact]
-    public void GeneralPackageSource_DeclaresTheCanonicalDag()
+    public void GeneralPackageSource_DeclaresTheCanonicalV5Pipeline()
     {
         var packageDir = Path.Combine(FindRepoRoot(), "packages", "general");
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(
             File.ReadAllText(Path.Combine(packageDir, "manifest.json")), JsonOptions)!;
 
-        Assert.True(manifest.SpecVersion >= 4, "the repo package is expected to be specVersion 4 or newer");
-        Assert.NotNull(manifest.Nodes);
+        // The repo package is the package-format-v5.md normative example: the
+        // one-kind respelling of the verbatim pipeline, pinned to the canonical
+        // fixture so behavior stays byte-stable across the format cutover.
+        Assert.Equal(5, manifest.SpecVersion);
+        Assert.Null(manifest.DerivedFrom);
+        Assert.Equal("node:section-instructions", manifest.Result);
+        Assert.Equal("data/standards/", manifest.Data!["standards"]);
 
-        // The first v4 package is the verbatim current pipeline: its declared nodes
-        // must equal the DAG the engine synthesizes for v2/v3 packages, so behavior is
-        // byte-stable across the format cutover.
-        var synthesized = WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized);
+        var canonical = V5Fixtures.Manifest().Nodes!;
 
         Assert.Equal(
-            synthesized.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.Over)),
-            manifest.Nodes!.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.Over)));
+            canonical.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.ForEach)),
+            manifest.Nodes!.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.ForEach)));
 
-        foreach (var (declared, expected) in manifest.Nodes!.Zip(synthesized))
+        foreach (var (declared, expected) in manifest.Nodes!.Zip(canonical))
         {
             Assert.Equal(expected.Output, declared.Output);
+            Assert.Null(declared.Over);
+            Assert.Null(declared.Steps);
             Assert.Equal(
                 (expected.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal),
                 (declared.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal));
-
-            var expectedSteps = expected.Steps ?? new List<WorkflowMapStepSpec>();
-            var declaredSteps = declared.Steps ?? new List<WorkflowMapStepSpec>();
-            Assert.Equal(expectedSteps.Select(s => (s.StepId, s.Label)), declaredSteps.Select(s => (s.StepId, s.Label)));
-
-            foreach (var (declaredStep, expectedStep) in declaredSteps.Zip(expectedSteps))
-            {
-                Assert.Equal(
-                    expectedStep.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal),
-                    declaredStep.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal));
-            }
         }
     }
 

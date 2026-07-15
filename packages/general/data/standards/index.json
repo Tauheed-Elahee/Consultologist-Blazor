@@ -1,0 +1,54 @@
+{
+  "fields": [
+    "id",
+    "name",
+    "content"
+  ],
+  "items": [
+    {
+      "id": "hpi",
+      "name": "History of Present Illness",
+      "file": "hpi.md"
+    },
+    {
+      "id": "pmh",
+      "name": "Past Medical History",
+      "file": "pmh.md"
+    },
+    {
+      "id": "medications",
+      "name": "Medications",
+      "file": "medications.md"
+    },
+    {
+      "id": "allergies",
+      "name": "Allergies",
+      "file": "allergies.md"
+    },
+    {
+      "id": "social_history",
+      "name": "Social History",
+      "file": "social_history.md"
+    },
+    {
+      "id": "family_history",
+      "name": "Family History",
+      "file": "family_history.md"
+    },
+    {
+      "id": "exam",
+      "name": "Physical Exam",
+      "file": "exam.md"
+    },
+    {
+      "id": "investigations",
+      "name": "Investigations",
+      "file": "investigations.md"
+    },
+    {
+      "id": "assessment_plan",
+      "name": "Assessment and Plan",
+      "file": "assessment_plan.md"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 flowchart TD
     input_consult_draft(["input:consult_draft"])
-    input_sections(["input:sections"])
+    data_standards(["data:standards"])
 
     extract_patient_concepts["extract-patient-concepts<br/>Extracting clinical concepts<br/>output: concept-list"]
     input_consult_draft -->|"consult_draft"| extract_patient_concepts
@@ -13,13 +13,13 @@ flowchart TD
     extract_patient_concepts -->|"patient_concepts"| create_patient_trajectory
     create_typical_trajectory -->|"typical_trajectory_concepts"| create_patient_trajectory
 
-    input_sections -->|"over"| sections
-    subgraph sections["sections — Generating sections (per item)"]
-        sections_standard_section_draft["standard-section-draft<br/>Drafting section<br/>item: name"]
-        sections_patient_section_draft["patient-section-draft<br/>Applying patient information<br/>item: name"]
-        sections_section_instructions["section-instructions<br/>Applying section instructions<br/>item: name, standard"]
-        sections_standard_section_draft -->|"standard_section_draft"| sections_patient_section_draft
-        sections_patient_section_draft -->|"patient_section_draft"| sections_section_instructions
+    data_standards -->|"forEach"| foreach_data_standards
+    subgraph foreach_data_standards["per data:standards item"]
+        standard_section_draft["standard-section-draft<br/>Drafting section<br/>item: name"]
+        patient_section_draft["patient-section-draft<br/>Applying patient information<br/>item: name"]
+        section_instructions["section-instructions<br/>Applying section instructions<br/>item: name, content"]
+        standard_section_draft -->|"standard_section_draft"| patient_section_draft
+        patient_section_draft -->|"patient_section_draft"| section_instructions
     end
-    create_patient_trajectory -->|"patient_trajectory_concepts (as concept-context)"| sections_standard_section_draft
-    input_consult_draft -->|"consult_draft"| sections_patient_section_draft
+    create_patient_trajectory -->|"patient_trajectory_concepts (as concept-context)"| standard_section_draft
+    input_consult_draft -->|"consult_draft"| patient_section_draft

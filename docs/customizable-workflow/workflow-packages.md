@@ -130,6 +130,19 @@ when a specialty needs a structurally different pipeline.
 > with byte-identical first-node prompts across format generations (jobs `2b06412d…`,
 > `8725c440…`, `913dda03…`).
 
+> **Milestone 5 engine implemented 2026-07-15** (#59 via #64; PRs #74–#76 and the
+> catalog #66/#67): specVersion 5 — fork lineage (`derivedFrom`, root always derived
+> by walking), a `data` table with self-describing collections (`index.json` +
+> per-item files) replacing `standards.md`, ONE node kind with `forEach`
+> (item-aligned `node:` edges replaced `previous_step_output`; the map container,
+> `run-prose-step`, and the v4→v3 lowering are deleted), a `result:` deliverable
+> contract, per-(node, item) scheduling and provenance hashes, server-resolved
+> sections, and the draft-only effective-input hash (`effectiveInputHashVersion` 2).
+> The account standards override retired (customization returns as package forking
+> with the in-app editor, #57). Agent selection is catalog-keyed
+> (`agents/output-contracts.json`, #55). First v5 package: `general@v2026.07.6`
+> (#72).
+
 UI consequences: the Templates page grows from "edit section standards" toward a package
 view with per-account overrides; progress displays become generic step lists rather than
 hardcoded stage names (done for the prose steps in milestone 3 — the client renders

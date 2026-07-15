@@ -43,22 +43,37 @@ public class WorkflowDagDiagramTests
     }
 
     [Fact]
-    public void Diagram_DrawsNodesEdgesAndTheMapSubgraph()
+    public void Diagram_DrawsNodesEdgesAndTheForEachSubgraph()
     {
         var diagram = WorkflowDagDiagram.Generate(GeneralManifest());
 
         Assert.StartsWith("flowchart TD", diagram);
         // Inputs as stadium nodes.
         Assert.Contains("input_consult_draft([\"input:consult_draft\"])", diagram);
-        // A prompt node with its schema annotation.
+        // A scalar node with its schema annotation.
         Assert.Contains("extract-patient-concepts<br/>Extracting clinical concepts<br/>output: concept-list", diagram);
         // The diamond's fan-in edge with a renderer annotation.
         Assert.Contains("-->|\"patient_trajectory_concepts (as concept-context)\"|", diagram);
-        // The map as a subgraph fed by its over source.
-        Assert.Contains("input_sections -->|\"over\"| sections", diagram);
-        Assert.Contains("subgraph sections[", diagram);
-        // The per-item step chain rides previous_step_output edges.
-        Assert.Contains("sections_standard_section_draft -->|\"standard_section_draft\"| sections_patient_section_draft", diagram);
+        // The forEach chain as a per-collection subgraph fed by its collection.
+        Assert.Contains("-->|\"forEach\"| foreach_", diagram);
+        Assert.Contains("subgraph foreach_", diagram);
+        // Item-aligned edges chain the steps inside the box.
+        Assert.Contains("standard_section_draft -->|\"standard_section_draft\"| patient_section_draft", diagram);
+    }
+
+    [Fact]
+    public void Diagram_RendersV5ManifestsNatively()
+    {
+        var diagram = WorkflowDagDiagram.Generate(V5Fixtures.Manifest());
+
+        // The collection stadium and the per-item subgraph.
+        Assert.Contains("data_standards([\"data:standards\"])", diagram);
+        Assert.Contains("data_standards -->|\"forEach\"| foreach_data_standards", diagram);
+        Assert.Contains("subgraph foreach_data_standards[\"per data:standards item\"]", diagram);
+        // item: fields surface in the node labels.
+        Assert.Contains("section-instructions<br/>Applying section instructions<br/>item: name, content", diagram);
+        // Broadcast edge crosses the boundary.
+        Assert.Contains("create_patient_trajectory -->|\"patient_trajectory_concepts (as concept-context)\"| standard_section_draft", diagram);
     }
 
     [Fact]
