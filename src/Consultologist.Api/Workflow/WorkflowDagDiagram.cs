@@ -3,32 +3,43 @@ using System.Text;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Derives a Mermaid flowchart from a specVersion-4 manifest's nodes. Bindings are
-/// the edges plus strictly more, so the diagram is always generated and never
-/// authored — the derived-view rule that rejected a second edge file
-/// (docs/customizable-workflow/output-contract-catalog.md). The checked-in
+/// Derives a Mermaid flowchart from a manifest's nodes. Bindings are the edges plus
+/// strictly more, so the diagram is always generated and never authored — the
+/// derived-view rule that rejected a second edge file. forEach chains render as a
+/// per-collection subgraph: the container lives on as presentation, never as format
+/// (docs/customizable-workflow/package-format-v5.md). The checked-in
 /// packages/general/dag.mmd is pinned to this generator by a snapshot test.
 /// </summary>
 public static class WorkflowDagDiagram
 {
     public static string Generate(WorkflowPackageManifest manifest)
     {
-        var nodes = manifest.Nodes
+        var declared = manifest.Nodes
             ?? throw new InvalidOperationException(
-                $"Package {manifest.Name}@{manifest.Version} declares no nodes; the DAG diagram requires specVersion 4.");
+                $"Package {manifest.Name}@{manifest.Version} declares no nodes; the DAG diagram requires specVersion 4 or newer.");
+
+        // Pre-v5 manifests carry the map container; render the one-kind lowering so
+        // a single renderer serves both eras (the v4 path retires with the v5-only
+        // rebase).
+        var nodes = declared.Any(node => string.Equals(node.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))
+            ? WorkflowNodeDefaults.LowerToOneKind(declared).Nodes
+            : declared;
 
         var sb = new StringBuilder();
         sb.Append("flowchart TD\n");
 
-        // Engine-supplied inputs first, in first-reference order.
-        foreach (var input in CollectInputSources(nodes))
+        // External sources first, in first-reference order: engine inputs, scalar
+        // data entries, and forEach collections all render as stadiums.
+        foreach (var source in CollectExternalSources(nodes))
         {
-            sb.Append($"    {Sanitize(input)}([\"{input}\"])\n");
+            sb.Append($"    {Sanitize(source)}([\"{source}\"])\n");
         }
 
         sb.Append('\n');
 
-        foreach (var node in nodes.Where(n => n.Kind == WorkflowNodeKinds.Prompt))
+        var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+
+        foreach (var node in nodes.Where(node => node.ForEach is null))
         {
             var label = $"{node.Id}<br/>{node.Label}";
             if (node.Output != null)
@@ -40,61 +51,68 @@ public static class WorkflowDagDiagram
 
             foreach (var (variable, binding) in node.Bindings ?? new Dictionary<string, WorkflowBindingValue>())
             {
-                AppendBindingEdge(sb, binding, variable, Sanitize(node.Id));
+                AppendEdge(sb, binding, variable, Sanitize(node.Id), indent: "    ");
             }
         }
 
-        foreach (var node in nodes.Where(n => n.Kind == WorkflowNodeKinds.Map))
+        foreach (var collection in nodes
+            .Where(node => node.ForEach != null)
+            .Select(node => node.ForEach!)
+            .Distinct(StringComparer.Ordinal))
         {
+            var chain = nodes.Where(node => string.Equals(node.ForEach, collection, StringComparison.Ordinal)).ToList();
+            var subgraphId = "foreach_" + Sanitize(collection);
+
+            bool IsItemAligned(WorkflowBindingValue binding) =>
+                binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                && nodesById.TryGetValue(binding.From[WorkflowNodeBindingSources.NodePrefix.Length..], out var target)
+                && string.Equals(target.ForEach, collection, StringComparison.Ordinal);
+
             sb.Append('\n');
-            var mapId = Sanitize(node.Id);
+            sb.Append($"    {Sanitize(collection)} -->|\"forEach\"| {subgraphId}\n");
+            sb.Append($"    subgraph {subgraphId}[\"per {collection} item\"]\n");
 
-            if (node.Over != null)
+            foreach (var node in chain)
             {
-                sb.Append($"    {Sanitize(node.Over)} -->|\"over\"| {mapId}\n");
-            }
-
-            sb.Append($"    subgraph {mapId}[\"{node.Id} — {node.Label} (per item)\"]\n");
-
-            var steps = node.Steps ?? new List<WorkflowMapStepSpec>();
-            var stepIds = steps.Select(step => $"{mapId}_{Sanitize(step.StepId)}").ToList();
-
-            for (var i = 0; i < steps.Count; i++)
-            {
-                var step = steps[i];
-                var itemFields = step.Bindings
-                    .Where(pair => pair.Value.From.StartsWith("item:", StringComparison.Ordinal))
-                    .Select(pair => pair.Value.From["item:".Length..])
+                var itemFields = (node.Bindings ?? new Dictionary<string, WorkflowBindingValue>())
+                    .Values
+                    .Where(binding => binding.From.StartsWith("item:", StringComparison.Ordinal))
+                    .Select(binding => binding.From["item:".Length..])
+                    .Distinct(StringComparer.Ordinal)
                     .ToList();
-                var label = $"{step.StepId}<br/>{step.Label}";
+                var label = $"{node.Id}<br/>{node.Label}";
                 if (itemFields.Count > 0)
                 {
                     label += $"<br/>item: {string.Join(", ", itemFields)}";
                 }
 
-                sb.Append($"        {stepIds[i]}[\"{label}\"]\n");
+                sb.Append($"        {Sanitize(node.Id)}[\"{label}\"]\n");
             }
 
-            for (var i = 0; i < steps.Count; i++)
+            // Item-aligned edges (same-collection node: bindings) live inside the box.
+            foreach (var node in chain)
             {
-                foreach (var (variable, binding) in steps[i].Bindings)
+                foreach (var (variable, binding) in node.Bindings ?? new Dictionary<string, WorkflowBindingValue>())
                 {
-                    if (binding.From == WorkflowNodeBindingSources.PreviousStepOutput)
+                    if (IsItemAligned(binding))
                     {
-                        sb.Append($"        {stepIds[i - 1]} -->|\"{variable}\"| {stepIds[i]}\n");
+                        AppendEdge(sb, binding, variable, Sanitize(node.Id), indent: "        ");
                     }
                 }
             }
 
             sb.Append("    end\n");
 
-            // Edges crossing into the subgraph (upstream nodes and inputs) are emitted
-            // outside it so Mermaid keeps the subgraph box tight.
-            for (var i = 0; i < steps.Count; i++)
+            // Broadcast and input edges cross the boundary from outside, keeping the
+            // subgraph box tight.
+            foreach (var node in chain)
             {
-                foreach (var (variable, binding) in steps[i].Bindings)
+                foreach (var (variable, binding) in node.Bindings ?? new Dictionary<string, WorkflowBindingValue>())
                 {
-                    AppendBindingEdge(sb, binding, variable, stepIds[i]);
+                    if (!IsItemAligned(binding))
+                    {
+                        AppendEdge(sb, binding, variable, Sanitize(node.Id), indent: "    ");
+                    }
                 }
             }
         }
@@ -102,7 +120,12 @@ public static class WorkflowDagDiagram
         return sb.ToString();
     }
 
-    private static void AppendBindingEdge(StringBuilder sb, WorkflowBindingValue binding, string variable, string targetId)
+    private static void AppendEdge(
+        StringBuilder sb,
+        WorkflowBindingValue binding,
+        string variable,
+        string targetId,
+        string indent)
     {
         string sourceId;
 
@@ -110,28 +133,31 @@ public static class WorkflowDagDiagram
         {
             sourceId = Sanitize(binding.From[WorkflowNodeBindingSources.NodePrefix.Length..]);
         }
-        else if (binding.From.StartsWith("input:", StringComparison.Ordinal))
+        else if (binding.From.StartsWith("input:", StringComparison.Ordinal)
+            || binding.From.StartsWith(WorkflowNodeBindingSources.DataPrefix, StringComparison.Ordinal))
         {
             sourceId = Sanitize(binding.From);
         }
         else
         {
-            return; // item:* lives in the step label; previous_step_output is the chain edge.
+            return; // item:* fields live in the node label.
         }
 
         var label = binding.As is null ? variable : $"{variable} (as {binding.As})";
-        sb.Append($"    {sourceId} -->|\"{label}\"| {targetId}\n");
+        sb.Append($"{indent}{sourceId} -->|\"{label}\"| {targetId}\n");
     }
 
-    private static IReadOnlyList<string> CollectInputSources(IReadOnlyList<WorkflowNodeSpec> nodes)
+    private static IReadOnlyList<string> CollectExternalSources(IReadOnlyList<WorkflowNodeSpec> nodes)
     {
-        var inputs = new List<string>();
+        var sources = new List<string>();
 
         void Add(string? from)
         {
-            if (from != null && from.StartsWith("input:", StringComparison.Ordinal) && !inputs.Contains(from))
+            if (from != null
+                && (from.StartsWith("input:", StringComparison.Ordinal) || from.StartsWith(WorkflowNodeBindingSources.DataPrefix, StringComparison.Ordinal))
+                && !sources.Contains(from))
             {
-                inputs.Add(from);
+                sources.Add(from);
             }
         }
 
@@ -142,18 +168,10 @@ public static class WorkflowDagDiagram
                 Add(binding.From);
             }
 
-            Add(node.Over);
-
-            foreach (var step in node.Steps ?? new List<WorkflowMapStepSpec>())
-            {
-                foreach (var binding in step.Bindings.Values)
-                {
-                    Add(binding.From);
-                }
-            }
+            Add(node.ForEach);
         }
 
-        return inputs;
+        return sources;
     }
 
     private static string Sanitize(string raw)
