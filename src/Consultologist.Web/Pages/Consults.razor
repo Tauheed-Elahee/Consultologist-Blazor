@@ -2,7 +2,6 @@
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using Microsoft.AspNetCore.Components.Routing
 @using System.Diagnostics
-@using System.Text
 @using System.Text.Json
 @using Consultologist.Web.Services.AI
 @using Consultologist.Web.Services.Diagnostics
@@ -10,7 +9,6 @@
 @inject IAIEndpointService AIService
 @inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
-@inject IAccountEndpointService AccountService
 @inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
 @implements IAsyncDisposable
@@ -195,7 +193,6 @@
 </AuthorizeView>
 
 @code {
-  private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
   private static readonly int MaxSseReconnectAttempts = 1;
   private static readonly JsonSerializerOptions SseJsonOptions = new()
   {
@@ -205,6 +202,7 @@
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
+  private int workflowPackageSpecVersion;
   private Dictionary<string, string> generatedSections = new();
   private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
@@ -235,15 +233,16 @@
 
     try
     {
+      // Sections come from the package endpoint — one server-side source for every
+      // spec version. The account standards override retired with the v5 input
+      // model; customization returns as package forking (the in-app editor).
       var package = await WorkflowService.GetCurrentPackageAsync();
       workflowPackageRef = package.Ref;
-      var defaultMarkdown = package.StandardsMarkdown;
-      var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
-      var markdown = string.IsNullOrWhiteSpace(savedSetting?.Value)
-        ? defaultMarkdown
-        : savedSetting.Value;
+      workflowPackageSpecVersion = package.SpecVersion;
 
-      sectionStandards = ParseStandards(markdown);
+      sectionStandards = (package.Sections ?? Array.Empty<WorkflowPackageSectionResponse>())
+        .Select(section => new SectionStandard(section.Id, section.Name, section.Content))
+        .ToList();
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -292,9 +291,13 @@
       totalSectionCount = sectionSnapshots.Count;
       await InvokeAsync(StateHasChanged);
 
-      var requestSections = sectionSnapshots
-        .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
-        .ToList();
+      // v5 packages resolve sections server-side from package data; the request
+      // carries them only for specVersion ≤4 pins.
+      var requestSections = workflowPackageSpecVersion >= 5
+        ? new List<ConsultGenerationSectionRequest>()
+        : sectionSnapshots
+            .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
+            .ToList();
 
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections, workflowPackageRef);
       var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
@@ -885,51 +888,6 @@
     return activeSectionSnapshots.Count > 0
       ? activeSectionSnapshots
       : sectionStandards;
-  }
-
-  private static List<SectionStandard> ParseStandards(string markdown)
-  {
-    var sections = new List<SectionStandard>();
-    SectionStandard? current = null;
-    var content = new StringBuilder();
-
-    foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
-    {
-      if (line.StartsWith("## ", StringComparison.Ordinal))
-      {
-        if (current != null)
-        {
-          current.Standard = content.ToString().Trim();
-          sections.Add(current);
-          content.Clear();
-        }
-
-        var heading = line[3..].Trim();
-        var separatorIndex = heading.IndexOf(':');
-        var id = separatorIndex >= 0 ? heading[..separatorIndex].Trim() : CreateId(heading);
-        var name = separatorIndex >= 0 ? heading[(separatorIndex + 1)..].Trim() : heading;
-        current = new SectionStandard(id, name, string.Empty);
-        continue;
-      }
-
-      if (current != null)
-      {
-        content.AppendLine(line);
-      }
-    }
-
-    if (current != null)
-    {
-      current.Standard = content.ToString().Trim();
-      sections.Add(current);
-    }
-
-    return sections;
-  }
-
-  private static string CreateId(string value)
-  {
-    return value.Trim().ToLowerInvariant().Replace(' ', '_');
   }
 
   private sealed class SectionStandard

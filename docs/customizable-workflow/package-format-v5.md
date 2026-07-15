@@ -207,7 +207,9 @@ the v2–v4 draft+sections definition). Section content is covered by the
 2. **Aggregate closed**: a forEach node's output is bindable only by
    same-collection forEach nodes.
 3. **Cross-collection closed**: no edges between forEach nodes over different
-   collections.
+   collections — and all forEach nodes share **one** collection per package (the
+   engine fans one item set per job; disconnected parallel chains would have no
+   consumer anyway).
 4. **One deliverable**: exactly one `result`, referencing a forEach node.
 5. No conditionals, loops, or expression language — decisions are model outputs
    (dag-improvements #3).

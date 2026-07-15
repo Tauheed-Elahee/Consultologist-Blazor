@@ -185,11 +185,14 @@ public sealed record WorkflowPackage(
     public bool HasPrompts => Prompts is { Count: > 0 };
 }
 
+public sealed record WorkflowPackageSectionResponse(string Id, string Name, string Content);
+
 public sealed record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    string StandardsMarkdown);
+    string StandardsMarkdown,
+    IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null);
 
 /// <summary>
 /// A package reference of the form "name@vYYYY.MM.N" or "name@latest".

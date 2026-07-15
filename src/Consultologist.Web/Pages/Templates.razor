@@ -2,7 +2,6 @@
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using System.Net
 @using System.Text
-@inject IAccountEndpointService AccountService
 @inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
 
@@ -15,7 +14,7 @@
         <span class="section-eyebrow">Templates</span>
         <h1 class="page-title">Section standards for consult notes.</h1>
         <p class="page-description">
-            Edit the clinical writing standards used for each generated section. Changes are saved to your account.
+            The clinical writing standards used for each generated section, as shipped by the active workflow package.
         </p>
     </div>
 </section>
@@ -31,19 +30,14 @@
                             Standards guide organization and tone only. Patient facts still come from the draft consult.
                         </p>
                     </div>
-                    <div class="action-row">
-                        <FluentButton Appearance="Appearance.Neutral"
-                                      @onclick="ResetToDefaultsAsync"
-                                      Disabled="@(isLoading || isSaving)">
-                            Reset defaults
-                        </FluentButton>
-                        <FluentButton Appearance="Appearance.Accent"
-                                      @onclick="SaveStandardsAsync"
-                                      Disabled="@(isLoading || isSaving || standards.Count == 0)">
-                            Save changes
-                        </FluentButton>
-                    </div>
                 </div>
+
+                <FluentMessageBar Intent="MessageIntent.Info" AllowDismiss="false">
+                    Standards customization is moving to the workflow package editor, where edits publish
+                    as your own package version with full provenance. Until it ships, standards are
+                    read-only here. Previously saved custom standards are preserved on your account and
+                    will seed your first customized package.
+                </FluentMessageBar>
 
                 @if (isLoading)
                 {
@@ -53,9 +47,9 @@
                     </div>
                 }
 
-                @if (!string.IsNullOrWhiteSpace(statusMessage))
+                @if (!string.IsNullOrWhiteSpace(loadError))
                 {
-                    <FluentMessageBar Intent="@statusIntent">@statusMessage</FluentMessageBar>
+                    <FluentMessageBar Intent="MessageIntent.Error">@loadError</FluentMessageBar>
                 }
 
                 @foreach (var standard in standards)
@@ -68,20 +62,8 @@
                             </div>
                         </div>
 
-                        <div class="template-editor-grid">
-                            <label class="input-field">
-                                <span>Markdown standard</span>
-                                <FluentTextArea @bind-Value="standard.Standard"
-                                                Rows="9"
-                                                Disabled="@isSaving" />
-                            </label>
-
-                            <div class="input-field">
-                                <span>Preview</span>
-                                <div class="markdown-preview">
-                                    @((MarkupString)RenderMarkdownPreview(standard.Standard))
-                                </div>
-                            </div>
+                        <div class="markdown-preview">
+                            @((MarkupString)RenderMarkdownPreview(standard.Content))
                         </div>
                     </article>
                 }
@@ -91,15 +73,9 @@
 </AuthorizeView>
 
 @code {
-  private const string StandardsSettingKey = "consult.sectionStandardsMarkdown";
-  private const string MarkdownContentType = "text/markdown";
-
-  private List<SectionStandard> standards = new();
-  private string? defaultMarkdown;
+  private IReadOnlyList<WorkflowPackageSectionResponse> standards = Array.Empty<WorkflowPackageSectionResponse>();
   private bool isLoading;
-  private bool isSaving;
-  private string? statusMessage;
-  private MessageIntent statusIntent = MessageIntent.Info;
+  private string? loadError;
 
   protected override async Task OnInitializedAsync()
   {
@@ -109,14 +85,15 @@
   private async Task LoadStandardsAsync()
   {
     isLoading = true;
-    statusMessage = null;
+    loadError = null;
 
     try
     {
+      // The package endpoint is the single section source (the account standards
+      // override retired with the v5 input model; customization returns as package
+      // forking in the in-app editor).
       var package = await WorkflowService.GetCurrentPackageAsync();
-      defaultMarkdown = package.StandardsMarkdown;
-      var savedSetting = await AccountService.GetSettingAsync(StandardsSettingKey);
-      standards = ParseStandards(string.IsNullOrWhiteSpace(savedSetting?.Value) ? defaultMarkdown : savedSetting.Value);
+      standards = package.Sections ?? Array.Empty<WorkflowPackageSectionResponse>();
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -124,131 +101,13 @@
     }
     catch (Exception ex)
     {
-      standards = new();
-      statusIntent = MessageIntent.Error;
-      statusMessage = $"Unable to load section standards: {ex.Message}";
+      standards = Array.Empty<WorkflowPackageSectionResponse>();
+      loadError = $"Unable to load section standards: {ex.Message}";
     }
     finally
     {
       isLoading = false;
     }
-  }
-
-  private async Task SaveStandardsAsync()
-  {
-    isSaving = true;
-    statusMessage = null;
-
-    try
-    {
-      await AccountService.SaveSettingAsync(StandardsSettingKey, SerializeStandards(standards), MarkdownContentType);
-      statusIntent = MessageIntent.Success;
-      statusMessage = "Section standards saved.";
-    }
-    catch (AccessTokenNotAvailableException exception)
-    {
-      exception.Redirect();
-    }
-    catch (Exception ex)
-    {
-      statusIntent = MessageIntent.Error;
-      statusMessage = $"Unable to save standards: {ex.Message}";
-    }
-    finally
-    {
-      isSaving = false;
-    }
-  }
-
-  private async Task ResetToDefaultsAsync()
-  {
-    isSaving = true;
-    statusMessage = null;
-
-    try
-    {
-      defaultMarkdown ??= (await WorkflowService.GetCurrentPackageAsync()).StandardsMarkdown;
-      standards = ParseStandards(defaultMarkdown);
-      await AccountService.DeleteSettingAsync(StandardsSettingKey);
-      statusIntent = MessageIntent.Success;
-      statusMessage = "Default section standards restored.";
-    }
-    catch (AccessTokenNotAvailableException exception)
-    {
-      exception.Redirect();
-    }
-    catch (Exception ex)
-    {
-      statusIntent = MessageIntent.Error;
-      statusMessage = $"Unable to reset standards: {ex.Message}";
-    }
-    finally
-    {
-      isSaving = false;
-    }
-  }
-
-  private static List<SectionStandard> ParseStandards(string markdown)
-  {
-    var sections = new List<SectionStandard>();
-    SectionStandard? current = null;
-    var content = new StringBuilder();
-
-    foreach (var line in markdown.Replace("\r\n", "\n").Split('\n'))
-    {
-      if (line.StartsWith("## ", StringComparison.Ordinal))
-      {
-        if (current != null)
-        {
-          current.Standard = content.ToString().Trim();
-          sections.Add(current);
-          content.Clear();
-        }
-
-        var heading = line[3..].Trim();
-        var separatorIndex = heading.IndexOf(':');
-        var id = separatorIndex >= 0 ? heading[..separatorIndex].Trim() : CreateId(heading);
-        var name = separatorIndex >= 0 ? heading[(separatorIndex + 1)..].Trim() : heading;
-        current = new SectionStandard(id, name, string.Empty);
-        continue;
-      }
-
-      if (current != null)
-      {
-        content.AppendLine(line);
-      }
-    }
-
-    if (current != null)
-    {
-      current.Standard = content.ToString().Trim();
-      sections.Add(current);
-    }
-
-    return sections;
-  }
-
-  private static string SerializeStandards(IEnumerable<SectionStandard> sections)
-  {
-    var builder = new StringBuilder();
-
-    foreach (var section in sections)
-    {
-      if (builder.Length > 0)
-      {
-        builder.AppendLine();
-        builder.AppendLine();
-      }
-
-      builder.Append("## ");
-      builder.Append(section.Id);
-      builder.Append(": ");
-      builder.AppendLine(section.Name);
-      builder.AppendLine();
-      builder.Append(section.Standard.Trim());
-    }
-
-    return builder.ToString();
   }
 
   private static string RenderMarkdownPreview(string markdown)
@@ -317,24 +176,5 @@
     }
 
     return builder.ToString();
-  }
-
-  private static string CreateId(string value)
-  {
-    return value.Trim().ToLowerInvariant().Replace(' ', '_');
-  }
-
-  private sealed class SectionStandard
-  {
-    public SectionStandard(string id, string name, string standard)
-    {
-      Id = id;
-      Name = name;
-      Standard = standard;
-    }
-
-    public string Id { get; }
-    public string Name { get; }
-    public string Standard { get; set; }
   }
 }

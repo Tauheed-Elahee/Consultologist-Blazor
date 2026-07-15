@@ -374,6 +374,29 @@ public class WorkflowV5ValidationTests
     }
 
     [Fact]
+    public void Validate_RejectsTwoForEachCollections()
+    {
+        var manifest = V5Fixtures.Manifest();
+        manifest.Data!["glossary"] = "data/glossary/";
+        var files = V5Fixtures.Files(manifest);
+        files["data/glossary/index.json"] = """
+            { "fields": ["id", "name"], "items": [ { "id": "terms", "name": "Terms" } ] }
+            """;
+        // A disconnected second chain over another collection: no cross edges, still closed.
+        manifest.Nodes!.Add(new WorkflowNodeSpec(
+            "glossary-node", null, "Glossary", Prompt: "extract-patient-concepts",
+            Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+            {
+                ["consult_draft"] = new("input:consult_draft")
+            },
+            ForEach: "data:glossary"));
+
+        Assert.Contains(
+            V5Fixtures.Validate(manifest, files).Errors,
+            e => e.Contains("All forEach nodes must share one collection in specVersion 5.0"));
+    }
+
+    [Fact]
     public void DataResolver_MaterializesContentFromItemFiles()
     {
         var manifest = V5Fixtures.Manifest();
