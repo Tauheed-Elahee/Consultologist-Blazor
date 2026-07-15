@@ -36,16 +36,18 @@ public class WorkflowStandardsParserTests
     }
 
     [Fact]
-    public void Parse_RealGeneralStandards_MatchesTheNineSections()
+    public void Parse_MultiSectionDocument_KeepsOrderAndBodies()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
+        // The repo package went v5 (data/standards/); the parser survives for pre-v5
+        // registry packages until the v5-only rebase. Inline nine-section fixture.
+        var markdown = string.Join("\n\n", new[]
         {
-            dir = dir.Parent;
-        }
+            "hpi: History of Present Illness", "pmh: Past Medical History", "medications: Medications",
+            "allergies: Allergies", "social_history: Social History", "family_history: Family History",
+            "exam: Physical Exam", "investigations: Investigations", "assessment_plan: Assessment and Plan"
+        }.Select(heading => $"## {heading}\n\nGuidance for {heading[..heading.IndexOf(':')]}."));
 
-        var sections = WorkflowStandardsParser.Parse(
-            File.ReadAllText(Path.Combine(dir!.FullName, "packages", "general", "standards.md")));
+        var sections = WorkflowStandardsParser.Parse(markdown);
 
         Assert.Equal(9, sections.Count);
         Assert.Equal("hpi", sections[0].Id);
