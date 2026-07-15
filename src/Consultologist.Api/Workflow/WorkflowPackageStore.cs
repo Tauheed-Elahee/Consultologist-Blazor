@@ -3,6 +3,7 @@ using System.Text.Json;
 using Azure;
 using Azure.Core;
 using Azure.Storage.Blobs;
+using Consultologist.Api.Agents;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -25,6 +26,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     };
 
     private readonly BlobContainerClient _container;
+    private readonly OutputContractCatalog _catalog;
     private readonly ILogger<WorkflowPackageStore> _logger;
 
     // Published package versions are immutable, so resolved packages cache forever;
@@ -32,8 +34,13 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     private readonly ConcurrentDictionary<string, WorkflowPackage> _packageCache = new();
     private readonly ConcurrentDictionary<string, (string Version, DateTimeOffset FetchedAt)> _latestCache = new();
 
-    public WorkflowPackageStore(IConfiguration configuration, TokenCredential credential, ILogger<WorkflowPackageStore> logger)
+    public WorkflowPackageStore(
+        IConfiguration configuration,
+        TokenCredential credential,
+        OutputContractCatalog catalog,
+        ILogger<WorkflowPackageStore> logger)
     {
+        _catalog = catalog;
         _logger = logger;
 
         // Entra ID first: when a blob service URI is configured, authenticate with the
@@ -86,9 +93,10 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
 
         var standards = await DownloadTextAsync($"{packageRef.Name}/{version}/standards.md", cancellationToken);
 
-        var prompts = manifest.SpecVersion >= 2
+        var loaded = manifest.SpecVersion >= 2
             ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
-            : null;
+            : default;
+        var prompts = loaded.Prompts;
 
         // Every spec version resolves to one node DAG and one section-step list, so a
         // single interpreter path serves them all: v4 declares nodes natively and its
@@ -110,7 +118,20 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             _ => null
         };
 
-        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes);
+        // Package schema ids resolve to catalog contract ids here, while the schema
+        // file contents are in hand: v4 by canonical match, synthesized DAGs directly
+        // (their nodes are built against the engine's concept-list contract).
+        var schemaContracts = manifest.SpecVersion switch
+        {
+            >= 4 => loaded.SchemaContracts,
+            >= 2 => new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [WorkflowNodeDefaults.ConceptListSchemaId] = OutputContracts.ConceptList
+            },
+            _ => null
+        };
+
+        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes, schemaContracts);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -118,11 +139,12 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     }
 
     /// <summary>
-    /// Downloads and validates the prompt templates of a specVersion-2+ package.
-    /// Validation failures throw — the engine's fail-loud enforcement point
+    /// Downloads and validates the prompt templates of a specVersion-2+ package, and
+    /// resolves declared schemas to catalog contract ids. Validation failures throw —
+    /// the engine's fail-loud enforcement point
     /// (docs/customizable-workflow/package-format-v2.md, package-format-v3.md).
     /// </summary>
-    private async Task<Dictionary<string, WorkflowPromptTemplate>> LoadPromptsAsync(
+    private async Task<(Dictionary<string, WorkflowPromptTemplate> Prompts, Dictionary<string, string> SchemaContracts)> LoadPromptsAsync(
         string name,
         string version,
         WorkflowPackageManifest manifest,
@@ -152,7 +174,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
                 $"Workflow package {name}@{version} failed specVersion-{manifest.SpecVersion} validation: {string.Join(" | ", result.Errors)}");
         }
 
-        return manifest.Prompts!.ToDictionary(
+        var prompts = manifest.Prompts!.ToDictionary(
             prompt => prompt.Id,
             prompt => new WorkflowPromptTemplate(
                 prompt.Id,
@@ -160,6 +182,21 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
                 prompt.Variables,
                 prompt.Prelude is null ? null : files[manifest.Preludes![prompt.Prelude]]),
             StringComparer.Ordinal);
+
+        var schemaContracts = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (schemaId, path) in manifest.Schemas ?? new Dictionary<string, string>())
+        {
+            if (!_catalog.TryResolveContract(System.Text.Json.Nodes.JsonNode.Parse(files[path]), out var contractId))
+            {
+                throw new InvalidOperationException(
+                    $"Workflow package {name}@{version} schema '{schemaId}' does not canonically match any catalog output contract.");
+            }
+
+            schemaContracts[schemaId] = contractId;
+        }
+
+        return (prompts, schemaContracts);
     }
 
     private async Task<string> ResolveLatestVersionAsync(string name, CancellationToken cancellationToken)

@@ -64,7 +64,7 @@ public class NodeVariableResolverTests
             pair => pair.Key,
             pair => new ConsultNodeBindingDescriptor(pair.Value.From, pair.Value.As),
             StringComparer.Ordinal),
-        HasJsonOutput: node.Output != null,
+        OutputContract: node.Output is null ? null : OutputContracts.ConceptList,
         FailIfEmpty: node.Output?.FailIfEmpty);
 
     private static Dictionary<string, string> Resolve(string nodeId) =>

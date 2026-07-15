@@ -29,33 +29,22 @@ public sealed class AgentSectionGenerator
         _logger.LogInformation("AgentSectionGenerator constructed.");
     }
 
-    public Task<string> SendPromptAsync(
-        string stage,
-        string userMessage,
-        CancellationToken cancellationToken)
-    {
-        return SendPromptAsync(stage, userMessage, useConceptAgent: false, cancellationToken);
-    }
-
     /// <summary>
-    /// Sends one prompt to a pinned Foundry agent. The prose agent
-    /// (AzureAI__AgentName/AgentVersion) returns plain text; the concept agent
-    /// (AzureAI__ConceptAgentName/ConceptAgentVersion) is published with a json_schema
-    /// text format, so its responses are schema-conformant JSON — Foundry rejects
-    /// request-level text options for agent-bound calls, which is why the format lives
-    /// on a dedicated agent rather than on this request.
+    /// Sends one prompt to the given pinned Foundry agent. The caller resolves the pin
+    /// through the output-contract catalog: a schema-typed contract's agent is
+    /// published with a json_schema text format, so its responses are
+    /// schema-conformant JSON — Foundry rejects request-level text options for
+    /// agent-bound calls, which is why the format lives on a dedicated agent rather
+    /// than on this request.
     /// </summary>
     public async Task<string> SendPromptAsync(
         string stage,
         string userMessage,
-        bool useConceptAgent,
+        string agentName,
+        string agentVersion,
         CancellationToken cancellationToken)
     {
         var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
-        var agentNameKey = useConceptAgent ? "AzureAI__ConceptAgentName" : "AzureAI__AgentName";
-        var agentVersionKey = useConceptAgent ? "AzureAI__ConceptAgentVersion" : "AzureAI__AgentVersion";
-        var agentName = Environment.GetEnvironmentVariable(agentNameKey);
-        var agentVersion = Environment.GetEnvironmentVariable(agentVersionKey);
         var azureClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
         var isRunningInAzure = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID"));
         var networkTimeoutSeconds = GetEnvironmentInt("AzureAI__NetworkTimeoutSeconds", 270);
@@ -73,13 +62,12 @@ public sealed class AgentSectionGenerator
         if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(agentName) || string.IsNullOrEmpty(agentVersion))
         {
             _logger.LogError(
-                "Azure AI configuration missing. HasEndpoint={HasEndpoint}, HasAgentName={HasAgentName}, HasAgentVersion={HasAgentVersion}, NameKey={NameKey}",
+                "Azure AI configuration missing. HasEndpoint={HasEndpoint}, HasAgentName={HasAgentName}, HasAgentVersion={HasAgentVersion}",
                 !string.IsNullOrEmpty(endpoint),
                 !string.IsNullOrEmpty(agentName),
-                !string.IsNullOrEmpty(agentVersion),
-                agentNameKey);
+                !string.IsNullOrEmpty(agentVersion));
 
-            throw new InvalidOperationException($"Azure AI configuration missing: AzureAI__Endpoint, {agentNameKey}, and {agentVersionKey} are required");
+            throw new InvalidOperationException("Azure AI configuration missing: AzureAI__Endpoint and a catalog-resolved agent name/version are required");
         }
 
         var endpointUri = new Uri(endpoint);

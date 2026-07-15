@@ -17,7 +17,7 @@ public sealed record ConsultPromptNodeActivityInput(
     string PromptId,
     Dictionary<string, string> Variables,
     string? WorkflowPackage = null,
-    bool HasJsonOutput = false,
+    string? OutputContract = null,
     string? ConceptSource = null);
 
 /// <summary>
@@ -33,23 +33,26 @@ public sealed record NodeRunResult(
 
 /// <summary>
 /// The generic DAG prompt node: renders the node's prompt with orchestrator-resolved
-/// variables and sends it to the agent the node's output type selects — the
-/// structured-output concept agent for schema-typed nodes (the schema is welded to
-/// that agent's definition, package-format-v4.md), the prose agent for text nodes.
+/// variables and sends it to the agent the output-contract catalog pins for the
+/// node's contract (the schema is welded to that agent's definition,
+/// package-format-v4.md; selection is catalog-keyed, output-contract-catalog.md).
 /// </summary>
 public sealed class RunPromptNodeActivity
 {
     private readonly IWorkflowPackageStore _packageStore;
     private readonly AgentSectionGenerator _agent;
+    private readonly OutputContractCatalog _catalog;
     private readonly ILogger<RunPromptNodeActivity> _logger;
 
     public RunPromptNodeActivity(
         IWorkflowPackageStore packageStore,
         AgentSectionGenerator agent,
+        OutputContractCatalog catalog,
         ILogger<RunPromptNodeActivity> logger)
     {
         _packageStore = packageStore;
         _agent = agent;
+        _catalog = catalog;
         _logger = logger;
     }
 
@@ -63,10 +66,10 @@ public sealed class RunPromptNodeActivity
         try
         {
             _logger.LogInformation(
-                "Starting prompt node. NodeId={NodeId}, PromptId={PromptId}, HasJsonOutput={HasJsonOutput}, Package={Package}",
+                "Starting prompt node. NodeId={NodeId}, PromptId={PromptId}, OutputContract={OutputContract}, Package={Package}",
                 input.NodeId,
                 input.PromptId,
-                input.HasJsonOutput,
+                input.OutputContract,
                 input.WorkflowPackage);
 
             if (!WorkflowPackageRef.TryParse(input.WorkflowPackage, out var packageRef))
@@ -86,14 +89,16 @@ public sealed class RunPromptNodeActivity
             var rendered = PromptTemplateRenderer.Render(prompt, input.Variables);
             var inputHash = ConsultGenerationProvenance.Sha256Hex(rendered);
 
+            var entry = _catalog.GetEntry(input.OutputContract ?? OutputContracts.Text);
             var rawOutput = await _agent.SendPromptAsync(
                 input.NodeId,
                 rendered,
-                useConceptAgent: input.HasJsonOutput,
+                entry.AgentName,
+                entry.AgentVersion,
                 cancellationToken);
             var outputHash = ConsultGenerationProvenance.Sha256Hex(rawOutput);
 
-            var concepts = input.HasJsonOutput
+            var concepts = string.Equals(input.OutputContract, OutputContracts.ConceptList, StringComparison.Ordinal)
                 ? ConceptOutputContract.Deserialize(rawOutput, input.ConceptSource ?? input.NodeId)
                 : null;
 

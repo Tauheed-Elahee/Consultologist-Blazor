@@ -16,15 +16,18 @@ public sealed class RunProseStepActivity
 {
     private readonly IWorkflowPackageStore _packageStore;
     private readonly AgentSectionGenerator _agent;
+    private readonly OutputContractCatalog _catalog;
     private readonly ILogger<RunProseStepActivity> _logger;
 
     public RunProseStepActivity(
         IWorkflowPackageStore packageStore,
         AgentSectionGenerator agent,
+        OutputContractCatalog catalog,
         ILogger<RunProseStepActivity> logger)
     {
         _packageStore = packageStore;
         _agent = agent;
+        _catalog = catalog;
         _logger = logger;
     }
 
@@ -66,7 +69,9 @@ public sealed class RunProseStepActivity
             var variables = ProseStepVariableBuilder.Build(step, input);
             var rendered = PromptTemplateRenderer.Render(prompt, variables);
 
-            var prose = await _agent.SendPromptAsync($"{input.StepId}:{section.Name}", rendered, cancellationToken);
+            var textEntry = _catalog.GetEntry(OutputContracts.Text);
+            var prose = await _agent.SendPromptAsync(
+                $"{input.StepId}:{section.Name}", rendered, textEntry.AgentName, textEntry.AgentVersion, cancellationToken);
             var trimmedProse = prose.Trim();
 
             _logger.LogInformation(

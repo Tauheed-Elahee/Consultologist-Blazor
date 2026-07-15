@@ -121,7 +121,7 @@ public sealed class ConsultGenerationOrchestrator
                         node.PromptId!,
                         variables,
                         input.WorkflowPackage,
-                        node.HasJsonOutput,
+                        node.OutputContract,
                         node.ConceptSource),
                     AgentActivityRetryOptions)] = node.Id;
             }
@@ -482,7 +482,7 @@ internal static class ConsultNodeVariableResolver
         var target = nodesById[targetId];
         var result = outputs[targetId];
 
-        if (!target.HasJsonOutput)
+        if (target.OutputContract is null)
         {
             return result.RawOutput;
         }

@@ -71,7 +71,7 @@ public sealed record ConsultNodeDescriptor(
     string Label,
     string? PromptId = null,
     IReadOnlyDictionary<string, ConsultNodeBindingDescriptor>? Bindings = null,
-    bool HasJsonOutput = false,
+    string? OutputContract = null,
     string? FailIfEmpty = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? Steps = null,
     string? ConceptsNodeId = null,
