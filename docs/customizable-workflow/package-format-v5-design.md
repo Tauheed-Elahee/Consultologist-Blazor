@@ -138,6 +138,55 @@ manifest names the deliverable — `result: "node:apply-instructions"` — the p
 outputs that section-completed events, entity section states, and the generated
 consult hang off.
 
+### Why a property and not a container (decision rationale, 2026-07-15)
+
+The question "should `forEach` be a container loop or a node property?" was asked
+directly and deserves its answer recorded, because someone will re-ask it.
+
+Steelmanned, the container's advantages are real: lexical locality (the per-item
+program reads top-to-bottom in one box), free closures (aggregate-not-bindable
+because the container has no output id; `item:` scoping is lexical; one-map-only is
+counting), an implicit result contract (the last step is the deliverable), and
+author-proofing (chain membership is positional, so "forgot `forEach` on one node"
+and "mismatched collections" cannot happen). The property's advantages: one node
+kind (no second, lesser step species with parallel machinery for ids, bindings,
+execution, SSE, and provenance), `previous_step_output` reduced to an ordinary
+item-aligned edge, per-item *graphs* rather than only linear chains (a `steps` array
+is structurally a list forever), and a natural opening for aggregation (an edge rule
+to relax, versus inventing an aggregate output for a box).
+
+**The sorting observation that decides it**: every container advantage is
+*presentational* — locality, groupedness, implicit ordering, a friendly mental
+model. Every property advantage is *semantic* — uniformity of execution, provenance,
+vocabulary, and growth room. Presentation can always be derived from semantics;
+semantics can never be retrofitted onto presentation. (The same asymmetry decided
+the authored-edge-file question: store the minimal truth, generate the human view.)
+
+Therefore:
+
+- **The manifest stores the property spelling** — one kind, `forEach`, flat list,
+  with the authoring convention of keeping a chain's nodes contiguous.
+- **Every human surface renders the container**: the derived DAG diagram draws
+  same-collection forEach chains as a grouped subgraph ("per section" box), and the
+  in-app editor's steps tab *is* a container UI — an ordered list that reads and
+  writes `forEach` nodes underneath. Authors in the editor never perceive the flat
+  spelling.
+- **The closures survive as validator rules** (aggregate closed, cross-collection
+  closed, `item:` requires `forEach`, chained nodes must share a collection) — more
+  rules than the container needed, each a one-liner, and relaxable one at a time
+  where a container must be demolished all at once.
+- **Both spellings are NOT accepted as input dialects** — two ways to write the same
+  semantics is the keep-format-dumb violation. v4 containers remain valid forever
+  via synthesis (they lower mechanically to forEach chains); v5 packages write only
+  the property spelling.
+- The container's one irreplaceable feature — the implicit result — costs a single
+  explicit `result:` field, which is an improvement anyway: a workflow's deliverable
+  deserves to be named, not inferred from which box something happened to be last in.
+
+In short: the container was the right training wheels for v4 (it made the closures
+trivially sound while the interpreter was new); the property is the right skeleton
+for v5, with the container living on as the derived view and the editor metaphor.
+
 ## 4. Migration sketch (for the eventual implementation plan; not planned here)
 
 - v4→v5 synthesis is mechanical: the container map lowers to forEach nodes
