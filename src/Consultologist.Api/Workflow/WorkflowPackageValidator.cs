@@ -54,6 +54,7 @@ public static class WorkflowPackageValidator
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var isV3 = manifest.SpecVersion >= 3;
         var isV4 = manifest.SpecVersion >= 4;
+        var isV5 = manifest.SpecVersion >= 5;
 
         foreach (var prompt in prompts)
         {
@@ -110,7 +111,40 @@ public static class WorkflowPackageValidator
             }
         }
 
-        if (isV4)
+        if (!isV5)
+        {
+            if (manifest.DerivedFrom != null)
+            {
+                errors.Add("derivedFrom requires specVersion 5.");
+            }
+
+            if (manifest.Data is { Count: > 0 })
+            {
+                errors.Add("data requires specVersion 5.");
+            }
+
+            if (manifest.Result != null)
+            {
+                errors.Add("result requires specVersion 5.");
+            }
+
+            foreach (var node in (manifest.Nodes ?? new List<WorkflowNodeSpec>()).Where(n => n.ForEach != null))
+            {
+                errors.Add($"Node '{node.Id}' forEach requires specVersion 5.");
+            }
+        }
+
+        if (isV5)
+        {
+            if (manifest.SectionSteps is { Count: > 0 })
+            {
+                errors.Add("sectionSteps was replaced by nodes in specVersion 4.");
+            }
+
+            ValidateDerivedFrom(manifest, errors);
+            ValidateV5Nodes(manifest, files, catalogSchemas, errors);
+        }
+        else if (isV4)
         {
             if (manifest.SectionSteps is { Count: > 0 })
             {
@@ -137,6 +171,285 @@ public static class WorkflowPackageValidator
         }
 
         return new ValidationResult(errors, warnings);
+    }
+
+    private static void ValidateDerivedFrom(WorkflowPackageManifest manifest, List<string> errors)
+    {
+        // Absent and null are equivalent: a root package. When set, the fork origin
+        // must be a concrete immutable version — @latest would make lineage mutable.
+        if (manifest.DerivedFrom is null)
+        {
+            return;
+        }
+
+        if (!WorkflowPackageRef.TryParse(manifest.DerivedFrom, out var origin))
+        {
+            errors.Add($"derivedFrom '{manifest.DerivedFrom}' is not a valid package reference.");
+            return;
+        }
+
+        if (origin!.IsLatest)
+        {
+            errors.Add("derivedFrom must be a concrete version (name@vYYYY.MM.N), never @latest.");
+        }
+    }
+
+    /// <summary>
+    /// The specVersion-5 node rules: one kind, forEach multiplicity, the relational
+    /// edge semantics (item-aligned / broadcast allowed; aggregate and
+    /// cross-collection closed), collection-declared item fields, and the result
+    /// contract. See docs/customizable-workflow/package-format-v5.md.
+    /// </summary>
+    private static void ValidateV5Nodes(
+        WorkflowPackageManifest manifest,
+        IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, string> catalogSchemas,
+        List<string> errors)
+    {
+        var data = WorkflowDataResolver.Resolve(manifest, files, errors);
+        var nodes = manifest.Nodes ?? new List<WorkflowNodeSpec>();
+
+        if (nodes.Count == 0)
+        {
+            errors.Add("nodes is required and must not be empty in specVersion 5.");
+            return;
+        }
+
+        var promptsById = (manifest.Prompts ?? new List<WorkflowPromptSpec>())
+            .GroupBy(p => p.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var nodesById = new Dictionary<string, WorkflowNodeSpec>(StringComparer.Ordinal);
+        var promptReferenceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var edges = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        foreach (var node in nodes)
+        {
+            if (!nodesById.TryAdd(node.Id, node))
+            {
+                errors.Add($"Duplicate node id '{node.Id}'.");
+            }
+        }
+
+        var conceptListNodeIds = nodes
+            .Where(n => n.Output != null)
+            .Select(n => n.Id)
+            .ToHashSet(StringComparer.Ordinal);
+
+        void CheckBinding(WorkflowNodeSpec node, string variable, WorkflowBindingValue binding)
+        {
+            if (!WorkflowNodeBindingSources.TryParse(binding.From, out var source, out var parseError))
+            {
+                errors.Add($"Node '{node.Id}' binds '{variable}' to {parseError}.");
+                return;
+            }
+
+            switch (source)
+            {
+                case WorkflowNodeBindingSource.Input { Name: "sections" }:
+                    errors.Add($"Node '{node.Id}' binds '{variable}' to 'input:sections', which is removed in specVersion 5 (sections are package data).");
+                    return;
+                case WorkflowNodeBindingSource.PreviousStepOutput:
+                    errors.Add($"Node '{node.Id}' binds '{variable}' to 'previous_step_output', which is removed in specVersion 5 (bind an item-aligned node: edge instead).");
+                    return;
+                case WorkflowNodeBindingSource.Item item when node.ForEach is null:
+                    errors.Add($"Node '{node.Id}' binds '{variable}' to 'item:{item.Field}' but declares no forEach.");
+                    return;
+                case WorkflowNodeBindingSource.Item item:
+                    if (TryResolveForEachCollection(node, data, out _, out var collection)
+                        && !collection!.Fields.Contains(item.Field))
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to unknown item field '{item.Field}' (the collection declares: {string.Join(", ", collection.Fields)}).");
+                    }
+
+                    return;
+                case WorkflowNodeBindingSource.Data dataSource:
+                    if (data.Collections.ContainsKey(dataSource.Id))
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to data collection '{dataSource.Id}', which is only iterable via forEach.");
+                    }
+                    else if (!data.Scalars.ContainsKey(dataSource.Id))
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to unknown data entry '{dataSource.Id}'.");
+                    }
+
+                    return;
+                case WorkflowNodeBindingSource.NodeOutput target:
+                    if (!nodesById.TryGetValue(target.NodeId, out var targetNode))
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to unknown node '{target.NodeId}'.");
+                        return;
+                    }
+
+                    // The edge-semantics table: aggregate and cross-collection closed.
+                    if (targetNode.ForEach != null && node.ForEach is null)
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}', whose aggregate output is not bindable in specVersion 5.0.");
+                        return;
+                    }
+
+                    if (targetNode.ForEach != null && !string.Equals(targetNode.ForEach, node.ForEach, StringComparison.Ordinal))
+                    {
+                        errors.Add($"Node '{node.Id}' binds '{variable}' to '{target.NodeId}' across collections ('{node.ForEach}' vs '{targetNode.ForEach}'), which is not supported in specVersion 5.0.");
+                        return;
+                    }
+
+                    edges.TryAdd(node.Id, new HashSet<string>(StringComparer.Ordinal));
+                    edges[node.Id].Add(target.NodeId);
+
+                    var rendersConcepts = binding.As != null || conceptListNodeIds.Contains(target.NodeId);
+                    if (binding.As != null && !WorkflowConceptRenderers.All.Contains(binding.As))
+                    {
+                        errors.Add($"Node '{node.Id}' binding '{variable}' uses unknown renderer '{binding.As}' (expected 'concept-bullets' or 'concept-context').");
+                    }
+                    else if (rendersConcepts && !conceptListNodeIds.Contains(target.NodeId))
+                    {
+                        errors.Add($"Node '{node.Id}' binding '{variable}' renders node '{target.NodeId}' with '{binding.As}' but '{target.NodeId}' declares no concept-list output.");
+                    }
+
+                    return;
+                default:
+                    if (binding.As != null)
+                    {
+                        errors.Add($"Node '{node.Id}' binding '{variable}' declares renderer '{binding.As}' on non-node source '{binding.From}'.");
+                    }
+
+                    return;
+            }
+        }
+
+        foreach (var node in nodes)
+        {
+            if (string.IsNullOrWhiteSpace(node.Label))
+            {
+                errors.Add($"Node '{node.Id}' has no label.");
+            }
+
+            if (node.Kind != null)
+            {
+                errors.Add($"Node '{node.Id}' declares kind '{node.Kind}'; specVersion 5 has one node kind.");
+            }
+
+            if (node.Over != null)
+            {
+                errors.Add($"Node '{node.Id}' declares over, which is removed in specVersion 5 (use forEach).");
+            }
+
+            if (node.Steps is { Count: > 0 })
+            {
+                errors.Add($"Node '{node.Id}' declares steps, which are removed in specVersion 5 (steps are ordinary forEach nodes).");
+            }
+
+            if (node.ForEach != null && !TryResolveForEachCollection(node, data, out var forEachError, out _))
+            {
+                errors.Add($"Node '{node.Id}' {forEachError}");
+            }
+
+            if (node.Prompt is null)
+            {
+                errors.Add($"Node '{node.Id}' declares no prompt.");
+            }
+            else
+            {
+                var bindings = node.Bindings ?? new Dictionary<string, WorkflowBindingValue>();
+
+                if (!promptsById.TryGetValue(node.Prompt, out var prompt))
+                {
+                    errors.Add($"Node '{node.Id}' references undeclared prompt '{node.Prompt}'.");
+                }
+                else
+                {
+                    promptReferenceCounts[node.Prompt] = promptReferenceCounts.GetValueOrDefault(node.Prompt) + 1;
+
+                    var declared = new HashSet<string>(prompt.Variables, StringComparer.Ordinal);
+                    if (!declared.SetEquals(bindings.Keys))
+                    {
+                        errors.Add(
+                            $"Node '{node.Id}' bindings [{string.Join(", ", bindings.Keys.Order(StringComparer.Ordinal))}] " +
+                            $"must exactly match prompt '{node.Prompt}' variables [{string.Join(", ", prompt.Variables.Order(StringComparer.Ordinal))}].");
+                    }
+                }
+
+                foreach (var (variable, binding) in bindings)
+                {
+                    CheckBinding(node, variable, binding);
+                }
+            }
+
+            ValidateNodeOutput(node, manifest, files, catalogSchemas, errors);
+        }
+
+        foreach (var orphan in promptsById.Keys.Where(id => promptReferenceCounts.GetValueOrDefault(id) == 0))
+        {
+            errors.Add($"Prompt '{orphan}' is not referenced by any node.");
+        }
+
+        foreach (var overused in promptReferenceCounts.Where(pair => pair.Value > 1).Select(pair => pair.Key))
+        {
+            errors.Add($"Prompt '{overused}' is referenced by more than one node.");
+        }
+
+        ValidateResult(manifest, nodesById, errors);
+        ValidateAcyclic(nodes, edges, errors);
+    }
+
+    private static bool TryResolveForEachCollection(
+        WorkflowNodeSpec node,
+        WorkflowPackageData data,
+        out string? error,
+        out WorkflowDataCollection? collection)
+    {
+        error = null;
+        collection = null;
+
+        if (!WorkflowNodeBindingSources.TryParse(node.ForEach!, out var source, out _)
+            || source is not WorkflowNodeBindingSource.Data dataSource)
+        {
+            error = $"forEach '{node.ForEach}' must be a data: collection reference.";
+            return false;
+        }
+
+        if (data.Collections.TryGetValue(dataSource.Id, out var resolved))
+        {
+            collection = resolved;
+            return true;
+        }
+
+        error = data.Scalars.ContainsKey(dataSource.Id)
+            ? $"forEach references scalar data entry '{dataSource.Id}' (forEach requires a collection)."
+            : $"forEach references unknown data entry '{dataSource.Id}'.";
+        return false;
+    }
+
+    private static void ValidateResult(
+        WorkflowPackageManifest manifest,
+        IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
+        List<string> errors)
+    {
+        if (manifest.Result is null)
+        {
+            errors.Add("result is required in specVersion 5.");
+            return;
+        }
+
+        if (!manifest.Result.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+            || manifest.Result.Length == WorkflowNodeBindingSources.NodePrefix.Length)
+        {
+            errors.Add($"result '{manifest.Result}' must be 'node:<id>'.");
+            return;
+        }
+
+        var resultNodeId = manifest.Result[WorkflowNodeBindingSources.NodePrefix.Length..];
+
+        if (!nodesById.TryGetValue(resultNodeId, out var resultNode))
+        {
+            errors.Add($"result references unknown node '{resultNodeId}'.");
+            return;
+        }
+
+        if (resultNode.ForEach is null)
+        {
+            errors.Add($"result must reference a forEach node ('{resultNodeId}' runs once).");
+        }
     }
 
     private static void ValidateNodes(
