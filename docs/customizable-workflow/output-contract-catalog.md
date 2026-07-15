@@ -38,10 +38,9 @@ An engine-side, config-driven registry keyed by schema id:
 | *(text — the absent-`output` default)* | prose agent name + version pins |
 | *(future shapes)* | their schema text + their attested agent pins |
 
-Configuration shape (bikeshed at implementation): indexed app settings, e.g.
-`OutputContracts__concept-list__AgentName` / `__AgentVersion` / `__SchemaPath`, with
-the schema text bundled like the agent manifests; or a single JSON app setting.
-Requirements that matter more than the spelling:
+Configuration shape (decided 2026-07-15, see Decisions below): a bundled,
+git-tracked catalog file deployed with the app and attested at startup, schema text
+bundled like the agent manifests. Requirements that matter more than the spelling:
 
 1. `run-prompt-node` resolves the agent **by the node's schema id** through the
    catalog — `useConceptAgent` dies; selection is name-keyed and open-ended.
@@ -142,12 +141,25 @@ before it.
 Explicitly out of scope: new node kinds; package-side agent naming; conditional
 control flow; multiple/non-terminal maps (each waits for a demanding workflow).
 
-## Open questions to settle at implementation
+## Decisions (settled 2026-07-15; were "open questions to settle at implementation")
 
-- Catalog config spelling (indexed app settings vs one JSON setting vs a bundled
-  catalog file attested like agent manifests).
-- Whether the text/prose default becomes an explicit catalog entry or stays implicit.
-- Per-item step-hash storage shape (per-section map growth in entity state) and its
-  exposure on the response.
-- Whether `SectionSteps`/prose-step SSE payloads survive unchanged or generalize to
-  per-item node events.
+- **Catalog config spelling: a bundled catalog file** — git-tracked, deployed with
+  the app, attested at startup exactly like `agents/*.yaml`. Deciding argument: the
+  indexed-app-settings alternative's headline advantage is illusory (an app-setting
+  change restarts the Function App just like a deploy, and a new entry needs a deploy
+  for its schema file regardless), while half of every entry is file-shaped anyway —
+  settings would split one logical entry across two systems with different audit
+  stories. The file gets git history and PR review, cannot drift from the code that
+  reads it, and matches the #16 GitOps trajectory. Accepted cost: pin rollback is a
+  git revert + CI run instead of one CLI command.
+- **The text/prose default becomes an explicit catalog entry** (no schema, prose
+  agent pins). Attestation and provenance treat it like every other entry; the last
+  hardcoded pin pair (`AzureAI__AgentName/Version`) dies; "node without `output`"
+  simply resolves to this entry.
+- **Per-item hash storage: store and expose everything** — entity `NodeOutputs`
+  generalizes to per-(node, item) entries with Input/OutputHash, all returned on the
+  job response like today's per-node hashes. Growth is bounded (nodes × sections).
+  Lands under #59's per-item execution rather than this slice.
+- **SSE payloads generalize to per-item `node-completed`** — settled by the v5
+  one-kind decision (`section-prose-step` folds in; see
+  [package-format-v5-design.md](package-format-v5-design.md)).

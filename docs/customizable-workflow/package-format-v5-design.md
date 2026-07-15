@@ -149,10 +149,12 @@ two places.
 **Input-model consequence (must be explicit, never silent)**: with sections
 package-determined, the effective-input hash can shrink to the draft — the sections'
 content is redundant with the package ref. That is a provenance-semantics version
-change; the hash definition gets versioned (or the old coverage is retained for
-continuity) as an explicit implementation decision. Per-consult section *selection*,
-if ever wanted, returns to the input side as an id-filter against the package
-collection.
+change. **Decided 2026-07-15: the hash shrinks to the draft for v5 jobs, and the
+provenance record gains an explicit hash-definition version** so v4-era and v5-era
+hashes are never compared as equals; the alternative (retaining section coverage for
+cross-boundary continuity) was rejected as redundant coverage that merely repeats
+the package ref. Per-consult section *selection*, if ever wanted, returns to the
+input side as an id-filter against the package collection.
 
 ## 3. One node kind with `forEach`
 
