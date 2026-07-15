@@ -388,6 +388,19 @@ public static class WorkflowPackageValidator
             errors.Add($"Prompt '{overused}' is referenced by more than one node.");
         }
 
+        // v5.0 closure: the engine fans one item set per job, so every forEach node
+        // shares one collection (disconnected parallel chains would have no consumer
+        // anyway). Relaxable alongside the cross-collection edge closure.
+        var forEachCollections = nodes
+            .Where(node => node.ForEach != null)
+            .Select(node => node.ForEach!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (forEachCollections.Count > 1)
+        {
+            errors.Add($"All forEach nodes must share one collection in specVersion 5.0 (found {string.Join(", ", forEachCollections.Select(c => $"'{c}'"))}).");
+        }
+
         ValidateResult(manifest, nodesById, errors);
         ValidateAcyclic(nodes, edges, errors);
     }
