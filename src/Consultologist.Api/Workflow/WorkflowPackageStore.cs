@@ -102,27 +102,34 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             : default;
         var prompts = loaded.Prompts;
 
-        // Every spec version resolves to one node DAG and one section-step list, so a
-        // single interpreter path serves them all: v5 declares one-kind forEach nodes
-        // natively (no section-step lowering — the interpreter slice retires it); v4
-        // declares nodes and its map body lowers to section steps for run-prose-step;
-        // v3 declares steps and synthesizes the canonical DAG; v2 synthesizes both.
+        // Every spec version resolves to one one-kind forEach node list plus a result
+        // node, so a single interpreter path serves them all: v5 is already in that
+        // shape; v4's map container lowers to a forEach chain; v3 declares section
+        // steps and v2 synthesizes them, both raising to the canonical v4 DAG first.
         var sectionSteps = manifest.SpecVersion switch
         {
-            >= 5 => null,
-            4 => WorkflowNodeDefaults.LowerMapSteps(
-                manifest.Nodes!.Single(n => string.Equals(n.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))),
             3 => manifest.SectionSteps,
             2 => WorkflowSectionStepDefaults.V2Synthesized,
             _ => null
         };
 
-        var nodes = manifest.SpecVersion switch
+        IReadOnlyList<WorkflowNodeSpec>? nodes = null;
+        string? resultNodeId = null;
+
+        if (manifest.SpecVersion >= 5)
         {
-            >= 4 => manifest.Nodes,
-            >= 2 => WorkflowNodeDefaults.V3SynthesizedDag(sectionSteps!),
-            _ => null
-        };
+            nodes = manifest.Nodes;
+            resultNodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
+        }
+        else if (manifest.SpecVersion == 4)
+        {
+            (nodes, resultNodeId) = WorkflowNodeDefaults.LowerToOneKind(manifest.Nodes!);
+        }
+        else if (manifest.SpecVersion >= 2)
+        {
+            (nodes, resultNodeId) = WorkflowNodeDefaults.LowerToOneKind(
+                WorkflowNodeDefaults.V3SynthesizedDag(sectionSteps!));
+        }
 
         // Package schema ids resolve to catalog contract ids here, while the schema
         // file contents are in hand: v4 by canonical match, synthesized DAGs directly
@@ -137,7 +144,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             _ => null
         };
 
-        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes, schemaContracts, loaded.Data);
+        var package = new WorkflowPackage(manifest, standards, prompts, nodes, schemaContracts, loaded.Data, resultNodeId);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);

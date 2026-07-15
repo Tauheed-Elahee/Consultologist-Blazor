@@ -196,22 +196,45 @@ public static class WorkflowNodeDefaults
     }
 
     /// <summary>
-    /// Lowers a specVersion-4 map node's steps to the v3 section-step shape, so the
-    /// existing run-prose-step activity executes map bodies unchanged. Bijective with
-    /// RaiseStepBinding under the v4.0 map-binding closure.
+    /// Lowers every pre-v5 node list to the one-kind forEach form the interpreter
+    /// executes: the map container's steps become ordinary forEach nodes over
+    /// input:sections (step ids preserved, previous_step_output rewritten to the
+    /// item-aligned node: edge), and the last step is the result node. v5 packages
+    /// are already in this shape (docs/customizable-workflow/package-format-v5.md).
     /// </summary>
-    public static IReadOnlyList<WorkflowSectionStepSpec> LowerMapSteps(WorkflowNodeSpec mapNode)
+    public static (IReadOnlyList<WorkflowNodeSpec> Nodes, string ResultNodeId) LowerToOneKind(
+        IReadOnlyList<WorkflowNodeSpec> nodes)
     {
-        return (mapNode.Steps ?? new List<WorkflowMapStepSpec>())
-            .Select(step => new WorkflowSectionStepSpec(
-                step.Prompt,
-                step.Label,
-                step.Bindings.ToDictionary(
-                    pair => pair.Key,
-                    pair => LowerStepBinding(pair.Value),
-                    StringComparer.Ordinal),
-                step.Id))
+        var mapNode = nodes.Single(node => string.Equals(node.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal));
+        var lowered = nodes
+            .Where(node => !ReferenceEquals(node, mapNode))
+            .Select(node => node with { Kind = null })
             .ToList();
+
+        string? previousStepId = null;
+
+        foreach (var step in mapNode.Steps ?? new List<WorkflowMapStepSpec>())
+        {
+            var bindings = step.Bindings.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.From == WorkflowNodeBindingSources.PreviousStepOutput
+                    ? new WorkflowBindingValue($"{WorkflowNodeBindingSources.NodePrefix}{previousStepId}", pair.Value.As)
+                    : pair.Value,
+                StringComparer.Ordinal);
+
+            lowered.Add(new WorkflowNodeSpec(
+                step.StepId,
+                null,
+                step.Label,
+                Prompt: step.Prompt,
+                Bindings: bindings,
+                ForEach: WorkflowNodeBindingSources.InputSections));
+
+            previousStepId = step.StepId;
+        }
+
+        return (lowered, previousStepId
+            ?? throw new InvalidOperationException($"Map node '{mapNode.Id}' has no steps to lower."));
     }
 
     private static WorkflowBindingValue RaiseStepBinding(string v3Source) => v3Source switch
@@ -224,16 +247,5 @@ public static class WorkflowNodeDefaults
             $"node:{WorkflowPromptContract.CreatePatientTrajectory}",
             WorkflowConceptRenderers.ConceptContext),
         _ => throw new InvalidOperationException($"Unknown v3 step binding source '{v3Source}'.")
-    };
-
-    private static string LowerStepBinding(WorkflowBindingValue binding) => binding.From switch
-    {
-        WorkflowNodeBindingSources.ItemName => WorkflowStepBindingSources.SectionName,
-        WorkflowNodeBindingSources.ItemStandard => WorkflowStepBindingSources.SectionStandard,
-        WorkflowNodeBindingSources.InputConsultDraft => WorkflowStepBindingSources.ConsultDraft,
-        WorkflowNodeBindingSources.PreviousStepOutput => WorkflowStepBindingSources.PreviousStepOutput,
-        _ when binding.From.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
-            => WorkflowStepBindingSources.PatientTrajectoryConcepts,
-        _ => throw new InvalidOperationException($"Map step binding '{binding.From}' cannot be lowered to a v3 step source.")
     };
 }
