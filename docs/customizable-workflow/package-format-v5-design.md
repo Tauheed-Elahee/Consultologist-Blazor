@@ -18,7 +18,7 @@ publish contract becomes v5-shaped) and the two-kind decision in
 orthogonal and valid). Subsumes issue #53 — the prose-step unification happens
 through one-kind execution rather than as separate surgery.
 
-## 1. Fork-everything customization + `parent` lineage
+## 1. Fork-everything customization + `derivedFrom` lineage
 
 All customization — standards included — is authoring a **new immutable package
 version** (the in-app-editing model, extended to everything). The account standards
@@ -26,30 +26,44 @@ override (`consult.sectionStandardsMarkdown`) and its client-side markdown
 parse/merge retire entirely: one editing model, one Publish button, one provenance
 regime.
 
-**The manifest gains `parent`** — a single **concrete** ref (never `@latest`)
-recording the *fork origin*:
+**The manifest gains `derivedFrom`** — a single **concrete** ref (never `@latest`)
+recording the *fork origin*. (Renamed from `parent` 2026-07-15: FHIR's `derivedFrom`
+spelling, familiar in the clinical domain, and immune to the misreading of "parent"
+as the within-name version predecessor.)
 
-- `parent: null` for Consultologist-provided roots (`general`).
-- `acct-x@v2`'s parent stays `general@v2026.07.5` across that account's own version
-  bumps; a *rebase* updates it (e.g. to `general@v2026.08.1`). The within-name
-  predecessor is already implicit in the CalVer sequence.
+- `derivedFrom: null` for Consultologist-provided roots (`general`).
+- `acct-x@v2`'s `derivedFrom` stays `general@v2026.07.5` across that account's own
+  version bumps; a *rebase* updates it (e.g. to `general@v2026.08.1`). The
+  within-name predecessor is already implicit in the CalVer sequence.
 - The full derivation chain (`acct-b@v1 → acct-a@v4 → general@v2026.07.5 → null`)
-  is **reconstructed by walking parents, never stored as an array** — derivable data
-  stored redundantly can lie (the same rule that rejected the authored edge list).
+  is **reconstructed by walking `derivedFrom`, never stored as an array** —
+  derivable data stored redundantly can lie (the same rule that rejected the
+  authored edge list).
+- **No stored `root` field either (decided 2026-07-15)**: "which Consultologist
+  package does this ultimately lead back to, if any?" is a real end-user question,
+  but the answer is derivable by walking `derivedFrom` to null, and the same
+  redundancy rule applies — a stored root can drift from the walked truth across
+  rebases, and since forks diverge freely it carries no content guarantee anyway.
+  GitHub's fork API is the model: it exposes both `parent` and `source` (the
+  ultimate root), both *computed*, neither author-supplied. The root surfaces as a
+  **derived view** on the read side (editor banner, package API), and because
+  published versions are immutable a package's ancestry never changes — the
+  computed root is cacheable forever.
 
 **The fork model's one real cost, named**: overrides layered on a moving default
-(`@latest`); forks freeze at their parent, so upstream improvements stop flowing the
-moment anything is customized. `parent` is the metadata that makes this tractable —
+(`@latest`); forks freeze at their fork origin, so upstream improvements stop
+flowing the moment anything is customized. `derivedFrom` is the metadata that makes
+this tractable —
 the editor can detect "your package derives from `general@v2026.07.5`;
 `v2026.08.1` is available" and offer the v1 answer: **assisted re-fork** (re-fork
-from the new upstream, replay the parent→fork diff, surface conflicts). A true
+from the new upstream, replay the origin→fork diff, surface conflicts). A true
 three-way merge is a later luxury. This cost only bites standards (the only layer
 that ever floated); prompts and steps never layered.
 
 Cross-account derivation (user forking another user's package) implies a
 **package-sharing design** — visibility, discoverability, trust in someone else's
 prompts. Explicit non-goal here; the `acct-*` owner-only access rule
-(in-app-editing.md) stands, and `parent` is forward-compatible with sharing.
+(in-app-editing.md) stands, and `derivedFrom` is forward-compatible with sharing.
 
 ## 2. `data/` folder + `data:` binding namespace
 
@@ -268,7 +282,7 @@ for v5, with the container living on as the derived view and the editor metaphor
 - The in-app editor (#57) is the UX that makes fork-everything one-click
   (fork-on-first-edit; the "My standards" tab becomes per-section editing of the
   fork's `data/standards/*`); its content/publish contract carries `data/` and
-  `parent`.
+  `derivedFrom`.
 - The output-contract catalog (#55 PR 1) is orthogonal and can land before or after.
 
 ## 5. Relationship to shelved work

@@ -48,7 +48,7 @@ yet; these notes are the input to a future milestone plan.
   the node DAG (implicit edges, one map node), schema file refs welded to attested
   agents, per-node failure policy, the v4.0 closures
 - [package-format-v5-design.md](package-format-v5-design.md) — converged design
-  (2026-07-15, not implemented): fork-everything with parent lineage, data/
+  (2026-07-15, not implemented): fork-everything with derivedFrom lineage, data/
   collections replacing the standards straddle, one node kind with forEach,
   per-item provenance
 - [in-app-editing.md](in-app-editing.md) — design (2026-07-15, not yet
