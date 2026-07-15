@@ -62,6 +62,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.ConceptAgentVersion ??= input.ConceptAgentVersion;
         State.Nodes ??= input.Nodes?.ToList();
         State.AgentVersions ??= input.AgentVersions?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -104,20 +105,41 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public void MarkSectionProseStep(ConsultGenerationSectionProseStepUpdate input)
+    /// <summary>
+    /// One forEach instance completed: records the per-item node output (composite
+    /// "nodeId:itemId" key, per-item provenance hashes) and drives the section's
+    /// step-progress fields the section-prose-step events are synthesized from.
+    /// </summary>
+    public void MarkNodeItemCompleted(ConsultGenerationNodeItemUpdate input)
     {
         var state = EnsureState();
-        var section = state.GetOrAddSection(input.SectionId, input.SectionName);
-        section.ProseStepStatus = input.ProseStepStatus;
-        section.CompletedProseStepCount = input.CompletedProseStepCount;
-        section.TotalProseStepCount = state.SectionSteps?.Count ?? ConsultGenerationSectionProseSteps.TotalStepCount;
+        state.SchemaVersion = 4;
+
+        var output = state.GetOrAddNodeOutput($"{input.NodeId}:{input.ItemId}", input.Label);
+        output.NodeId = input.NodeId;
+        output.ItemId = input.ItemId;
+        output.Status = ConsultGenerationNodeStatuses.Completed;
+        output.Concepts = input.Concepts?.ToList();
+        output.InputHash = input.InputHash;
+        output.OutputHash = input.OutputHash;
+        output.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        var section = state.GetOrAddSection(input.ItemId, input.ItemName);
+        if (string.Equals(section.Status, ConsultGenerationSectionStatuses.Pending, StringComparison.Ordinal))
+        {
+            section.Status = ConsultGenerationSectionStatuses.Running;
+        }
+
+        section.ProseStepStatus = input.NodeId;
+        section.CompletedProseStepCount = input.CompletedChainCount;
+        section.TotalProseStepCount = input.TotalChainCount;
         State = state;
     }
 
     public void MarkNodeCompleted(ConsultGenerationNodeUpdate input)
     {
         var state = EnsureState();
-        state.SchemaVersion = 3;
+        state.SchemaVersion = 4;
 
         var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
         node.Status = ConsultGenerationNodeStatuses.Completed;
@@ -132,27 +154,10 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State = state;
     }
 
-    public void MarkMapNodeStarted(ConsultGenerationNodeUpdate input)
-    {
-        var state = EnsureState();
-        state.SchemaVersion = 3;
-
-        var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
-        node.Status = ConsultGenerationNodeStatuses.Running;
-
-        foreach (var section in state.Sections.Values.Where(section => section.Status == ConsultGenerationSectionStatuses.Pending))
-        {
-            section.Status = ConsultGenerationSectionStatuses.Running;
-        }
-
-        state.History.Add(new JobHistoryEvent("success", input.Label, null, DateTimeOffset.UtcNow));
-        State = state;
-    }
-
     public async Task MarkNodeFailed(ConsultGenerationNodeFailure input)
     {
         var state = EnsureState();
-        state.SchemaVersion = 3;
+        state.SchemaVersion = 4;
 
         var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
         node.Status = ConsultGenerationNodeStatuses.Failed;
@@ -254,7 +259,11 @@ public sealed record ConsultGenerationOrchestrationInput(
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
-    IReadOnlyDictionary<string, string>? AgentVersions = null);
+    IReadOnlyDictionary<string, string>? AgentVersions = null,
+    string? ResultNodeId = null,
+    IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
+    IReadOnlyDictionary<string, string>? DataScalars = null,
+    int? EffectiveInputHashVersion = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -266,7 +275,8 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
-    IReadOnlyDictionary<string, string>? AgentVersions = null);
+    IReadOnlyDictionary<string, string>? AgentVersions = null,
+    int? EffectiveInputHashVersion = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -284,26 +294,22 @@ public sealed record ConsultGenerationNodeFailure(
     string Error,
     IReadOnlyList<ConsultSectionStepDescriptor> SkippedNodes);
 
-/// <summary>
-/// Input of the generic prose-step activity. Carries the step id rather than the step
-/// definition: the workflow package ref is pinned to an immutable version at job start,
-/// so re-resolving it inside the activity is deterministic.
-/// </summary>
-public sealed record ConsultProseStepActivityInput(
-    string StepId,
-    string ConsultDraft,
-    IReadOnlyList<ClinicalConcept> PatientTrajectoryConcepts,
-    ConsultGenerationSectionRequest Section,
-    string? PreviousStepOutput = null,
-    string? WorkflowPackage = null);
-
 public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
 
-public sealed record ConsultGenerationSectionProseStepUpdate(
-    string SectionId,
-    string SectionName,
-    string ProseStepStatus,
-    int CompletedProseStepCount);
+/// <summary>
+/// One forEach instance's completion: per-item provenance plus the item's chain
+/// progress (the fields section-prose-step events are synthesized from).
+/// </summary>
+public sealed record ConsultGenerationNodeItemUpdate(
+    string NodeId,
+    string Label,
+    string ItemId,
+    string ItemName,
+    IReadOnlyList<ClinicalConcept>? Concepts,
+    string? InputHash,
+    string? OutputHash,
+    int CompletedChainCount,
+    int TotalChainCount);
 
 public sealed class ConsultGenerationJobState
 {
@@ -332,6 +338,10 @@ public sealed class ConsultGenerationJobState
     public string? EffectiveInputHash { get; set; }
     public string? AgentVersion { get; set; }
     public string? ConceptAgentVersion { get; set; }
+
+    // The effective-input hash definition this job used: null/1 = draft+sections
+    // (v2-v4 packages), 2 = draft only (v5 packages, package-format-v5.md).
+    public int? EffectiveInputHashVersion { get; set; }
 
     // Contract id → agent version for every catalog entry the deployment would use;
     // the two scalar fields above mirror the text/concept-list entries until the next
@@ -469,7 +479,8 @@ public sealed class ConsultGenerationJobState
                     pair.Value.OutputHash,
                     pair.Value.CompletedAtUtc,
                     pair.Value.Error)),
-            AgentVersions: AgentVersions);
+            AgentVersions: AgentVersions,
+            EffectiveInputHashVersion: EffectiveInputHashVersion);
     }
 }
 
@@ -490,6 +501,9 @@ public sealed class ConsultGenerationSectionState
 public sealed class ConsultNodeOutputState
 {
     public string NodeId { get; set; } = string.Empty;
+
+    // Set on per-item entries (composite "nodeId:itemId" keys); null on scalar nodes.
+    public string? ItemId { get; set; }
     public string Label { get; set; } = string.Empty;
     public string Status { get; set; } = ConsultGenerationNodeStatuses.Running;
     public List<ClinicalConcept>? Concepts { get; set; }
@@ -517,7 +531,6 @@ public static class ConsultGenerationJobStatuses
 
 public static class ConsultGenerationActivityNames
 {
-    public const string RunProseStep = "run-prose-step";
     public const string RunPromptNode = "run-prompt-node";
 }
 

@@ -77,7 +77,6 @@ builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
 builder.Services.AddScoped<Diagnostics>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
-builder.Services.AddScoped<RunProseStepActivity>();
 builder.Services.AddScoped<RunPromptNodeActivity>();
 
 builder.Build().Run();
