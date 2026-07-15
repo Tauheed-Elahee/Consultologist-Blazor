@@ -76,6 +76,13 @@ if [[ -d "$PACKAGE_DIR/schemas" ]]; then
 	done
 fi
 
+# The derived DAG diagram rides along when present (generated, never authored;
+# pinned to the generator by WorkflowDagDiagramTests).
+if [[ -f "$PACKAGE_DIR/dag.mmd" ]]; then
+	az storage blob upload "${AUTH[@]}" --container-name "$CONTAINER" \
+		--file "$PACKAGE_DIR/dag.mmd" --name "$NAME/$VERSION/dag.mmd" --output none
+fi
+
 echo "Updating $NAME/latest.json -> $VERSION"
 POINTER=$(mktemp)
 printf '{"version": "%s"}\n' "$VERSION" > "$POINTER"
