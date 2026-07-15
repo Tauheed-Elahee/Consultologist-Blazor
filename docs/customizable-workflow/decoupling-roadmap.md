@@ -117,8 +117,8 @@ Stays in the app, correctly, forever:
 2. **The input model** — "a consult draft plus sections with standards" is the one
    domain assumption that survives M4. The engine is a generic interpreter *of
    consult-generation workflows*, not arbitrary workloads. Package-defined input
-   schemas would be a conceivable milestone 5 (see the final section); nothing on the
-   boards demands it.
+   schemas would be a conceivable future milestone (see the final section); nothing
+   on the boards demands it.
 3. **Policy and trust** — specVersion/engineVersion gates, pin resolution order,
    attestation, the effective-input-hash definition, provenance recording, per-node
    tool allowlists and budgets. These must never be package-controlled: the package
@@ -140,17 +140,28 @@ discipline) and the MCP server. They are versioned and attested rather than comp
 which is the point — but a reimplementing harness needs them too, which is why
 provenance.md counts them as first-class artifacts in the record.
 
-## A conceivable milestone 5: the input model as content
+## A conceivable future milestone: the input model as content
 
 Deliberately unplanned — recorded here so the boundary decision stays conscious rather
-than accidental.
+than accidental. (Formerly numbered "milestone 5"; unnumbered 2026-07-15 when
+Milestone 5 came to name the specVersion-5 generation, so this footnote never needs
+renumbering again as real milestones land ahead of it.)
+
+> **Reconciled 2026-07-15 with Milestone 5**
+> ([package-format-v5-design.md](package-format-v5-design.md)): v5 annexes part of
+> this territory. Standards move from the input side into package `data/`
+> collections, so "sections with standards" leaves the input model and the
+> effective-input hash can shrink to the draft alone. The fixed input this section
+> contemplates generalizing is therefore smaller after M5 — closer to "a consult
+> draft" — while what remains here (a package-declared input *schema* and a
+> schema-driven input form) is untouched and still waits for a demanding consumer.
 
 **What it is.** After M4, packages control the prompts, steps, and graph, but every
 workflow still begins from the same fixed input: a consult draft plus sections with
 standards. That shape is compiled into the request contract, the effective-input hash,
 the binding vocabulary (`consult_draft`, the section list), and the Consults page's
-input form. M5 would move *that* into the package: a manifest-declared **input schema**
-(JSON Schema, presumably) defining what each workflow takes in.
+input form. This milestone would move *that* into the package: a manifest-declared
+**input schema** (JSON Schema, presumably) defining what each workflow takes in.
 
 **What it would entail**, roughly in order of pain:
 
@@ -179,5 +190,5 @@ workflows over the *same* consult input and analysis outputs, so M4 covers them.
 
 **The realistic forcing function to watch: EMR integration.** The day input stops being
 a pasted draft and becomes structured payloads (FHIR bundles, referral document
-packets), the fixed input model starts to pinch and M5 becomes a real milestone rather
-than a footnote. Until then it is the honest, defensible edge of the decoupling.
+packets), the fixed input model starts to pinch and this becomes a real milestone
+rather than a footnote. Until then it is the honest, defensible edge of the decoupling.
