@@ -19,12 +19,20 @@ workflow-packages/
     ├── v2026.07.2/
     │   ├── manifest.json
     │   └── standards.md
-    └── v2026.07.3/                     # specVersion 2: prompts join the bundle
+    ├── v2026.07.3/                     # specVersion 2: prompts join the bundle
+    │   ├── manifest.json
+    │   ├── standards.md
+    │   └── prompts/
+    │       ├── _snomed-tool-guidance.md
+    │       └── <seven prompt templates>.md
+    └── v2026.07.6/                     # specVersion 5: data collections replace standards.md
         ├── manifest.json
-        ├── standards.md
-        └── prompts/
-            ├── _snomed-tool-guidance.md
-            └── <seven prompt templates>.md
+        ├── dag.mmd
+        ├── prompts/…
+        ├── schemas/concept-list.json
+        └── data/standards/
+            ├── index.json
+            └── <nine per-section .md files>
 ```
 
 A package version is **one artifact**: standards and prompts (and, in later

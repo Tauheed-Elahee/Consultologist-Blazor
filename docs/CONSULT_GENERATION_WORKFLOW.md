@@ -1,5 +1,13 @@
 # Consult Generation Workflow
 
+> **Updated for Milestone 5 (2026-07-15)**: the workflow below now executes on the
+> one-kind interpreter — every step is a `run-prompt-node` instance; the per-section
+> prose pipeline is a forEach chain over the package's `data/standards` collection
+> (specVersion 5, package-format-v5.md), scheduled per (node, item) with per-item
+> provenance hashes. Sections resolve server-side from the package; the account
+> standards override is retired. Narrative below predates Milestone 5 where it
+> describes `run-prose-step` or client-supplied sections.
+
 > **Superseded 2026-07-14 (milestone 4)**: the pipeline described below — fixed
 > analysis stages, stage-named SSE events, per-stage activities — is the pre-DAG
 > generation. The engine is now a topological interpreter over a package-declared node

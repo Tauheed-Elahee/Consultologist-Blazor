@@ -52,12 +52,20 @@ precondition — a registry humans can write would make the attestation tautolog
 
 ## The effective-input hash
 
+> **Versioned 2026-07-15 (Milestone 5)**: jobs record `effectiveInputHashVersion` —
+> **v1** (null/absent, specVersion ≤4 packages) covers draft + sections as described
+> below; **v2** (specVersion-5 packages) covers **the draft only**, because sections
+> are package data covered by the `workflowPackage` ref and the account standards
+> override is retired. The two definitions are never compared as equals. The
+> per-node chain below extends to **per-(node, item)** entries (`nodeId:itemId`
+> keys) — every forEach instance records its own input/output hashes.
+
 The input is not just the consult draft. The request reaching the orchestrator is
 draft + section list + standards, and account-level overrides change the standards.
 Hash the **fully resolved content** (draft + resolved sections/standards after
 overrides). Cleanest rule: overrides produce an ephemeral package-content hash recorded
 alongside the pinned package version — otherwise two different runs can claim the same
-input.
+input. *(v1 semantics — see the versioning note above.)*
 
 **Prompts are not part of the input hash.** Since specVersion 2
 ([package-format-v2.md](package-format-v2.md)) the prompts are package content, covered

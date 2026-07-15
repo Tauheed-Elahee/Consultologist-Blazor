@@ -1,5 +1,11 @@
 # Consult Generation Event Flow
 
+> **Updated for Milestone 5 (2026-07-15)**: the engine executes one node kind with
+> per-(node, item) scheduling. The event *surface* is unchanged — `node-completed`
+> fires per node-level completion (a forEach node completes when its last item
+> settles), and `section-prose-step` events are synthesized from per-item node
+> completions with identical payloads (step ids = the forEach chain's node ids).
+
 This is the current consult generation flow after the .NET 10 SSE migration.
 
 ```mermaid
