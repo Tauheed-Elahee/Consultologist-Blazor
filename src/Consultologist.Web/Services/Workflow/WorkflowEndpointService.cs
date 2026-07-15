@@ -10,11 +10,14 @@ public interface IWorkflowEndpointService
     Task<WorkflowPackageResponse> GetCurrentPackageAsync();
 }
 
+public record WorkflowPackageSectionResponse(string Id, string Name, string Content);
+
 public record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    string StandardsMarkdown)
+    string StandardsMarkdown,
+    IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null)
 {
     public string Ref => $"{Name}@{Version}";
 }
