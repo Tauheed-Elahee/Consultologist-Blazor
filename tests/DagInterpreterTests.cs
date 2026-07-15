@@ -250,6 +250,64 @@ public class ProvenanceHashTests
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
             ConsultGenerationProvenance.Sha256Hex("abc"));
     }
+
+    [Fact]
+    public void DraftOnlyHash_IgnoresSections_AndDiffersFromV1()
+    {
+        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "HPI", "std") };
+        var request = new ConsultGenerationRequest("Draft text.", sections);
+        var requestOtherSections = request with
+        {
+            Sections = new[] { new ConsultGenerationSectionRequest("pmh", "PMH", "other") }
+        };
+
+        // v2 covers the draft only: section changes don't move it.
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeDraftOnlyHash(request),
+            ConsultGenerationProvenance.ComputeDraftOnlyHash(requestOtherSections));
+
+        // The two definitions never collide for the same request.
+        Assert.NotEqual(
+            ConsultGenerationProvenance.ComputeEffectiveInputHash(request),
+            ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
+
+        // Canonical shape pin: {"consultDraft":"Draft text."}
+        Assert.Equal(
+            ConsultGenerationProvenance.Sha256Hex("""{"consultDraft":"Draft text."}"""),
+            ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
+    }
+}
+
+public class StartRequestValidationTests
+{
+    [Fact]
+    public void ValidateRequest_SectionsAreOptional()
+    {
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(
+            new ConsultGenerationRequest("Draft.", Array.Empty<ConsultGenerationSectionRequest>())));
+    }
+
+    [Theory]
+    [InlineData("", "HPI", "Each section requires Id and Name.")]
+    [InlineData("hpi", "", "Each section requires Id and Name.")]
+    public void ValidateRequest_ProvidedSectionsStillValidated(string id, string name, string expected)
+    {
+        var request = new ConsultGenerationRequest("Draft.", new[] { new ConsultGenerationSectionRequest(id, name, "std") });
+
+        Assert.Equal(expected, ConsultGenerationJobs.ValidateRequest(request));
+    }
+
+    [Fact]
+    public void ValidateRequest_RejectsDuplicateSectionIds()
+    {
+        var request = new ConsultGenerationRequest("Draft.", new[]
+        {
+            new ConsultGenerationSectionRequest("hpi", "HPI", "a"),
+            new ConsultGenerationSectionRequest("hpi", "HPI 2", "b")
+        });
+
+        Assert.Equal("Duplicate section IDs are not allowed.", ConsultGenerationJobs.ValidateRequest(request));
+    }
 }
 
 public class ConsultGenerationNodeEntityTests

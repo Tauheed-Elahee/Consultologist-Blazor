@@ -184,12 +184,41 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
-            // The v5 input model (server-resolved sections, draft-only hash) is the
-            // next slice; guard-then-implement, as with v4 (#71).
-            if (package.Manifest.SpecVersion >= 5)
+            // The input model forks on the package's spec version: v5 sections are
+            // package data resolved here (client-sent sections are ignored); spec≤4
+            // sections are request input and required (package-format-v5.md).
+            var isV5Package = package.Manifest.SpecVersion >= 5;
+            IReadOnlyList<IReadOnlyDictionary<string, string>>? items = null;
+            IReadOnlyDictionary<string, string>? dataScalars = null;
+
+            if (isV5Package)
             {
-                _logger.LogWarning("Workflow package {Package} is specVersion {SpecVersion}; the v5 input model is not wired yet.", package.Ref, package.Manifest.SpecVersion);
-                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} requires the specVersion-5 input model, which this engine does not accept yet." }, cancellationToken);
+                if (request.Sections is { Count: > 0 })
+                {
+                    _logger.LogInformation("Client-sent sections ignored for specVersion-5 package {Package}.", package.Ref);
+                }
+
+                var collection = WorkflowPackageSections.ResolveCollection(package);
+                items = collection.Items
+                    .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
+                    .ToList();
+                dataScalars = package.Data?.Scalars;
+
+                // One section source everywhere: the entity, the orchestrator's
+                // fallback, and the response all see the package-resolved list.
+                request = request with
+                {
+                    Sections = collection.Items
+                        .Select(item => new ConsultGenerationSectionRequest(
+                            item.Id,
+                            item.Fields.GetValueOrDefault("name", item.Id),
+                            item.Fields.GetValueOrDefault("content", string.Empty)))
+                        .ToList()
+                };
+            }
+            else if (request.Sections is not { Count: > 0 })
+            {
+                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "Sections are required for specVersion 4 and earlier packages." }, cancellationToken);
             }
 
             var resolvedPackageRef = package.Ref;
@@ -205,7 +234,10 @@ public sealed class ConsultGenerationJobs
             // Every catalog contract's agent version is recorded, keyed by contract id;
             // the legacy scalar fields mirror the text/concept-list entries until the
             // next response SchemaVersion bump. See docs/customizable-workflow/provenance.md.
-            var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
+            var effectiveInputHash = isV5Package
+                ? ConsultGenerationProvenance.ComputeDraftOnlyHash(request)
+                : ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
+            var effectiveInputHashVersion = isV5Package ? 2 : (int?)null;
             var agentVersions = _catalog.Entries.Values.ToDictionary(
                 entry => entry.ContractId,
                 entry => entry.AgentVersion,
@@ -231,7 +263,8 @@ public sealed class ConsultGenerationJobs
                     sectionSteps,
                     conceptAgentVersion,
                     nodes,
-                    agentVersions));
+                    agentVersions,
+                    effectiveInputHashVersion));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -250,7 +283,10 @@ public sealed class ConsultGenerationJobs
                     conceptAgentVersion,
                     nodes,
                     agentVersions,
-                    package.ResultNodeId),
+                    package.ResultNodeId,
+                    items,
+                    dataScalars,
+                    effectiveInputHashVersion),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -653,7 +689,9 @@ public sealed class ConsultGenerationJobs
         return $"{authority}/api/ConsultGenerationJobs/{jobId}";
     }
 
-    private static string? ValidateRequest(ConsultGenerationRequest? request)
+    // Sections are optional at parse time: v5 pins resolve them from the package,
+    // and the pin is only known after resolution — spec≤4 enforcement happens there.
+    internal static string? ValidateRequest(ConsultGenerationRequest? request)
     {
         if (request == null)
         {
@@ -665,12 +703,7 @@ public sealed class ConsultGenerationJobs
             return "ConsultDraft is required.";
         }
 
-        if (request.Sections == null || request.Sections.Count == 0)
-        {
-            return "At least one section is required.";
-        }
-
-        foreach (var section in request.Sections)
+        foreach (var section in request.Sections ?? Array.Empty<ConsultGenerationSectionRequest>())
         {
             if (string.IsNullOrWhiteSpace(section.Id)
                 || string.IsNullOrWhiteSpace(section.Name))
@@ -679,7 +712,7 @@ public sealed class ConsultGenerationJobs
             }
         }
 
-        if (request.Sections
+        if ((request.Sections ?? Array.Empty<ConsultGenerationSectionRequest>())
             .GroupBy(section => section.Id, StringComparer.Ordinal)
             .Any(group => group.Count() > 1))
         {
