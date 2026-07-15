@@ -17,7 +17,7 @@ public interface IWorkflowPackageStore
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
     private const string ContainerName = "workflow-packages";
-    public const int SupportedSpecVersion = 4;
+    public const int SupportedSpecVersion = 5;
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -91,7 +91,11 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
                 $"Workflow package {cacheKey} requires spec version {manifest.SpecVersion}, but this runtime supports up to {SupportedSpecVersion}.");
         }
 
-        var standards = await DownloadTextAsync($"{packageRef.Name}/{version}/standards.md", cancellationToken);
+        // v5 packages have no standards.md — standards live in the data table
+        // (package-format-v5.md); earlier spec versions require it.
+        var standards = manifest.SpecVersion >= 5
+            ? string.Empty
+            : await DownloadTextAsync($"{packageRef.Name}/{version}/standards.md", cancellationToken);
 
         var loaded = manifest.SpecVersion >= 2
             ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
@@ -99,12 +103,14 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var prompts = loaded.Prompts;
 
         // Every spec version resolves to one node DAG and one section-step list, so a
-        // single interpreter path serves them all: v4 declares nodes natively and its
-        // map body lowers to section steps for run-prose-step; v3 declares steps and
-        // synthesizes the canonical DAG; v2 synthesizes both; v1 has neither.
+        // single interpreter path serves them all: v5 declares one-kind forEach nodes
+        // natively (no section-step lowering — the interpreter slice retires it); v4
+        // declares nodes and its map body lowers to section steps for run-prose-step;
+        // v3 declares steps and synthesizes the canonical DAG; v2 synthesizes both.
         var sectionSteps = manifest.SpecVersion switch
         {
-            >= 4 => WorkflowNodeDefaults.LowerMapSteps(
+            >= 5 => null,
+            4 => WorkflowNodeDefaults.LowerMapSteps(
                 manifest.Nodes!.Single(n => string.Equals(n.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))),
             3 => manifest.SectionSteps,
             2 => WorkflowSectionStepDefaults.V2Synthesized,
@@ -131,7 +137,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             _ => null
         };
 
-        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes, schemaContracts);
+        var package = new WorkflowPackage(manifest, standards, prompts, sectionSteps, nodes, schemaContracts, loaded.Data);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -139,12 +145,14 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     }
 
     /// <summary>
-    /// Downloads and validates the prompt templates of a specVersion-2+ package, and
-    /// resolves declared schemas to catalog contract ids. Validation failures throw —
-    /// the engine's fail-loud enforcement point
-    /// (docs/customizable-workflow/package-format-v2.md, package-format-v3.md).
+    /// Downloads and validates the files of a specVersion-2+ package, and resolves
+    /// declared schemas to catalog contract ids. Data gathering is two-stage: the
+    /// manifest's data table names scalar files and collection index.json files, and
+    /// each index names its item files. Missing data blobs are omitted (the validator
+    /// reports them coherently); everything else fails loud on 404. Validation
+    /// failures throw — the engine's fail-loud enforcement point.
     /// </summary>
-    private async Task<(Dictionary<string, WorkflowPromptTemplate> Prompts, Dictionary<string, string> SchemaContracts)> LoadPromptsAsync(
+    private async Task<(Dictionary<string, WorkflowPromptTemplate> Prompts, Dictionary<string, string> SchemaContracts, WorkflowPackageData? Data)> LoadPromptsAsync(
         string name,
         string version,
         WorkflowPackageManifest manifest,
@@ -160,6 +168,8 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         {
             files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
         }
+
+        await GatherDataFilesAsync(name, version, manifest, files, cancellationToken);
 
         var catalogSchemas = _catalog.Entries.Values
             .Where(entry => entry.SchemaJson != null)
@@ -200,7 +210,78 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             schemaContracts[schemaId] = contractId;
         }
 
-        return (prompts, schemaContracts);
+        // Post-validation resolve: the validator has already guaranteed integrity,
+        // so this collects no errors.
+        var data = manifest.SpecVersion >= 5
+            ? WorkflowDataResolver.Resolve(manifest, files, new List<string>())
+            : null;
+
+        return (prompts, schemaContracts, data);
+    }
+
+    /// <summary>
+    /// Stage one: the data table's scalar files and collection indexes; stage two:
+    /// each parseable index's item files. Unparseable indexes and missing blobs are
+    /// left to the validator.
+    /// </summary>
+    private async Task GatherDataFilesAsync(
+        string name,
+        string version,
+        WorkflowPackageManifest manifest,
+        Dictionary<string, string> files,
+        CancellationToken cancellationToken)
+    {
+        foreach (var (_, path) in manifest.Data ?? new Dictionary<string, string>())
+        {
+            if (!path.EndsWith('/'))
+            {
+                await TryAddBlobAsync(files, name, version, path, cancellationToken);
+                continue;
+            }
+
+            var indexPath = path + WorkflowDataResolver.IndexFileName;
+
+            if (!await TryAddBlobAsync(files, name, version, indexPath, cancellationToken))
+            {
+                continue;
+            }
+
+            WorkflowDataIndexFile? index;
+            try
+            {
+                index = JsonSerializer.Deserialize<WorkflowDataIndexFile>(files[indexPath], JsonOptions);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            foreach (var item in index?.Items ?? new List<WorkflowDataIndexItem>())
+            {
+                if (!string.IsNullOrWhiteSpace(item.File))
+                {
+                    await TryAddBlobAsync(files, name, version, path + item.File, cancellationToken);
+                }
+            }
+        }
+    }
+
+    private async Task<bool> TryAddBlobAsync(
+        Dictionary<string, string> files,
+        string name,
+        string version,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private async Task<string> ResolveLatestVersionAsync(string name, CancellationToken cancellationToken)
