@@ -563,20 +563,36 @@ public class WorkflowNodeDefaultsTests
     }
 
     [Fact]
-    public void LowerMapSteps_InvertsTheSynthesizedMapNode()
+    public void LowerToOneKind_TurnsTheMapContainerIntoAnItemAlignedForEachChain()
     {
-        var original = WorkflowSectionStepDefaults.V2Synthesized;
-        var map = WorkflowNodeDefaults.V3SynthesizedDag(original).Single(n => n.Kind == WorkflowNodeKinds.Map);
+        var synthesized = WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized);
 
-        var lowered = WorkflowNodeDefaults.LowerMapSteps(map);
+        var (nodes, resultNodeId) = WorkflowNodeDefaults.LowerToOneKind(synthesized);
 
-        Assert.Equal(original.Select(s => (s.StepId, s.Label)), lowered.Select(s => (s.StepId, s.Label)));
-        foreach (var (expected, actual) in original.Zip(lowered))
-        {
-            Assert.Equal(
-                expected.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal),
-                actual.Bindings.OrderBy(b => b.Key, StringComparer.Ordinal));
-        }
+        // Four scalar analysis nodes plus the three chain nodes; no kinds anywhere.
+        Assert.Equal(7, nodes.Count);
+        Assert.All(nodes, node => Assert.Null(node.Kind));
+        Assert.Equal(WorkflowPromptContract.SectionInstructions, resultNodeId);
+
+        var chain = nodes.Where(node => node.ForEach != null).ToList();
+        Assert.Equal(3, chain.Count);
+        Assert.All(chain, node => Assert.Equal(WorkflowNodeBindingSources.InputSections, node.ForEach));
+
+        // Step ids are preserved and previous_step_output became item-aligned edges.
+        Assert.Equal(
+            WorkflowSectionStepDefaults.V2Synthesized.Select(s => s.StepId),
+            chain.Select(n => n.Id));
+        Assert.Equal(
+            $"node:{WorkflowPromptContract.StandardSectionDraft}",
+            chain[1].Bindings![WorkflowPromptContract.StandardSectionDraftVariable].From);
+        Assert.Equal(
+            $"node:{WorkflowPromptContract.PatientSectionDraft}",
+            chain[2].Bindings![WorkflowPromptContract.PatientSectionDraftVariable].From);
+
+        // The concept-context binding survives the lowering untouched.
+        var conceptBinding = chain[0].Bindings![WorkflowPromptContract.PatientTrajectoryConcepts];
+        Assert.Equal($"node:{WorkflowPromptContract.CreatePatientTrajectory}", conceptBinding.From);
+        Assert.Equal(WorkflowConceptRenderers.ConceptContext, conceptBinding.As);
     }
 
     [Fact]
