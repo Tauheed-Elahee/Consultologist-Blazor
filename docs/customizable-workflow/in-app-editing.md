@@ -124,14 +124,24 @@ are hygiene-checked; agents, tools, and schemas are untouchable from the editor 
 edited prompts steer the same attested agents through the same closed output
 contracts.
 
-## Open questions (exploration continues)
+## Decisions (settled 2026-07-15; were open questions)
 
-- Whether v1 should also expose editing the analysis prompt-node *bindings* (the
-  graph shape) or only their prompt texts — current lean: texts only, shape stays
-  read-only until the editor earns graph-editing UX.
-- Draft persistence (in-memory vs localStorage) and multi-device drafts.
-- Whether "publish without activating" (SetPin=false) is exposed in v1 UI.
-- Abandonment/cleanup UX for account package history (v1: never delete).
-- Relationship to #16 (GitOps content repos): the editor is the in-app authoring
-  path; #16 is the CI authoring path — both publish to the same registry, and the
-  eval-gated publishing idea applies to both eventually.
+- **v1 edits prompt texts only** — node bindings and graph shape stay read-only
+  until the editor earns graph-editing UX. Smaller blast radius for the first
+  fork-publishing release.
+- **Draft persistence: localStorage** — drafts survive refresh/navigation on the
+  same browser, cleared on publish/discard. No server-side draft store (that would
+  invent a mutable content store beside the immutable registry) and no multi-device
+  claims in v1.
+- **Publish activates, always** — no "publish without activating" checkbox in v1.
+  One mental model: publish = "start using this"; "Revert to default" is the escape
+  hatch. An inactive version is only useful with test-before-switch or eval-gating
+  machinery (#16), and the endpoint can grow a `SetPin=false` flag then with zero
+  format or provenance change.
+- **Account version history: never delete in v1** (unchanged from the design above —
+  immutability is what keeps provenance refs permanent); cleanup UX is revisited
+  post-release only if storage ever matters.
+
+Remaining note, not a question — relationship to #16 (GitOps content repos): the
+editor is the in-app authoring path; #16 is the CI authoring path — both publish to
+the same registry, and the eval-gated publishing idea applies to both eventually.
