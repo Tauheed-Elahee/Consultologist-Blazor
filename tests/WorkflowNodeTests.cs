@@ -26,7 +26,7 @@ public static class V4Fixtures
     public static Dictionary<string, string> Files(WorkflowPackageManifest manifest)
     {
         var files = V2Fixtures.Files(manifest);
-        files[SchemaPath] = ConceptOutputContract.SchemaJson;
+        files[SchemaPath] = TestOutputContracts.ConceptListSchema;
         return files;
     }
 }
@@ -386,7 +386,7 @@ public class WorkflowNodeValidationTests
     {
         var manifest = V4Fixtures.Manifest();
         var files = V4Fixtures.Files(manifest);
-        var schema = System.Text.Json.Nodes.JsonNode.Parse(ConceptOutputContract.SchemaJson)!.AsObject();
+        var schema = System.Text.Json.Nodes.JsonNode.Parse(TestOutputContracts.ConceptListSchema)!.AsObject();
         schema["title"] = "Concept list";
         schema["description"] = "Concepts extracted from a consult draft.";
         files[V4Fixtures.SchemaPath] = schema.ToJsonString();
@@ -401,7 +401,7 @@ public class WorkflowNodeValidationTests
     {
         var manifest = V4Fixtures.Manifest();
         var files = V4Fixtures.Files(manifest);
-        files[V4Fixtures.SchemaPath] = ConceptOutputContract.SchemaJson.Replace("\"isActive\"", "\"active\"");
+        files[V4Fixtures.SchemaPath] = TestOutputContracts.ConceptListSchema.Replace("\"isActive\"", "\"active\"");
 
         Assert.Contains(
             WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas).Errors,

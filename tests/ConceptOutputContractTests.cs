@@ -62,28 +62,7 @@ public class ConceptOutputContractTests
         Assert.IsType<ConceptOutputContractException>(ex);
     }
 
-    [Fact]
-    public void AgentManifestSchema_MatchesEngineContract()
-    {
-        // The schema published in agents/concept-extraction.yaml and the engine's
-        // pinned contract must be the same document (canonically) — the agent enforces
-        // at generation time exactly what the engine deserializes.
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        var manifest = AttestedAgentManifest.Load(
-            File.ReadAllText(Path.Combine(dir!.FullName, "agents", "concept-extraction.yaml")));
-
-        Assert.Equal("json_schema", manifest.Definition.Text?.Format?.Type);
-        Assert.Equal("concept_list", manifest.Definition.Text?.Format?.Name);
-        Assert.Equal("true", manifest.Definition.Text?.Format?.Strict);
-
-        var manifestSchema = JsonNode.Parse(manifest.Definition.Text!.Format!.Schema!)!;
-        var engineSchema = JsonNode.Parse(ConceptOutputContract.SchemaJson)!;
-
-        Assert.Equal(engineSchema.ToJsonString(), manifestSchema.ToJsonString());
-    }
+    // The former AgentManifestSchema_MatchesEngineContract pin moved to
+    // OutputContractCatalogTests.Load_RealCatalog_ConceptListSchemaMatchesAgentManifest:
+    // the schema's source of truth is the catalog file, not an engine constant.
 }

@@ -109,7 +109,7 @@ public class PackageSourceValidationTests
         Assert.True(File.Exists(schemaPath), $"schema file not found at {schemaPath}");
 
         var packageSchema = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(schemaPath));
-        var engineSchema = System.Text.Json.Nodes.JsonNode.Parse(ConceptOutputContract.SchemaJson);
+        var engineSchema = System.Text.Json.Nodes.JsonNode.Parse(TestOutputContracts.ConceptListSchema);
 
         Assert.Equal(
             WorkflowPackageValidator.CanonicalizeSchema(engineSchema),

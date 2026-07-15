@@ -1,10 +1,15 @@
-# Output-Contract Catalog and the Node Calculus (Next-Slice Design)
+# Output-Contract Catalog and the Node Calculus
 
-Recorded 2026-07-15 during post-milestone-4 exploration. Status: **design; not yet
-implemented** — tracked by the "output-contract catalog" issue, which folds in #53
-(prose-step unification). Context: the app is pre-release; the stated posture is
-"churn is acceptable, build a solid app before release", which lifts the
-gate-on-second-consumer rule for this slice.
+Recorded 2026-07-15 during post-milestone-4 exploration; tracked by the
+"output-contract catalog" issue (#55, Milestone 5). Status: **the catalog is
+implemented** (PR "the catalog" on the m5-output-contract-catalog branch):
+`agents/output-contracts.json` + `OutputContractCatalog`, catalog-keyed selection in
+`run-prompt-node`/`run-prose-step`, per-entry attestation with the schema
+cross-check, the catalog-match validator closure, and the `agentVersions` provenance
+map all shipped as designed below. The DAG visualization (PR 3) follows; the
+unification (old PR 2) remains subsumed by #59. Context: the app is pre-release;
+the stated posture is "churn is acceptable, build a solid app before release",
+which lifted the gate-on-second-consumer rule for this slice.
 
 ## The two questions this design answers
 

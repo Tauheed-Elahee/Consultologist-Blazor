@@ -5,44 +5,14 @@ using Consultologist.Api.Models;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// The engine-pinned output contract for concept-producing analysis stages: the JSON
-/// Schema the structured-output agent (agents/concept-extraction.yaml) is published
-/// with, and the deserializer that materializes ClinicalConcept records from
-/// schema-conformant output. Engine spec until packages declare schemas
-/// (docs/customizable-workflow/dag-as-data-design.md).
+/// The typed deserializer for the concept-list output contract: materializes
+/// ClinicalConcept records from schema-conformant agent output. The schema itself
+/// lives in the output-contract catalog (agents/schemas/concept-list.json), welded to
+/// the attested structured-output agent; this class is the code-by-nature half —
+/// typed consumption of the shape (docs/customizable-workflow/output-contract-catalog.md).
 /// </summary>
 public static class ConceptOutputContract
 {
-    /// <summary>
-    /// Constrained to the OpenAI strict-mode subset: every property required,
-    /// additionalProperties false, nullability via type arrays.
-    /// </summary>
-    public const string SchemaJson = """
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["concepts"],
-          "properties": {
-            "concepts": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["term", "type", "id", "isSnomedConcept", "isActive", "support"],
-                "properties": {
-                  "term":            { "type": "string" },
-                  "type":            { "type": "string" },
-                  "id":              { "type": ["string", "null"] },
-                  "isSnomedConcept": { "type": "boolean" },
-                  "isActive":        { "type": "boolean" },
-                  "support":         { "type": ["string", "null"] }
-                }
-              }
-            }
-          }
-        }
-        """;
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true

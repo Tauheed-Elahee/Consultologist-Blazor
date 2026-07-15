@@ -47,6 +47,8 @@ public class OutputContractCatalogTests
 
         Assert.Equal(entry.AgentVersion, manifest.Version);
         Assert.Equal("json_schema", manifest.Definition.Text?.Format?.Type);
+        Assert.Equal("concept_list", manifest.Definition.Text?.Format?.Name);
+        Assert.Equal("true", manifest.Definition.Text?.Format?.Strict);
 
         var manifestSchema = JsonNode.Parse(manifest.Definition.Text!.Format!.Schema!)!;
         var catalogSchema = JsonNode.Parse(entry.SchemaJson!)!;

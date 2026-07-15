@@ -8,6 +8,9 @@ public static class TestOutputContracts
 {
     public static readonly IReadOnlyDictionary<string, string> CatalogSchemas = Load();
 
+    /// <summary>The catalog's concept-list schema text (the former engine const).</summary>
+    public static string ConceptListSchema => CatalogSchemas["concept-list"];
+
     private static IReadOnlyDictionary<string, string> Load()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

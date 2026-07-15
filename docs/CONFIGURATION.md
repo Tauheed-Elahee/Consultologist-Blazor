@@ -22,28 +22,35 @@ through `IConfiguration` accept either form; settings read directly via
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
 | `AzureAI__Endpoint` | Foundry project endpoint, e.g. `https://<resource>.services.ai.azure.com/api/projects/<project>` | — | yes (agent calls throw without it) |
-| `AzureAI__AgentName` | Prose agent name in the Foundry project (currently `test-json`) | — | yes |
-| `AzureAI__AgentVersion` | Published prose agent version as a string (currently `47`) | — | yes |
-| `AzureAI__ConceptAgentName` | Structured-output agent for the concept analysis stages (currently `concept-extraction`; published with a `json_schema` text format — see `agents/concept-extraction.yaml`) | — | yes (analysis activities throw without it) |
-| `AzureAI__ConceptAgentVersion` | Published concept agent version as a string (currently `1`); recorded in per-job provenance | — | yes |
 | `AzureAI__ApiVersion` | Foundry agents API version | `v1` | no |
 | `AzureAI__NetworkTimeoutSeconds` | Non-negative integer (seconds) | `270` | no |
 | `AzureAI__MaxRetries` | Non-negative integer (SDK-internal retries per call; durable retries stack on top) | `0` | no |
 | `AZURE_CLIENT_ID` | Client id (GUID) of the user-assigned managed identity | — | yes when running in Azure (detected via `WEBSITE_INSTANCE_ID`) |
+
+Agent name/version pins are **not** app settings: they live in the bundled,
+git-tracked output-contract catalog (`agents/output-contracts.json`), keyed by output
+contract id (`text` = prose default, `concept-list` = structured concepts, schema at
+`agents/schemas/concept-list.json`). Selection is catalog-driven per node; every
+entry's agent version is recorded in per-job provenance (`agentVersions` map). The
+former `AzureAI__AgentName`/`AgentVersion`/`ConceptAgentName`/`ConceptAgentVersion`
+settings are retired — delete them from the Function App.
 
 ## Agent attestation (`Agents/AgentAttestationService.cs`)
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
 | `AgentAttestation__Enforce` | `true` (case-insensitive) = drift fails host startup; any other value = drift logs an error only | warn-only | no |
-| `AgentAttestation__ManifestDirectory` | Directory holding the attested agent YAMLs (`{agent-name}.yaml` per pinned agent; replaces the former `AgentAttestation__ManifestPath`) | `agents/` under the app base directory | no |
+| `AgentAttestation__ManifestDirectory` | Directory holding the attested agent YAMLs and `output-contracts.json` (replaces the former `AgentAttestation__ManifestPath`) | `agents/` under the app base directory | no |
 
-Every pinned agent is attested: `AzureAI__AgentName`/`AgentVersion` and, when
-configured, `AzureAI__ConceptAgentName`/`ConceptAgentVersion` — including the
-`text.format` block (type/name/strict and canonical-JSON schema comparison).
+Every output-contract catalog entry is attested: the deployed agent against its git
+manifest (`{agent-name}.yaml`, including the `text.format` block — type/name/strict
+and canonical-JSON schema comparison), plus the catalog↔manifest schema cross-check
+(a catalog entry whose declared schema differs from its agent manifest's is a
+startup failure under enforce).
 
-Transient check failures (Foundry unreachable, manifest missing) only warn, even in
-enforce mode — only proven disagreement is fatal.
+Transient check failures (Foundry unreachable) only warn, even in enforce mode —
+only proven disagreement is fatal. A catalog entry with no git manifest is proven
+disagreement, not transient.
 
 ## Workflow packages (`Workflow/WorkflowPackageStore.cs`, `Workflow/WorkflowPackages.cs`)
 
