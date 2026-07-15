@@ -80,10 +80,13 @@ string. All default to `AzureWebJobsStorage`.
 | `WEBSITE_INSTANCE_ID` | Provided by Azure; the code only reads it to detect "running in Azure". Never set manually. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Telemetry destination. |
 
-## Legacy settings present in the deployed app but no longer read
+## Legacy settings
 
-`AzureAI__AgentId__old`, `AzureAI__Endpoint__old`, `AzureAI__ApiVersion__old` — leftovers
-from the assistants-era integration; safe to delete from the Function App configuration.
+None. The assistants-era leftovers (`AzureAI__AgentId__old`, `AzureAI__Endpoint__old`,
+`AzureAI__ApiVersion__old`) and the retired agent pin settings
+(`AzureAI__AgentName`/`AgentVersion`/`ConceptAgentName`/`ConceptAgentVersion`,
+replaced by the output-contract catalog) were deleted from the Function App
+2026-07-15.
 
 ## Frontend (`src/Consultologist.Web/wwwroot/appsettings.json`)
 
