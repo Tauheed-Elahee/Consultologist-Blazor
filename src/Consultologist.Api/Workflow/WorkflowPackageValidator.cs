@@ -22,9 +22,15 @@ public static class WorkflowPackageValidator
     }
 
     /// <param name="files">Package-relative path → file content, for every file the manifest references.</param>
+    /// <param name="catalogSchemas">
+    /// Output-contract id → schema JSON from the engine's catalog: every declared
+    /// package schema must canonically match one of these (the closure that welds
+    /// package contracts to attested agents, output-contract-catalog.md).
+    /// </param>
     public static ValidationResult Validate(
         WorkflowPackageManifest manifest,
-        IReadOnlyDictionary<string, string> files)
+        IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, string> catalogSchemas)
     {
         var errors = new List<string>();
         var warnings = new List<string>();
@@ -111,7 +117,7 @@ public static class WorkflowPackageValidator
                 errors.Add("sectionSteps was replaced by nodes in specVersion 4.");
             }
 
-            ValidateNodes(manifest, files, errors);
+            ValidateNodes(manifest, files, catalogSchemas, errors);
         }
         else
         {
@@ -136,6 +142,7 @@ public static class WorkflowPackageValidator
     private static void ValidateNodes(
         WorkflowPackageManifest manifest,
         IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, string> catalogSchemas,
         List<string> errors)
     {
         var nodes = manifest.Nodes ?? new List<WorkflowNodeSpec>();
@@ -276,7 +283,7 @@ public static class WorkflowPackageValidator
                         CheckBinding(node.Id, variable, binding, inMapStep: false, isFirstMapStep: false);
                     }
 
-                    ValidateNodeOutput(node, manifest, files, errors);
+                    ValidateNodeOutput(node, manifest, files, catalogSchemas, errors);
                     break;
 
                 case WorkflowNodeKinds.Map:
@@ -365,6 +372,7 @@ public static class WorkflowPackageValidator
         WorkflowNodeSpec node,
         WorkflowPackageManifest manifest,
         IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, string> catalogSchemas,
         List<string> errors)
     {
         if (node.Output is null)
@@ -395,14 +403,14 @@ public static class WorkflowPackageValidator
             return;
         }
 
-        // The v4.0 closure: every declared schema must be structurally identical to the
-        // engine's canonical concept-list schema (modulo title/description) — the
-        // schema is welded to the attested structured-output agent
-        // (package-format-v4.md). This subsumes the structured-outputs-subset check.
-        var canonical = CanonicalizeSchema(JsonNode.Parse(ConceptOutputContract.SchemaJson));
-        if (CanonicalizeSchema(schema) != canonical)
+        // The closure, catalog-shaped since milestone 5: every declared schema must
+        // canonically match some catalog output contract (modulo title/description) —
+        // schemas are welded to attested agents, and the catalog names them
+        // (output-contract-catalog.md). This subsumes the structured-outputs-subset check.
+        var canonicalSchema = CanonicalizeSchema(schema);
+        if (!catalogSchemas.Values.Any(catalogSchema => CanonicalizeSchema(JsonNode.Parse(catalogSchema)) == canonicalSchema))
         {
-            errors.Add($"Schema '{node.Output.Schema}' must be structurally identical to the engine concept-list schema in specVersion 4.0 (modulo title/description).");
+            errors.Add($"Schema '{node.Output.Schema}' must canonically match a catalog output contract (modulo title/description).");
         }
 
         if (node.Output.FailIfEmpty != null && string.IsNullOrWhiteSpace(node.Output.FailIfEmpty))

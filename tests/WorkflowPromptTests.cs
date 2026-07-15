@@ -115,7 +115,7 @@ public class WorkflowPackageValidatorTests
     {
         var manifest = V2Fixtures.Manifest();
 
-        var result = WorkflowPackageValidator.Validate(manifest, V2Fixtures.Files(manifest));
+        var result = WorkflowPackageValidator.Validate(manifest, V2Fixtures.Files(manifest), TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
         Assert.Empty(result.Warnings);
@@ -128,7 +128,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         manifest = manifest with { Prompts = manifest.Prompts!.Where(p => p.Id != WorkflowPromptContract.IdentifyProblem).ToList() };
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("identify-problem") && e.Contains("missing"));
     }
@@ -140,7 +140,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         manifest.Prompts!.Add(new WorkflowPromptSpec("my-custom-step", "prompts/custom.md", new List<string>()));
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("my-custom-step") && e.Contains("closed"));
     }
@@ -152,7 +152,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         manifest.Prompts![0].Variables.Add("patient_age");
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("patient_age") && e.Contains("contract"));
     }
@@ -164,7 +164,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         files["prompts/extract-patient-concepts.md"] = "{{ consult_draft }} and {{ section_name }}";
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("extract-patient-concepts") && e.Contains("strict"));
     }
@@ -176,7 +176,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         files["prompts/extract-patient-concepts.md"] = "No variables here at all.";
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid);
         Assert.Contains(result.Warnings, w => w.Contains("consult_draft") && w.Contains("never mentions"));
@@ -187,7 +187,7 @@ public class WorkflowPackageValidatorTests
     {
         var manifest = V2Fixtures.Manifest(engineVersion: "99.0.0");
 
-        var result = WorkflowPackageValidator.Validate(manifest, V2Fixtures.Files(manifest));
+        var result = WorkflowPackageValidator.Validate(manifest, V2Fixtures.Files(manifest), TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("newer than this engine"));
     }
@@ -199,7 +199,7 @@ public class WorkflowPackageValidatorTests
         var files = V2Fixtures.Files(manifest);
         files.Remove("prompts/identify-problem.md");
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("prompts/identify-problem.md") && e.Contains("missing"));
     }

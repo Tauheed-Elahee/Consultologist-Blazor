@@ -57,7 +57,7 @@ public class PackageSourceValidationTests
             }
         }
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, "validation errors: " + string.Join(" | ", result.Errors));
         Assert.True(result.Warnings.Count == 0, "validation warnings: " + string.Join(" | ", result.Warnings));

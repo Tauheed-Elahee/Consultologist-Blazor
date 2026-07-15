@@ -161,7 +161,11 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
         }
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var catalogSchemas = _catalog.Entries.Values
+            .Where(entry => entry.SchemaJson != null)
+            .ToDictionary(entry => entry.ContractId, entry => entry.SchemaJson!, StringComparer.Ordinal);
+
+        var result = WorkflowPackageValidator.Validate(manifest, files, catalogSchemas);
 
         foreach (var warning in result.Warnings)
         {

@@ -149,7 +149,7 @@ public class WorkflowManifestV4Tests
 public class WorkflowNodeValidationTests
 {
     private static WorkflowPackageValidator.ValidationResult Validate(WorkflowPackageManifest manifest) =>
-        WorkflowPackageValidator.Validate(manifest, V4Fixtures.Files(manifest));
+        WorkflowPackageValidator.Validate(manifest, V4Fixtures.Files(manifest), TestOutputContracts.CatalogSchemas);
 
     private static WorkflowNodeSpec Node(WorkflowPackageManifest manifest, string id) =>
         manifest.Nodes!.Single(n => n.Id == id);
@@ -185,7 +185,7 @@ public class WorkflowNodeValidationTests
     {
         var v3WithNodes = V3Fixtures.Manifest() with { Nodes = V4Fixtures.Manifest().Nodes };
         Assert.Contains(
-            WorkflowPackageValidator.Validate(v3WithNodes, V3Fixtures.Files(v3WithNodes)).Errors,
+            WorkflowPackageValidator.Validate(v3WithNodes, V3Fixtures.Files(v3WithNodes), TestOutputContracts.CatalogSchemas).Errors,
             e => e.Contains("nodes requires specVersion 4"));
 
         var v4WithSteps = V4Fixtures.Manifest() with
@@ -377,7 +377,7 @@ public class WorkflowNodeValidationTests
         files.Remove(V4Fixtures.SchemaPath);
 
         Assert.Contains(
-            WorkflowPackageValidator.Validate(manifest, files).Errors,
+            WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas).Errors,
             e => e.Contains("schemas/concept-list.json") && e.Contains("missing"));
     }
 
@@ -391,7 +391,7 @@ public class WorkflowNodeValidationTests
         schema["description"] = "Concepts extracted from a consult draft.";
         files[V4Fixtures.SchemaPath] = schema.ToJsonString();
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }
@@ -404,8 +404,29 @@ public class WorkflowNodeValidationTests
         files[V4Fixtures.SchemaPath] = ConceptOutputContract.SchemaJson.Replace("\"isActive\"", "\"active\"");
 
         Assert.Contains(
-            WorkflowPackageValidator.Validate(manifest, files).Errors,
-            e => e.Contains("structurally identical"));
+            WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas).Errors,
+            e => e.Contains("canonically match a catalog output contract"));
+    }
+
+    [Fact]
+    public void Validate_AcceptsAnyCatalogEntry_NotJustConceptList()
+    {
+        // The closure is catalog-shaped: a package schema matching a *different*
+        // catalog entry is valid — this is what makes new output shapes a
+        // zero-code, catalog-plus-agent operation.
+        var manifest = V4Fixtures.Manifest();
+        var files = V4Fixtures.Files(manifest);
+        var summarySchema = """{ "type": "object", "required": ["summary"], "properties": { "summary": { "type": "string" } }, "additionalProperties": false }""";
+        files[V4Fixtures.SchemaPath] = summarySchema;
+
+        var twoEntryCatalog = new Dictionary<string, string>(TestOutputContracts.CatalogSchemas, StringComparer.Ordinal)
+        {
+            ["summary"] = summarySchema
+        };
+
+        var result = WorkflowPackageValidator.Validate(manifest, files, twoEntryCatalog);
+
+        Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }
 
     [Fact]
@@ -458,7 +479,7 @@ public class WorkflowNodeValidationTests
         orphaned.Prompts!.Add(new WorkflowPromptSpec("unused-prompt", "prompts/unused-prompt.md", new List<string>()));
         orphanFiles["prompts/unused-prompt.md"] = "No variables.";
         Assert.Contains(
-            WorkflowPackageValidator.Validate(orphaned, orphanFiles).Errors,
+            WorkflowPackageValidator.Validate(orphaned, orphanFiles, TestOutputContracts.CatalogSchemas).Errors,
             e => e.Contains("'unused-prompt' is not referenced"));
 
         var doubled = V4Fixtures.Manifest();
@@ -482,7 +503,7 @@ public class WorkflowNodeValidationTests
         node.Bindings!.Clear();
         node.Bindings["the_referral_letter"] = new WorkflowBindingValue(WorkflowNodeBindingSources.InputConsultDraft);
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }

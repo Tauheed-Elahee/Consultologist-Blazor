@@ -23,7 +23,7 @@ public static class V3Fixtures
 public class WorkflowSectionStepValidationTests
 {
     private static WorkflowPackageValidator.ValidationResult Validate(WorkflowPackageManifest manifest) =>
-        WorkflowPackageValidator.Validate(manifest, V3Fixtures.Files(manifest));
+        WorkflowPackageValidator.Validate(manifest, V3Fixtures.Files(manifest), TestOutputContracts.CatalogSchemas);
 
     [Fact]
     public void Validate_PassesForWellFormedV3Package()
@@ -132,7 +132,7 @@ public class WorkflowSectionStepValidationTests
         manifest.Prompts!.Add(new WorkflowPromptSpec("unused-prompt", "prompts/unused-prompt.md", new List<string>()));
         files["prompts/unused-prompt.md"] = "No variables.";
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.Contains(result.Errors, e => e.Contains("unused-prompt") && e.Contains("referenced by any section step"));
     }
@@ -169,7 +169,7 @@ public class WorkflowSectionStepValidationTests
             }));
         files["prompts/tighten-prose.md"] = "Tighten {{ section_title }}:\n{{ working_draft }}";
 
-        var result = WorkflowPackageValidator.Validate(manifest, files);
+        var result = WorkflowPackageValidator.Validate(manifest, files, TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }
@@ -236,7 +236,7 @@ public class WorkflowSectionStepDefaultsTests
         // the declared variables.
         var manifest = V3Fixtures.Manifest();
 
-        var result = WorkflowPackageValidator.Validate(manifest, V3Fixtures.Files(manifest));
+        var result = WorkflowPackageValidator.Validate(manifest, V3Fixtures.Files(manifest), TestOutputContracts.CatalogSchemas);
 
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }
