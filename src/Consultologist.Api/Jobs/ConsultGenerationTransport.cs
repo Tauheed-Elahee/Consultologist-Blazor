@@ -48,19 +48,22 @@ public sealed class ConsultGenerationJobs
     private readonly IConsultGenerationJobEventStore _eventStore;
     private readonly IWorkflowPackageStore _packageStore;
     private readonly IWorkflowPackagePinResolver _pinResolver;
+    private readonly OutputContractCatalog _catalog;
 
     public ConsultGenerationJobs(
         ILogger<ConsultGenerationJobs> logger,
         IAccountAuthorizer authorizer,
         IConsultGenerationJobEventStore eventStore,
         IWorkflowPackageStore packageStore,
-        IWorkflowPackagePinResolver pinResolver)
+        IWorkflowPackagePinResolver pinResolver,
+        OutputContractCatalog catalog)
     {
         _logger = logger;
         _authorizer = authorizer;
         _eventStore = eventStore;
         _packageStore = packageStore;
         _pinResolver = pinResolver;
+        _catalog = catalog;
     }
 
     [Function("StartConsultGenerationJob")]
@@ -188,10 +191,16 @@ public sealed class ConsultGenerationJobs
             var nodes = package.Nodes!.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
-            // See docs/customizable-workflow/provenance.md.
+            // Every catalog contract's agent version is recorded, keyed by contract id;
+            // the legacy scalar fields mirror the text/concept-list entries until the
+            // next response SchemaVersion bump. See docs/customizable-workflow/provenance.md.
             var effectiveInputHash = ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
-            var agentVersion = Environment.GetEnvironmentVariable("AzureAI__AgentVersion");
-            var conceptAgentVersion = Environment.GetEnvironmentVariable("AzureAI__ConceptAgentVersion");
+            var agentVersions = _catalog.Entries.Values.ToDictionary(
+                entry => entry.ContractId,
+                entry => entry.AgentVersion,
+                StringComparer.Ordinal);
+            var agentVersion = agentVersions.GetValueOrDefault(OutputContracts.Text);
+            var conceptAgentVersion = agentVersions.GetValueOrDefault(OutputContracts.ConceptList);
 
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
@@ -210,7 +219,8 @@ public sealed class ConsultGenerationJobs
                     agentVersion,
                     sectionSteps,
                     conceptAgentVersion,
-                    nodes));
+                    nodes,
+                    agentVersions));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -227,7 +237,8 @@ public sealed class ConsultGenerationJobs
                     agentVersion,
                     sectionSteps,
                     conceptAgentVersion,
-                    nodes),
+                    nodes,
+                    agentVersions),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 

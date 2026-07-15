@@ -262,6 +262,29 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
+    public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
+    {
+        var (entity, state) = CreateEntity();
+        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") };
+
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", sections,
+            AgentVersions: new Dictionary<string, string> { ["text"] = "47", ["concept-list"] = "1" })).GetAwaiter().GetResult();
+
+        // Write-once: a second Initialize (Durable replay) must not overwrite.
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", sections,
+            AgentVersions: new Dictionary<string, string> { ["text"] = "99" })).GetAwaiter().GetResult();
+
+        Assert.Equal("47", state().AgentVersions!["text"]);
+        Assert.Equal("1", state().AgentVersions!["concept-list"]);
+
+        var response = state().ToResponse();
+        Assert.Equal("47", response.AgentVersions!["text"]);
+        Assert.Equal("1", response.AgentVersions!["concept-list"]);
+    }
+
+    [Fact]
     public void FinalizeJob_CompletesTheRunningMapNode_AndCatchesUpTheCounts()
     {
         var (entity, state) = CreateEntity();
