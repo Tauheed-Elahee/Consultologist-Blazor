@@ -1,15 +1,18 @@
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// The specVersion-4 node vocabulary: binding-reference parsing, node kinds, the
-/// closed concept-renderer set, and the synthesis that lets one interpreter path serve
-/// every spec version. See docs/customizable-workflow/package-format-v4.md.
+/// The node vocabulary shared by specVersions 4 and 5: binding-reference parsing,
+/// node kinds, the closed concept-renderer set, and the synthesis that lets one
+/// interpreter path serve every spec version. Parsing is namespace-syntactic;
+/// per-spec-version vocabulary closures (the v4 item-field set, the v5 collection
+/// field rule) belong to the validator. See package-format-v4.md and -v5.md.
 /// </summary>
 public abstract record WorkflowNodeBindingSource
 {
     public sealed record Input(string Name) : WorkflowNodeBindingSource;
     public sealed record NodeOutput(string NodeId) : WorkflowNodeBindingSource;
     public sealed record Item(string Field) : WorkflowNodeBindingSource;
+    public sealed record Data(string Id) : WorkflowNodeBindingSource;
     public sealed record PreviousStepOutput : WorkflowNodeBindingSource;
 }
 
@@ -22,9 +25,12 @@ public static class WorkflowNodeBindingSources
     public const string ItemId = "item:id";
     public const string PreviousStepOutput = "previous_step_output";
     public const string NodePrefix = "node:";
+    public const string DataPrefix = "data:";
 
     private static readonly IReadOnlySet<string> InputNames = new HashSet<string>(StringComparer.Ordinal) { "consult_draft", "sections" };
-    private static readonly IReadOnlySet<string> ItemFields = new HashSet<string>(StringComparer.Ordinal) { "name", "standard", "id" };
+
+    /// <summary>The specVersion-4 closed item-field vocabulary (a validator rule for v4 packages).</summary>
+    public static readonly IReadOnlySet<string> V4ItemFields = new HashSet<string>(StringComparer.Ordinal) { "name", "standard", "id" };
 
     public static bool TryParse(string raw, out WorkflowNodeBindingSource? source, out string? error)
     {
@@ -55,12 +61,12 @@ public static class WorkflowNodeBindingSources
             case "input":
                 error = $"unknown input '{name}' (expected consult_draft or sections)";
                 return false;
-            case "item" when ItemFields.Contains(name):
+            case "item":
                 source = new WorkflowNodeBindingSource.Item(name);
                 return true;
-            case "item":
-                error = $"unknown item field '{name}' (expected name, standard, or id)";
-                return false;
+            case "data":
+                source = new WorkflowNodeBindingSource.Data(name);
+                return true;
             case "node":
                 source = new WorkflowNodeBindingSource.NodeOutput(name);
                 return true;

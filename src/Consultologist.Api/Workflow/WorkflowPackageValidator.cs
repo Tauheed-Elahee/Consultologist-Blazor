@@ -191,8 +191,16 @@ public static class WorkflowPackageValidator
                 case WorkflowNodeBindingSource.Input { Name: "sections" }:
                     errors.Add($"Node '{nodeId}' binds '{variable}' to 'input:sections', which is only valid as a map node's 'over'.");
                     return;
+                // The v4 item-field closure lives here (parsing is namespace-syntactic;
+                // v5 validates fields against the collection's declaration instead).
+                case WorkflowNodeBindingSource.Item item when !WorkflowNodeBindingSources.V4ItemFields.Contains(item.Field):
+                    errors.Add($"Node '{nodeId}' binds '{variable}' to unknown item field '{item.Field}' (expected name, standard, or id).");
+                    return;
                 case WorkflowNodeBindingSource.Item { Field: "id" }:
                     errors.Add($"Node '{nodeId}' binds '{variable}' to 'item:id', which is reserved and not yet bindable in specVersion 4.0.");
+                    return;
+                case WorkflowNodeBindingSource.Data:
+                    errors.Add($"Node '{nodeId}' binds '{variable}' to '{binding.From}': the data: namespace requires specVersion 5.");
                     return;
                 case WorkflowNodeBindingSource.Item when !inMapStep:
                 case WorkflowNodeBindingSource.PreviousStepOutput when !inMapStep:
