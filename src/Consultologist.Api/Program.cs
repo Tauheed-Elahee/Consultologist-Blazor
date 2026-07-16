@@ -70,6 +70,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<WorkflowPackageBlobContainerFactory>();
 builder.Services.AddSingleton<IWorkflowPackageStore, WorkflowPackageStore>();
 builder.Services.AddSingleton<IWorkflowPackageRegistryWriter, WorkflowPackageRegistryWriter>();
+builder.Services.AddSingleton<WorkflowPackagePublisher>();
 builder.Services.AddSingleton<IWorkflowPackagePinResolver, WorkflowPackagePinResolver>();
 builder.Services.AddScoped<WorkflowPackages>();
 builder.Services.AddHttpClient();

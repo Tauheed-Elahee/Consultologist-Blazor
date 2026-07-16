@@ -15,7 +15,7 @@ public interface IWorkflowPackagePinResolver
 /// </summary>
 public sealed class WorkflowPackagePinResolver : IWorkflowPackagePinResolver
 {
-    private const string PackagePinSettingKey = "consult.workflowPackage";
+    public const string PackagePinSettingKey = "consult.workflowPackage";
     private const string DefaultPinFallback = "general@latest";
 
     private readonly IAccountSettingsStore _settingsStore;

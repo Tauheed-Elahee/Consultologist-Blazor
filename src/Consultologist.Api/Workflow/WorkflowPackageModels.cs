@@ -180,6 +180,24 @@ public sealed record WorkflowPackageContentResponse(
     IReadOnlyDictionary<string, string> Files);
 
 /// <summary>
+/// The publish half of the editor's round-tripping contract: the manifest and
+/// files as loaded from the content endpoint (edited texts substituted), plus
+/// Source — the concrete ref the content was loaded from, which the server
+/// validates and stamps as the fork's derivedFrom. The client's manifest
+/// name/version/derivedFrom are ignored.
+/// </summary>
+public sealed record WorkflowPackagePublishRequest(
+    string? Source = null,
+    WorkflowPackageManifest? Manifest = null,
+    Dictionary<string, string>? Files = null);
+
+public sealed record WorkflowPackagePublishResponse(
+    string Name,
+    string Version,
+    string Ref,
+    IReadOnlyList<string> Warnings);
+
+/// <summary>
 /// A package reference of the form "name@vYYYY.MM.N" or "name@latest".
 /// </summary>
 public sealed record WorkflowPackageRef(string Name, string Version)
