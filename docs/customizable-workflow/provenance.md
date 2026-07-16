@@ -98,6 +98,18 @@ DeepSeek V4 Pro supports disabling reasoning via parameters. Implications:
 ## What the record guarantees — and what it does not
 
 - **Auditability everywhere**: the record fully identifies what produced the output.
+  Since the in-app editor (#57, 2026-07-16), the `workflowPackage` ref may name a
+  per-account fork (`acct-…@vN`); the fork's manifest carries a server-stamped
+  `derivedFrom` chain that walks back to the repo root, and account versions are
+  never deleted — provenance refs stay resolvable forever.
+- **Where variance enters is visible**: per-(node, item) Input/OutputHash chains
+  localize divergence between runs. In practice (2026-07-16): two runs of the same
+  package on the same draft diverged at exactly one point — the first node's
+  OutputHash — with the difference propagating precisely along DAG edges. The
+  first node's InputHash is the deterministic cross-run anchor (byte-identical
+  through eight generations of engine and format as of the editor's verification);
+  downstream InputHashes embed upstream model outputs and are only stable when
+  those converge.
 - **Statistical reproducibility across harnesses**: same record ⇒ same configuration ⇒
   statistically similar outputs. Sampling is stochastic; identical records do not imply
   identical outputs.

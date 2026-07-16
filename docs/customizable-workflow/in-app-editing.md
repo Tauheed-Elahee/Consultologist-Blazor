@@ -1,14 +1,15 @@
-# In-App Package Editing (Design — Not Yet Implemented)
+# In-App Package Editing (Implemented 2026-07-16)
 
-Recorded 2026-07-15 during post-milestone-4 exploration; **reshaped to
-specVersion 5 on 2026-07-16** after the v5 engine (#59), the account-override
-retirement (#71), and the v5-only rebase (#77) — the engine now accepts exactly
-specVersion 5, so the editor is v5-native by construction. Status: **design
-capture** — tracked by #57, Milestone 5's last slice. Sibling design:
-[output-contract-catalog.md](output-contract-catalog.md) (#55, since
-implemented). The pre-v5 draft of this document (two-layer standards,
-`standards.md`, map-step editing, specVersion 4) is in git history; nothing in
-it beyond what is restated here remains authoritative.
+Recorded 2026-07-15 during post-milestone-4 exploration; reshaped to
+specVersion 5 on 2026-07-16 (PR #82) after the v5 engine (#59), the
+account-override retirement (#71), and the v5-only rebase (#77). Status:
+**implemented and production-verified** — #57, Milestone 5's last slice,
+shipped as PR #84 (API), PR #85 (editor UI, display fix #86), and this
+graduation. The implementation record and verification are at the end of this
+document; the design below is the as-built record. The pre-v5 draft of this
+document (two-layer standards, `standards.md`, map-step editing, specVersion 4)
+is in git history; nothing in it beyond what is restated here remains
+authoritative.
 
 ## The decision that shapes everything
 
@@ -64,9 +65,12 @@ before resolution. Repo-owned names (`general`) remain open to all.
   v1 account publishes — it is a derived diagram, and the API's
   `WorkflowDagDiagram` can render one server-side if a later slice wants it.
 - **v1 editing scope — texts only** (settled 2026-07-15, restated in v5 terms):
-  prompt texts (variables read-only on existing prompts; simple list on new
-  prompts) and **data-item contents** (each `data/standards/` item is its own
-  file — edited whole, no parsing layer). Everything structural stays read-only:
+  prompt texts (variables read-only) and **data-item contents** (each
+  `data/standards/` item is its own file — edited whole, no parsing layer). New
+  prompts turned out to be impossible in v1, not merely out of scope: the
+  validator rejects prompts unreferenced by any node (the orphan rule), and the
+  graph is read-only, so nothing could ever reference one. Everything
+  structural stays read-only:
   graph shape, bindings, `forEach`, `result`, schemas (canonical closure makes
   them fixed), and **collection membership** — adding/removing/renaming items
   would rewrite `index.json` and change the deliverable's section list, which is
@@ -119,24 +123,62 @@ longer exists:
   is the authoritative validation (client-side Scriban rendering is a deferred
   extension).
 
-## Slice plan (when pulled)
+## Implementation record (2026-07-16)
 
-1. **PR 1 — API**: store `SourceFiles` + content endpoint; naming + access rule;
-   registry writer + shared container factory; publish endpoint + version/lineage
-   assignment; tests (AssignNext cases, name/version/`derivedFrom` overwrite,
-   validator wiring, structural guards incl. path traversal and data-path
-   hygiene, index.json closure, pin write, CanAccess matrix, foreign-pin
-   fallback, content→publish round-trip); CONFIGURATION.md/registry-operations.md
-   notes. Mergeable alone; no drain window.
-2. **PR 2 — Web**: client service + config URLs; the editor page +
-   `Shared/WorkflowEditor/` components; polish. Verification is the provenance
-   showcase, now two-sided: edit `identify-problem` → publish → run a consult →
-   only that node's InputHash (and downstream) changes; edit one standards item →
-   only that item's per-(node, item) chain moves while the other items' hashes
-   hold byte-identical.
-3. **PR 3 — Docs**: this file graduates from design to record; updates to
-   workflow-packages.md, provenance.md, registry-operations.md, product-stages.md
-   (this editor is the seed of stage 2's learning loop).
+Shipped as planned in three PRs, no drain windows:
+
+1. **PR #84 — API**: store `SourceFiles` + `GET WorkflowPackages/Current/Content`;
+   `WorkflowPackageNaming` + the access rule in the pin resolver and at job
+   start (foreign ref → 403 before any registry read);
+   `WorkflowPackageBlobContainerFactory` (the store's Entra-first auth,
+   extracted) + `IWorkflowPackageRegistryWriter` (manifest conditional create) +
+   pure `CalVerVersion.AssignNext`; `POST WorkflowPackages/Publish`
+   (`WorkflowPackagePublisher`); 33 tests.
+2. **PR #85 — Web** (+ #86 display fix): the Templates page becomes the editor —
+   per-item standards cards, per-prompt cards, shared markdown preview,
+   read-only graph summary, localStorage drafts keyed by source ref,
+   Publish/Discard/Revert-to-default. The client never mirrors the typed
+   manifest: it rides as an opaque `JsonElement` and round-trips verbatim
+   (#86's lesson: the *display* reader must accept the worker serializer's
+   PascalCase).
+3. **PR 3 — this graduation.**
+
+Deviations from the design, all recorded above in place: no new prompts (the
+orphan rule); the old override-seeding promise dropped (no preserved override
+rows existed to seed); `derivedFrom` is an echo of the content response's ref,
+server-validated (concrete + `CanAccess` + resolvable) then stamped — re-resolving
+the pin at publish time would mis-parent when `@latest` moves between load and
+publish. Operational gotcha worth its weight: the Function App authenticates to
+storage as its **user-assigned** identity (`AZURE_CLIENT_ID`), so the
+Contributor grant belongs on that principal — the first production publish
+403'd after the grant was verified against the system-assigned identity.
+
+## Verification record (2026-07-16, production)
+
+- **Control** (job `381f7f73…`, `general@v2026.07.6`, pre-edit): 9/9 sections,
+  draft-only hash `ccbca0b0…`, first-node InputHash `6158bcc1…` (seventh
+  byte-identical generation).
+- **Fork publish**: two files edited in the Templates editor
+  (`prompts/section-instructions.md`: an appended "Prompt has changed."
+  instruction; `data/standards/medications.md`: replaced with "just state the
+  title"). Published as `acct-7bca2dcc1ed4@v2026.07.1`; registry byte-diff
+  against `general@v2026.07.6` shows exactly those two files differing, 19/21
+  byte-identical; manifest stamped `name`/`version`/`derivedFrom:
+  general@v2026.07.6`; pin flipped to the concrete ref.
+- **Fork run** (job `e550fe66…`): `workflowPackage: acct-7bca2dcc1ed4@v2026.07.1`,
+  9/9 sections, all nine sections end with "Prompt has changed.", the
+  Medications section is exactly the collapsed standard — both edits expressed
+  precisely where the DAG binds them. First-node InputHash `6158bcc1…` (eighth
+  generation) and the draft-only hash held byte-identical.
+- **Honesty note on hash-level blast radius**: cross-run chain isolation
+  ("only the edited node's InputHash moves") requires the model's upstream
+  outputs to be byte-stable between the compared runs. They were across
+  2026-07-15's back-to-back runs, but not across these (the control itself
+  diverged from the previous day at exactly one point: `extract-patient-concepts`
+  OutputHash, with the difference propagating along DAG edges). The verification
+  therefore rests on the deterministic trio — registry byte-diff (what changed),
+  generated text (that it took effect), provenance stamps (which definition ran) —
+  with the first-node InputHash as the cross-generation anchor.
 
 ## Trust posture
 

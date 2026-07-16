@@ -101,17 +101,22 @@ CI regenerates in memory and fails the build on drift
 (`GeneratedDiagram_MatchesCheckedInFile`); CI is deliberately never a writer to git
 history. The publish script uploads the diagram with the version folder when present.
 
-## Account packages (`acct-*`)
+## Account packages (`acct-*`) — implemented 2026-07-16 (#57)
 
-The in-app editor (#57) publishes per-account forks under `acct-<12 hex of the
+The in-app editor publishes per-account forks under `acct-<12 hex of the
 AppUserId>` — same container, same layout, same validator as repo packages. The
 server assigns name, version, and `derivedFrom` (the fork's concrete source ref);
 the manifest is uploaded last under a conditional create, so a version is
 invisible until it commits and can never be overwritten. `acct-*` names are
 usable only by their owning account (enforced in the pin resolver and at job
-start); account versions are never deleted. Publishing requires the Function
-App's managed identity to hold Storage Blob Data **Contributor** on the storage
-account (reads need only Reader).
+start); account versions are never deleted. First fork in the registry:
+`acct-7bca2dcc1ed4/v2026.07.1` (derived from `general/v2026.07.6`).
+
+Publishing requires Storage Blob Data **Contributor** (reads need only Reader) —
+granted to the identity the app *actually authenticates as*: the
+**user-assigned** managed identity selected by the `AZURE_CLIENT_ID` app
+setting, not the Function App's system-assigned identity (the first production
+publish 403'd on exactly this distinction).
 
 ## Publication metadata (decided 2026-07-16; not yet implemented)
 

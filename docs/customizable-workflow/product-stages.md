@@ -30,6 +30,12 @@ The package registry provides the *mechanism* for improvement; edit capture prov
 the *signal*. Without stage 2, quality is frozen at whatever the package author guessed.
 This is the piece that turns the engine into a product.
 
+The in-app package editor (#57, shipped 2026-07-16 — see
+[in-app-editing.md](in-app-editing.md)) is stage 2's authoring seed: the loop's
+"act on the signal" half already exists as fork-publish-activate with full
+provenance. What stage 2 adds is the signal itself — edit capture feeding
+eval-gated publishing on these same rails.
+
 **Sequencing note:** edit capture is much easier *before* EMR integration, while
 finalization still happens inside this app — an argument for doing stage 2 early.
 

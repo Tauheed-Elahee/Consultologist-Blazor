@@ -151,6 +151,17 @@ when a specialty needs a structurally different pipeline.
 > section payload, the v1 input hash, and the legacy entity/response fields are
 > deleted (entity SchemaVersion 5); pre-v5 registry versions remain as archives.
 
+> **Milestone 5 completed 2026-07-16** (#57, PRs #84–#86): the in-app editor —
+> the Templates page edits the pinned package's prompt and standards texts and
+> publishes an immutable per-account fork (`acct-<12 hex>`; server-stamped
+> name, next CalVer, and `derivedFrom`; manifest-last conditional create), then
+> flips the pin to the concrete ref. The `acct-*` owner-only access rule ships
+> in the same PR as the API. Production-verified: fork
+> `acct-7bca2dcc1ed4@v2026.07.1` (derived from `general@v2026.07.6`, 2 of 21
+> files differing by byte-diff), run `e550fe66…` expressing both edits, first-node
+> InputHash byte-identical through its eighth generation. Design + records:
+> [in-app-editing.md](in-app-editing.md).
+
 UI consequences: the Templates page grows from "edit section standards" toward a package
 view — post-v5, the fork editor (#57), the override path having retired; progress
 displays become generic step lists rather than
