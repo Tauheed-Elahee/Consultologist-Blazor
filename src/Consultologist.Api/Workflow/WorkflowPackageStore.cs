@@ -100,7 +100,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var resultNodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
         var schemaContracts = loaded.SchemaContracts;
 
-        var package = new WorkflowPackage(manifest, prompts, nodes, schemaContracts, loaded.Data, resultNodeId);
+        var package = new WorkflowPackage(manifest, prompts, nodes, schemaContracts, loaded.Data, resultNodeId, loaded.Files);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -115,7 +115,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     /// reports them coherently); everything else fails loud on 404. Validation
     /// failures throw — the engine's fail-loud enforcement point.
     /// </summary>
-    private async Task<(Dictionary<string, WorkflowPromptTemplate> Prompts, Dictionary<string, string> SchemaContracts, WorkflowPackageData? Data)> LoadPromptsAsync(
+    private async Task<(Dictionary<string, WorkflowPromptTemplate> Prompts, Dictionary<string, string> SchemaContracts, WorkflowPackageData? Data, Dictionary<string, string> Files)> LoadPromptsAsync(
         string name,
         string version,
         WorkflowPackageManifest manifest,
@@ -177,7 +177,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         // so this collects no errors.
         var data = WorkflowDataResolver.Resolve(manifest, files, new List<string>());
 
-        return (prompts, schemaContracts, data);
+        return (prompts, schemaContracts, data, files);
     }
 
     /// <summary>

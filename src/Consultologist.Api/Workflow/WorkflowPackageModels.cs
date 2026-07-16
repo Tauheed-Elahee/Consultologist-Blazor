@@ -149,7 +149,8 @@ public sealed record WorkflowPackage(
     IReadOnlyList<WorkflowNodeSpec>? Nodes = null,
     IReadOnlyDictionary<string, string>? SchemaContracts = null,
     WorkflowPackageData? Data = null,
-    string? ResultNodeId = null)
+    string? ResultNodeId = null,
+    IReadOnlyDictionary<string, string>? SourceFiles = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 
@@ -163,6 +164,20 @@ public sealed record WorkflowPackageResponse(
     string Version,
     int SpecVersion,
     IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null);
+
+/// <summary>
+/// The pin-resolved package's full editable content: the typed manifest (the
+/// binding-value converter round-trips it) plus every source file the store
+/// downloaded — prompts (incl. preludes), schemas, and data files including each
+/// collection's index.json. The editor's load half of the load→edit→publish
+/// round-tripping contract (docs/customizable-workflow/in-app-editing.md).
+/// </summary>
+public sealed record WorkflowPackageContentResponse(
+    string Name,
+    string Version,
+    int SpecVersion,
+    WorkflowPackageManifest Manifest,
+    IReadOnlyDictionary<string, string> Files);
 
 /// <summary>
 /// A package reference of the form "name@vYYYY.MM.N" or "name@latest".
