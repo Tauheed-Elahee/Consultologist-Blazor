@@ -1,6 +1,7 @@
 using Consultologist.Api.Agents;
 using Consultologist.Api.Auth;
 using Consultologist.Api.Workflow;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Consultologist.Api.Tests;
@@ -434,5 +435,59 @@ internal sealed class FakeSettingsStore : IAccountSettingsStore
     {
         _settings.Remove((appUserId, key));
         return Task.CompletedTask;
+    }
+}
+
+public class ContainerRoutingTests
+{
+    private static WorkflowPackageBlobContainerFactory CreateFactory(bool withPublicUri)
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["WorkflowPackages:ConnectionStringName"] = "TestRegistryConnection",
+            ["TestRegistryConnection"] = "UseDevelopmentStorage=true"
+        };
+
+        if (withPublicUri)
+        {
+            settings["WorkflowPackages:PublicBlobServiceUri"] = "https://public.example.net";
+        }
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(settings)
+            .Build();
+
+        return new WorkflowPackageBlobContainerFactory(
+            configuration,
+            NSubstitute.Substitute.For<Azure.Core.TokenCredential>(),
+            NullLogger<WorkflowPackageBlobContainerFactory>.Instance);
+    }
+
+    [Fact]
+    public void RepoOwnedName_RoutesToThePublicContainer()
+    {
+        var factory = CreateFactory(withPublicUri: true);
+        Assert.Equal("public.example.net", factory.GetContainerFor("general").Uri.Host);
+    }
+
+    [Fact]
+    public void AccountName_RoutesToThePrivateContainer_EvenWithPublicConfigured()
+    {
+        var factory = CreateFactory(withPublicUri: true);
+        Assert.NotEqual("public.example.net", factory.GetContainerFor("acct-0123456789ab").Uri.Host);
+    }
+
+    [Fact]
+    public void NoPublicUri_EverythingRoutesPrivate()
+    {
+        var factory = CreateFactory(withPublicUri: false);
+        Assert.Equal(factory.GetContainer().Uri, factory.GetContainerFor("general").Uri);
+    }
+
+    [Fact]
+    public void TheWriterTarget_IsAlwaysThePrivateContainer()
+    {
+        var factory = CreateFactory(withPublicUri: true);
+        Assert.NotEqual("public.example.net", factory.GetContainer().Uri.Host);
     }
 }
