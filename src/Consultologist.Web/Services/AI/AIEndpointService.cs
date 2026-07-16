@@ -13,7 +13,6 @@ public interface IAIEndpointService
 {
     Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        IReadOnlyList<ConsultGenerationSectionRequest> sections,
         string? workflowPackage = null);
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
@@ -51,7 +50,6 @@ public class AIEndpointService : IAIEndpointService
 
     public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        IReadOnlyList<ConsultGenerationSectionRequest> sections,
         string? workflowPackage = null)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -66,12 +64,11 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
             }
 
-            var request = new ConsultGenerationRequest(consultDraft, sections, workflowPackage);
+            var request = new ConsultGenerationRequest(consultDraft, workflowPackage);
 
             _logger.LogInformation(
-                "Starting consult generation job at {Url}. SectionCount={SectionCount}, ConsultDraftLength={ConsultDraftLength}",
+                "Starting consult generation job at {Url}. ConsultDraftLength={ConsultDraftLength}",
                 functionUrl,
-                sections.Count,
                 consultDraft.Length);
 
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, functionUrl)
@@ -112,8 +109,7 @@ public class AIEndpointService : IAIEndpointService
         {
             _logger.LogError(
                 ex,
-                "Error starting consult generation job. SectionCount={SectionCount}, ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
-                sections.Count,
+                "Error starting consult generation job. ExceptionType={ExceptionType}, Message={Message}, ElapsedMs={ElapsedMs}",
                 ex.GetType().FullName,
                 ex.Message,
                 stopwatch.ElapsedMilliseconds);
@@ -274,8 +270,7 @@ public class AIEndpointService : IAIEndpointService
     }
 }
 
-public record ConsultGenerationRequest(string ConsultDraft, IReadOnlyList<ConsultGenerationSectionRequest> Sections, string? WorkflowPackage = null);
-public record ConsultGenerationSectionRequest(string Id, string Name, string Standard);
+public record ConsultGenerationRequest(string ConsultDraft, string? WorkflowPackage = null);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
