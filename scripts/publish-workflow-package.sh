@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Publish a workflow package to the registry (Azure Blob Storage) and update its
-# latest-pointer. Published versions are immutable: this script refuses to overwrite
-# an existing version.
+# Publish a repo-owned workflow package to the PUBLIC registry (Azure Blob Storage)
+# and update its latest-pointer. Published versions are immutable: this script
+# refuses to overwrite an existing version. Since the ownership split (#92),
+# repo-owned packages live in the public account (consultologistpublic) —
+# acct-* forks are published only by the app's registry writer, never this script.
 #
 # Usage:
 #   ./scripts/publish-workflow-package.sh <storage-account> <package-dir>
 #
 # <package-dir> must contain manifest.json (with name, version "vYYYY.MM.N", specVersion).
 # Example:
-#   ./scripts/publish-workflow-package.sh mystorageaccount packages/general
+#   ./scripts/publish-workflow-package.sh consultologistpublic packages/general
 set -euo pipefail
 
 CONTAINER="workflow-packages"
@@ -27,6 +29,11 @@ STANDARDS="$PACKAGE_DIR/standards.md"
 
 NAME=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['name'])")
 VERSION=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])")
+
+if [[ "$NAME" == acct-* ]]; then
+	echo "error: '$NAME' is an account package; acct-* forks are published only by the app's registry writer (private registry)" >&2
+	exit 1
+fi
 
 if ! [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[1-9][0-9]*$ ]]; then
 	echo "error: version '$VERSION' is not vYYYY.MM.N (zero-padded month, counter >= 1)" >&2

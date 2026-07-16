@@ -7,10 +7,28 @@ specVersion-2 package with prompts).
 
 ## Where the registry lives
 
-- **Storage account**: `consultologistjobqueue` (resource group `consultologist_group`
-  — the same account backing Durable Functions).
-- **Container**: `workflow-packages`.
-- **Layout** (one package shown):
+**Ownership split (Milestone 6, #92)** — two storage accounts, one home per
+artifact:
+
+- **Public**: `consultologistpublic` (resource group `consultologist_group`),
+  container `workflow-packages`, **blob-level anonymous read** — the one and
+  only home of repo-owned packages (`general`, future specialty bundles).
+  Anyone can fetch
+  `https://consultologistpublic.blob.core.windows.net/workflow-packages/general/v2026.07.6/manifest.json`
+  with no token. The clinical account never enables public blob access —
+  isolation by construction. (This account also hosts the `output-contracts`
+  and `agent-definitions` registries, #93/#94.)
+- **Private**: `consultologistjobqueue` (the account backing Durable
+  Functions), container `workflow-packages` — the one and only home of
+  `acct-*` forks, written exclusively by the app's registry writer and
+  readable only by their owning account.
+
+The engine's store routes by name (`WorkflowPackageNaming.IsAccountPackage`):
+repo-owned refs resolve from the public container, `acct-*` from the private
+one. When `WorkflowPackages__PublicBlobServiceUri` is unset (local dev),
+everything routes private, as before the split.
+
+- **Layout** (one package shown; identical in both containers):
 
 ```
 workflow-packages/
