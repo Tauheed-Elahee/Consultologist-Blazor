@@ -5,6 +5,18 @@ namespace Consultologist.Api;
 
 internal static class FunctionCors
 {
+    /// <summary>
+    /// Open CORS for the anonymous public-registry endpoints (#95): the data is
+    /// public and the requests carry no credentials, so any origin — including
+    /// the future marketing site — may read.
+    /// </summary>
+    public static void ApplyPublic(HttpResponseData response)
+    {
+        response.Headers.Add("Access-Control-Allow-Origin", "*");
+        response.Headers.Add("Access-Control-Allow-Methods", "GET, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+    }
+
     public static void Apply(HttpRequestData req, HttpResponseData response)
     {
         if (!req.Headers.TryGetValues("Origin", out var originValues))
