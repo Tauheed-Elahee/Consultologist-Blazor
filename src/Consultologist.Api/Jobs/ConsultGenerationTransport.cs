@@ -257,7 +257,8 @@ public sealed class ConsultGenerationJobs
                     agentVersions,
                     package.ResultNodeId,
                     items,
-                    dataScalars),
+                    dataScalars,
+                    CatalogRef: _catalog.ResolvedRef),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 

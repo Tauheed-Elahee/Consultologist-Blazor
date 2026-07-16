@@ -61,6 +61,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.Nodes ??= input.Nodes?.ToList();
         State.AgentVersions ??= input.AgentVersions?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
+        State.CatalogRef ??= input.CatalogRef;
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -259,7 +260,8 @@ public sealed record ConsultGenerationOrchestrationInput(
     string? ResultNodeId = null,
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
     IReadOnlyDictionary<string, string>? DataScalars = null,
-    int EffectiveInputHashVersion = 2);
+    int EffectiveInputHashVersion = 2,
+    string? CatalogRef = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -270,7 +272,8 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
-    int EffectiveInputHashVersion = 2);
+    int EffectiveInputHashVersion = 2,
+    string? CatalogRef = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -332,6 +335,11 @@ public sealed class ConsultGenerationJobState
     // the two scalar fields above mirror the text/concept-list entries until the next
     // response SchemaVersion bump retires them.
     public Dictionary<string, string>? AgentVersions { get; set; }
+
+    // The concrete output-contract catalog version this job ran under
+    // (output-contracts@vYYYY.MM.N) — the registry artifact resolving every
+    // agentVersions entry (#93; docs/customizable-workflow/provenance.md).
+    public string? CatalogRef { get; set; }
     public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
     public List<ConsultNodeDescriptor>? Nodes { get; set; }
     public Dictionary<string, ConsultNodeOutputState>? NodeOutputs { get; set; }
@@ -459,7 +467,8 @@ public sealed class ConsultGenerationJobState
                     pair.Value.CompletedAtUtc,
                     pair.Value.Error)),
             AgentVersions: AgentVersions,
-            EffectiveInputHashVersion: EffectiveInputHashVersion);
+            EffectiveInputHashVersion: EffectiveInputHashVersion,
+            CatalogRef: CatalogRef);
     }
 }
 

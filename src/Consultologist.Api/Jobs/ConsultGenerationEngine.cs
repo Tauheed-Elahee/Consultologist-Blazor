@@ -59,7 +59,8 @@ public sealed class ConsultGenerationOrchestrator
                 input.SectionSteps,
                 nodes,
                 input.AgentVersions,
-                input.EffectiveInputHashVersion));
+                input.EffectiveInputHashVersion,
+                input.CatalogRef));
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
