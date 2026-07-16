@@ -14,14 +14,63 @@ public static class V5Fixtures
 
     public static WorkflowPackageManifest Manifest()
     {
-        var analysisNodes = WorkflowNodeDefaults
-            .V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized)
-            .Where(node => node.Kind == WorkflowNodeKinds.Prompt)
-            .Select(node => node with { Kind = null })
-            .ToList();
-
-        var sectionNodes = new List<WorkflowNodeSpec>
+        // Fully standalone: the package-format-v5.md normative example spelled out —
+        // no derivation from pre-v5 fixtures or synthesis helpers.
+        var prompts = new List<WorkflowPromptSpec>
         {
+            new("extract-patient-concepts", "prompts/extract-patient-concepts.md",
+                new List<string> { "consult_draft" }, "snomed-tool-guidance"),
+            new("identify-problem", "prompts/identify-problem.md",
+                new List<string> { "patient_concepts" }, "snomed-tool-guidance"),
+            new("create-typical-trajectory", "prompts/create-typical-trajectory.md",
+                new List<string> { "problem_concepts" }, "snomed-tool-guidance"),
+            new("create-patient-trajectory", "prompts/create-patient-trajectory.md",
+                new List<string> { "problem_concepts", "patient_concepts", "typical_trajectory_concepts" },
+                "snomed-tool-guidance"),
+            new("standard-section-draft", "prompts/standard-section-draft.md",
+                new List<string> { "section_name", "patient_trajectory_concepts" }),
+            new("patient-section-draft", "prompts/patient-section-draft.md",
+                new List<string> { "standard_section_draft", "consult_draft", "section_name" }),
+            new("section-instructions", "prompts/section-instructions.md",
+                new List<string> { "patient_section_draft", "section_name", "section_standard" })
+        };
+
+        var nodes = new List<WorkflowNodeSpec>
+        {
+            new("extract-patient-concepts", null, "Extracting clinical concepts",
+                Prompt: "extract-patient-concepts",
+                Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                {
+                    ["consult_draft"] = new("input:consult_draft")
+                },
+                Output: new WorkflowNodeOutputSpec("concept-list",
+                    "The consult could not be processed because clinical concepts could not be extracted from the draft.")),
+            new("identify-problem", null, "Identifying primary problem",
+                Prompt: "identify-problem",
+                Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                {
+                    ["patient_concepts"] = new("node:extract-patient-concepts")
+                },
+                Output: new WorkflowNodeOutputSpec("concept-list",
+                    "No valid disease or problem concept was identified.")),
+            new("create-typical-trajectory", null, "Building reference trajectory",
+                Prompt: "create-typical-trajectory",
+                Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                {
+                    ["problem_concepts"] = new("node:identify-problem")
+                },
+                Output: new WorkflowNodeOutputSpec("concept-list",
+                    "No valid typical trajectory concepts were generated.")),
+            new("create-patient-trajectory", null, "Building patient trajectory",
+                Prompt: "create-patient-trajectory",
+                Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                {
+                    ["problem_concepts"] = new("node:identify-problem"),
+                    ["patient_concepts"] = new("node:extract-patient-concepts"),
+                    ["typical_trajectory_concepts"] = new("node:create-typical-trajectory")
+                },
+                Output: new WorkflowNodeOutputSpec("concept-list",
+                    "No valid patient trajectory concepts were generated.")),
             new("standard-section-draft", null, "Drafting section",
                 Prompt: "standard-section-draft",
                 Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
@@ -50,20 +99,34 @@ public static class V5Fixtures
                 ForEach: "data:standards")
         };
 
-        return V2Fixtures.Manifest() with
-        {
-            SpecVersion = 5,
-            DerivedFrom = null,
-            Schemas = new Dictionary<string, string> { [WorkflowNodeDefaults.ConceptListSchemaId] = SchemaPath },
-            Data = new Dictionary<string, string> { ["standards"] = StandardsDir },
-            Result = "node:section-instructions",
-            Nodes = analysisNodes.Concat(sectionNodes).ToList()
-        };
+        return new WorkflowPackageManifest(
+            "general",
+            "v2026.08.1",
+            5,
+            new WorkflowTemplatingSpec("scriban", "7.2.5"),
+            new Dictionary<string, string> { ["snomed-tool-guidance"] = "prompts/_snomed-tool-guidance.md" },
+            prompts,
+            Schemas: new Dictionary<string, string> { ["concept-list"] = SchemaPath },
+            Nodes: nodes,
+            DerivedFrom: null,
+            Data: new Dictionary<string, string> { ["standards"] = StandardsDir },
+            Result: "node:section-instructions");
     }
 
     public static Dictionary<string, string> Files(WorkflowPackageManifest manifest)
     {
-        var files = V2Fixtures.Files(manifest);
+        var files = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["prompts/_snomed-tool-guidance.md"] = "Use short SNOMED search terms."
+        };
+
+        foreach (var prompt in manifest.Prompts!)
+        {
+            files[prompt.File] = string.Join(
+                "\n\n",
+                prompt.Variables.Select(v => $"{v} block:\n{{{{ {v} }}}}"));
+        }
+
         files[SchemaPath] = TestOutputContracts.ConceptListSchema;
         files[StandardsDir + "index.json"] = """
             {
@@ -81,6 +144,83 @@ public static class V5Fixtures
 
     public static WorkflowPackageValidator.ValidationResult Validate(WorkflowPackageManifest manifest, Dictionary<string, string>? files = null)
         => WorkflowPackageValidator.Validate(manifest, files ?? Files(manifest), TestOutputContracts.CatalogSchemas);
+}
+
+public class WorkflowBindingValueTests
+{
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    [Fact]
+    public void Deserializes_StringForm()
+    {
+        var value = JsonSerializer.Deserialize<WorkflowBindingValue>("\"input:consult_draft\"", JsonOptions)!;
+
+        Assert.Equal("input:consult_draft", value.From);
+        Assert.Null(value.As);
+    }
+
+    [Fact]
+    public void Deserializes_ObjectForm()
+    {
+        var value = JsonSerializer.Deserialize<WorkflowBindingValue>(
+            """{ "from": "node:create-patient-trajectory", "as": "concept-context" }""", JsonOptions)!;
+
+        Assert.Equal("node:create-patient-trajectory", value.From);
+        Assert.Equal("concept-context", value.As);
+    }
+
+    [Theory]
+    [InlineData("\"input:consult_draft\"")]
+    [InlineData("""{ "from": "node:x", "as": "concept-context" }""")]
+    public void RoundTrips(string json)
+    {
+        var value = JsonSerializer.Deserialize<WorkflowBindingValue>(json, JsonOptions)!;
+        var serialized = JsonSerializer.Serialize(value, JsonOptions);
+        var reparsed = JsonSerializer.Deserialize<WorkflowBindingValue>(serialized, JsonOptions)!;
+
+        Assert.Equal(value, reparsed);
+    }
+
+    [Theory]
+    [InlineData("""{ "as": "concept-context" }""")]
+    [InlineData("""{ "from": "node:x", "renderer": "concept-context" }""")]
+    [InlineData("42")]
+    public void RejectsMalformedValues(string json)
+    {
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<WorkflowBindingValue>(json, JsonOptions));
+    }
+}
+
+public class WorkflowNodeBindingSourceParserTests
+{
+    [Theory]
+    [InlineData("input:consult_draft")]
+    [InlineData("input:sections")]
+    [InlineData("item:name")]
+    [InlineData("item:standard")]
+    [InlineData("item:id")]
+    [InlineData("item:title")] // any field name parses; vocabulary closures are validator rules
+    [InlineData("previous_step_output")]
+    [InlineData("node:extract-patient-concepts")]
+    [InlineData("data:standards")]
+    [InlineData("data:clinic-guidelines")]
+    public void Parses_EveryVocabularyForm(string raw)
+    {
+        Assert.True(WorkflowNodeBindingSources.TryParse(raw, out var source, out var error), error);
+        Assert.NotNull(source);
+    }
+
+    [Theory]
+    [InlineData("consult_draft")]
+    [InlineData("input:patient_age")]
+    [InlineData("node:")]
+    [InlineData("data:")]
+    [InlineData("output:x")]
+    public void Rejects_UnknownForms(string raw)
+    {
+        Assert.False(WorkflowNodeBindingSources.TryParse(raw, out _, out var error));
+        Assert.NotNull(error);
+    }
 }
 
 public class WorkflowManifestV5Tests

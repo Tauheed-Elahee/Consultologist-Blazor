@@ -10,9 +10,9 @@ namespace Consultologist.Api.Tests;
 
 /// <summary>
 /// The byte-parity seam of the interpreter cutover: resolving variables over the
-/// synthesized canonical DAG must produce exactly the dictionaries the four deleted
-/// analysis activities built (transcribed verbatim below), and the lowered map steps
-/// must feed the prose builder the same values as before.
+/// canonical v5 DAG must produce exactly the dictionaries the deleted pre-DAG
+/// analysis activities built (transcribed verbatim below), and forEach instances
+/// must resolve the same values the deleted prose-step builder did.
 /// </summary>
 public class NodeVariableResolverTests
 {
@@ -40,9 +40,7 @@ public class NodeVariableResolverTests
     };
 
     private static readonly IReadOnlyList<ConsultNodeDescriptor> Nodes =
-        WorkflowNodeDefaults.LowerToOneKind(
-                WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized))
-            .Nodes
+        V5Fixtures.Manifest().Nodes!
             .Select(Describe)
             .ToList();
 
@@ -51,10 +49,10 @@ public class NodeVariableResolverTests
 
     private static readonly IReadOnlyDictionary<string, NodeRunResult> Outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
     {
-        [WorkflowPromptContract.ExtractPatientConcepts] = new("{}", PatientConcepts, "in1", "out1"),
-        [WorkflowPromptContract.IdentifyProblem] = new("{}", ProblemConcepts, "in2", "out2"),
-        [WorkflowPromptContract.CreateTypicalTrajectory] = new("{}", TypicalConcepts, "in3", "out3"),
-        [WorkflowPromptContract.CreatePatientTrajectory] = new("{}", TrajectoryConcepts, "in4", "out4")
+        ["extract-patient-concepts"] = new("{}", PatientConcepts, "in1", "out1"),
+        ["identify-problem"] = new("{}", ProblemConcepts, "in2", "out2"),
+        ["create-typical-trajectory"] = new("{}", TypicalConcepts, "in3", "out3"),
+        ["create-patient-trajectory"] = new("{}", TrajectoryConcepts, "in4", "out4")
     };
 
     private static ConsultNodeDescriptor Describe(WorkflowNodeSpec node) => new(
@@ -77,8 +75,8 @@ public class NodeVariableResolverTests
     {
         // Deleted activity body: { [ConsultDraft] = input.ConsultDraft }
         Assert.Equal(
-            new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = Draft },
-            Resolve(WorkflowPromptContract.ExtractPatientConcepts));
+            new Dictionary<string, string> { ["consult_draft"] = Draft },
+            Resolve("extract-patient-concepts"));
     }
 
     [Fact]
@@ -88,9 +86,9 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(PatientConcepts)
+                ["patient_concepts"] = ConsultGenerationConceptFormatter.Format(PatientConcepts)
             },
-            Resolve(WorkflowPromptContract.IdentifyProblem));
+            Resolve("identify-problem"));
     }
 
     [Fact]
@@ -100,9 +98,9 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(ProblemConcepts)
+                ["problem_concepts"] = ConsultGenerationConceptFormatter.Format(ProblemConcepts)
             },
-            Resolve(WorkflowPromptContract.CreateTypicalTrajectory));
+            Resolve("create-typical-trajectory"));
     }
 
     [Fact]
@@ -112,11 +110,11 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(ProblemConcepts),
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(PatientConcepts),
-                [WorkflowPromptContract.TypicalTrajectoryConcepts] = ConsultGenerationConceptFormatter.Format(TypicalConcepts)
+                ["problem_concepts"] = ConsultGenerationConceptFormatter.Format(ProblemConcepts),
+                ["patient_concepts"] = ConsultGenerationConceptFormatter.Format(PatientConcepts),
+                ["typical_trajectory_concepts"] = ConsultGenerationConceptFormatter.Format(TypicalConcepts)
             },
-            Resolve(WorkflowPromptContract.CreatePatientTrajectory));
+            Resolve("create-patient-trajectory"));
     }
 
     [Fact]
@@ -174,9 +172,9 @@ public class NodeVariableResolverTests
         var variables = ConsultNodeVariableResolver.Resolve(firstStep, Draft, item, null, NodesById, Outputs);
 
         // The R3 pin: the concept-context rendering carries source: patient-trajectory.
-        Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
-        Assert.Contains("source: patient-trajectory", variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
-        Assert.Equal("History of Present Illness", variables[WorkflowPromptContract.SectionName]);
+        Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables["patient_trajectory_concepts"]);
+        Assert.Contains("source: patient-trajectory", variables["patient_trajectory_concepts"]);
+        Assert.Equal("History of Present Illness", variables["section_name"]);
     }
 }
 
@@ -557,5 +555,179 @@ public class NodeEventCandidateTests
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response());
 
         Assert.DoesNotContain(candidates, c => c.EventKey.StartsWith("analysis:"));
+    }
+}
+
+public class ForEachInstanceResolutionTests
+{
+    // Byte parity with the deleted ProseStepVariableBuilder: a lowered map step's
+    // bindings, resolved as a forEach instance, must produce the exact values the
+    // prose-step activity used to build.
+    private static readonly IReadOnlyList<ClinicalConcept> Concepts = new[]
+    {
+        new ClinicalConcept("Malignant neoplasm of breast", "disorder", "254837009", true, true, "draft")
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> Item = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["id"] = "hpi",
+        ["name"] = "History of Present Illness",
+        ["standard"] = "Chronological prose."
+    };
+
+    private static readonly ConsultNodeDescriptor Trajectory = new(
+        "create-patient-trajectory", "Building patient trajectory", OutputContract: "concept-list");
+
+    private static readonly ConsultNodeDescriptor PreviousStep = new(
+        "standard-section-draft", "Drafting section", ForEach: "input:sections");
+
+    private static ConsultNodeDescriptor Node(params (string Variable, string From, string? As)[] bindings) => new(
+        "patient-section-draft",
+        "Applying patient information",
+        PromptId: "patient-section-draft",
+        Bindings: bindings.ToDictionary(
+            b => b.Variable,
+            b => new ConsultNodeBindingDescriptor(b.From, b.As),
+            StringComparer.Ordinal),
+        ForEach: "input:sections");
+
+    private static readonly IReadOnlyDictionary<string, ConsultNodeDescriptor> NodesById =
+        new[] { Trajectory, PreviousStep }.ToDictionary(n => n.Id, StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, NodeRunResult> Outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+    {
+        ["create-patient-trajectory"] = new("{}", Concepts, "in", "out"),
+        ["standard-section-draft:hpi"] = new("Previous step prose.", null, "in2", "out2")
+    };
+
+    [Fact]
+    public void Resolve_MapsEveryLoweredSourceToItsLegacyValue()
+    {
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(
+                ("draft", "input:consult_draft", null),
+                ("name", "item:name", null),
+                ("standard", "item:standard", null),
+                ("concepts", "node:create-patient-trajectory", "concept-context"),
+                ("previous", "node:standard-section-draft", null)),
+            "Draft consult text.",
+            Item,
+            dataScalars: null,
+            NodesById,
+            Outputs);
+
+        Assert.Equal("Draft consult text.", variables["draft"]);
+        Assert.Equal("History of Present Illness", variables["name"]);
+        Assert.Equal("Chronological prose.", variables["standard"]);
+        Assert.Equal(AgentSectionGenerator.FormatConcepts(Concepts), variables["concepts"]);
+        Assert.Equal("Previous step prose.", variables["previous"]);
+    }
+
+    [Fact]
+    public void Resolve_ItemAlignment_ReadsTheInstancesOwnUpstreamOutput()
+    {
+        var outputs = new Dictionary<string, NodeRunResult>(Outputs.ToDictionary(p => p.Key, p => p.Value), StringComparer.Ordinal)
+        {
+            ["standard-section-draft:pmh"] = new("Other section prose.", null, "in3", "out3")
+        };
+        var pmhItem = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "pmh", ["name"] = "Past Medical History", ["standard"] = "List."
+        };
+
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("previous", "node:standard-section-draft", null)),
+            "draft", pmhItem, null, NodesById, outputs);
+
+        Assert.Equal("Other section prose.", variables["previous"]);
+    }
+
+    [Theory]
+    [InlineData("item:title", "which the item does not carry")]
+    [InlineData("data:notes", "carries no data scalars")]
+    [InlineData("not_a_source", "cannot resolve")]
+    public void Resolve_ThrowsOnUnresolvableSources(string from, string expected)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => ConsultNodeVariableResolver.Resolve(
+            Node(("value", from, null)), "draft", Item, null, NodesById, Outputs));
+
+        Assert.Contains(expected, ex.Message);
+    }
+
+    [Fact]
+    public void Resolve_DataScalars_BindByEntryId()
+    {
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("value", "data:clinic-guidelines", null)),
+            "draft", Item,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["clinic-guidelines"] = "Local guidance." },
+            NodesById, Outputs);
+
+        Assert.Equal("Local guidance.", variables["value"]);
+    }
+}
+
+public class SectionProseStepEventTests
+{
+    private static ConsultGenerationJobResponse Response(
+        IReadOnlyList<ConsultSectionStepDescriptor>? sectionSteps,
+        int completedStepCount,
+        int totalStepCount)
+    {
+        return new ConsultGenerationJobResponse(
+            "job-1",
+            "user-1",
+            ConsultGenerationJobStatuses.Running,
+            1,
+            0,
+            0,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>(),
+            false,
+            SectionProseProgress: new Dictionary<string, ConsultGenerationSectionProseProgress>
+            {
+                ["hpi"] = new("hpi", "History of Present Illness", null, completedStepCount, totalStepCount)
+            },
+            SectionSteps: sectionSteps);
+    }
+
+    [Fact]
+    public void Candidates_UsePackageStepIdsAndLabels_UnderTheGenericEventName()
+    {
+        var steps = new[]
+        {
+            new ConsultSectionStepDescriptor("draft", "Drafting section"),
+            new ConsultSectionStepDescriptor("tighten", "Tightening prose")
+        };
+
+        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response(steps, 2, 2))
+            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .ToList();
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("section-prose:hpi:draft", candidates[0].EventKey);
+        Assert.Equal("section-prose:hpi:tighten", candidates[1].EventKey);
+
+        var payload = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(
+            candidates[1].PayloadJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        Assert.Equal("tighten", payload.Step);
+        Assert.Equal("Tightening prose", payload.Label);
+        Assert.Equal("Tightening prose completed.", payload.Message);
+        Assert.Equal(2, payload.CompletedStepCount);
+        Assert.Equal(2, payload.TotalStepCount);
+    }
+
+    [Fact]
+    public void Candidates_SkipLegacySnapshotsWithoutStepLists()
+    {
+        // Pre-milestone-3 snapshots regenerate no prose candidates; their events were
+        // materialized while they ran and replay from the event store.
+        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(
+                Response(sectionSteps: null, completedStepCount: 2, totalStepCount: 3))
+            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .ToList();
+
+        Assert.Empty(candidates);
     }
 }
