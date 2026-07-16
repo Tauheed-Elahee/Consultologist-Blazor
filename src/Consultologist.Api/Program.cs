@@ -59,7 +59,19 @@ builder.Services.AddSingleton<TokenCredential>(sp =>
     return credential;
 });
 
-builder.Services.AddSingleton(_ => OutputContractCatalog.Load());
+builder.Services.AddSingleton(_ =>
+{
+    // Azure: the catalog is content, loaded from the public registry at the
+    // pinned version (publish + pin bump + restart, no redeploy). Local dev:
+    // the bundled agents/ directory. Both fail loud — no coherent catalog, no
+    // jobs (#93).
+    var publicUri = Environment.GetEnvironmentVariable("WorkflowPackages__PublicBlobServiceUri");
+    var pin = Environment.GetEnvironmentVariable("OutputContracts__Pin") ?? $"{OutputContractCatalog.RegistryName}@latest";
+
+    return string.IsNullOrWhiteSpace(publicUri)
+        ? OutputContractCatalog.Load()
+        : OutputContractCatalog.LoadFromRegistryAsync(new Uri(publicUri), pin).GetAwaiter().GetResult();
+});
 builder.Services.AddScoped<AgentSectionGenerator>();
 builder.Services.AddSingleton<IBearerTokenValidator, BearerTokenValidator>();
 builder.Services.AddSingleton<IAccountStore, AccountStore>();
