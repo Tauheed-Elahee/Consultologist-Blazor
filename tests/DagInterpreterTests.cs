@@ -250,26 +250,12 @@ public class ProvenanceHashTests
     }
 
     [Fact]
-    public void DraftOnlyHash_IgnoresSections_AndDiffersFromV1()
+    public void DraftOnlyHash_PinsTheCanonicalShape()
     {
-        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "HPI", "std") };
-        var request = new ConsultGenerationRequest("Draft text.", sections);
-        var requestOtherSections = request with
-        {
-            Sections = new[] { new ConsultGenerationSectionRequest("pmh", "PMH", "other") }
-        };
+        var request = new ConsultGenerationRequest("Draft text.");
 
-        // v2 covers the draft only: section changes don't move it.
-        Assert.Equal(
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(request),
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(requestOtherSections));
-
-        // The two definitions never collide for the same request.
-        Assert.NotEqual(
-            ConsultGenerationProvenance.ComputeEffectiveInputHash(request),
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
-
-        // Canonical shape pin: {"consultDraft":"Draft text."}
+        // Canonical shape pin: {"consultDraft":"Draft text."} — the definition jobs
+        // record as effectiveInputHashVersion 2.
         Assert.Equal(
             ConsultGenerationProvenance.Sha256Hex("""{"consultDraft":"Draft text."}"""),
             ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
@@ -279,32 +265,11 @@ public class ProvenanceHashTests
 public class StartRequestValidationTests
 {
     [Fact]
-    public void ValidateRequest_SectionsAreOptional()
+    public void ValidateRequest_RequiresBodyAndDraft()
     {
-        Assert.Null(ConsultGenerationJobs.ValidateRequest(
-            new ConsultGenerationRequest("Draft.", Array.Empty<ConsultGenerationSectionRequest>())));
-    }
-
-    [Theory]
-    [InlineData("", "HPI", "Each section requires Id and Name.")]
-    [InlineData("hpi", "", "Each section requires Id and Name.")]
-    public void ValidateRequest_ProvidedSectionsStillValidated(string id, string name, string expected)
-    {
-        var request = new ConsultGenerationRequest("Draft.", new[] { new ConsultGenerationSectionRequest(id, name, "std") });
-
-        Assert.Equal(expected, ConsultGenerationJobs.ValidateRequest(request));
-    }
-
-    [Fact]
-    public void ValidateRequest_RejectsDuplicateSectionIds()
-    {
-        var request = new ConsultGenerationRequest("Draft.", new[]
-        {
-            new ConsultGenerationSectionRequest("hpi", "HPI", "a"),
-            new ConsultGenerationSectionRequest("hpi", "HPI 2", "b")
-        });
-
-        Assert.Equal("Duplicate section IDs are not allowed.", ConsultGenerationJobs.ValidateRequest(request));
+        Assert.Equal("Request body is required.", ConsultGenerationJobs.ValidateRequest(null));
+        Assert.Equal("ConsultDraft is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest("Draft.")));
     }
 }
 
@@ -313,11 +278,14 @@ public class ConsultGenerationNodeEntityTests
     private static readonly PropertyInfo StateProperty = typeof(ConsultGenerationJobEntity)
         .GetProperty("State", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!;
 
+    private static IReadOnlyDictionary<string, string> Item(string id, string name) =>
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["id"] = id, ["name"] = name, ["content"] = "std" };
+
     private static (ConsultGenerationJobEntity Entity, Func<ConsultGenerationJobState> State) CreateEntity()
     {
         var entity = new ConsultGenerationJobEntity(Substitute.For<IConsultGenerationJobIndexStore>());
         var state = ConsultGenerationJobState.Create(
-            "job-1", "user-1", new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") });
+            "job-1", "user-1", new[] { Item("hpi", "History of Present Illness") });
         StateProperty.SetValue(entity, state);
         return (entity, () => (ConsultGenerationJobState)StateProperty.GetValue(entity)!);
     }
@@ -333,7 +301,7 @@ public class ConsultGenerationNodeEntityTests
             "hash-in", "hash-out", 1, 5));
 
         var node = state().NodeOutputs!["extract-patient-concepts"];
-        Assert.Equal(4, state().SchemaVersion);
+        Assert.Equal(5, state().SchemaVersion);
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, node.Status);
         Assert.Equal("hash-in", node.InputHash);
         Assert.Equal("hash-out", node.OutputHash);
@@ -353,7 +321,7 @@ public class ConsultGenerationNodeEntityTests
             null, "hash-in", "hash-out", 1, 3));
 
         var s = state();
-        Assert.Equal(4, s.SchemaVersion);
+        Assert.Equal(5, s.SchemaVersion);
         var output = s.NodeOutputs!["standard-section-draft:hpi"];
         Assert.Equal("standard-section-draft", output.NodeId);
         Assert.Equal("hpi", output.ItemId);
@@ -399,15 +367,15 @@ public class ConsultGenerationNodeEntityTests
     public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
     {
         var (entity, state) = CreateEntity();
-        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") };
+        var items = new[] { Item("hpi", "History of Present Illness") };
 
         entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", sections,
+            "job-1", "user-1", items,
             AgentVersions: new Dictionary<string, string> { ["text"] = "47", ["concept-list"] = "1" })).GetAwaiter().GetResult();
 
         // Write-once: a second Initialize (Durable replay) must not overwrite.
         entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", sections,
+            "job-1", "user-1", items,
             AgentVersions: new Dictionary<string, string> { ["text"] = "99" })).GetAwaiter().GetResult();
 
         Assert.Equal("47", state().AgentVersions!["text"]);
@@ -433,9 +401,11 @@ public class ConsultGenerationNodeEntityTests
     }
 }
 
-public class SchemaVersion2SnapshotToleranceTests
+public class LegacySnapshotToleranceTests
 {
-    // A trimmed but shape-faithful pre-DAG (SchemaVersion 2) entity state snapshot.
+    // A trimmed pre-rebase entity snapshot carrying fields the v5-only purge deleted
+    // (pre-DAG concept lists, scalar agent versions). Old job records must keep
+    // deserializing — unknown JSON fields are ignored — and ToResponse must not throw.
     private const string Fixture = """
         {
           "JobId": "legacy-job",
@@ -454,38 +424,30 @@ public class SchemaVersion2SnapshotToleranceTests
                      "GeneratedText": "Prose.", "ProseStepStatus": "section-instructions",
                      "CompletedProseStepCount": 3, "TotalProseStepCount": 3 }
           },
-          "SectionSteps": [
-            { "Id": "standard-section-draft", "Label": "Drafting section" },
-            { "Id": "patient-section-draft", "Label": "Applying patient information" },
-            { "Id": "section-instructions", "Label": "Applying section instructions" }
-          ],
           "History": [ { "Kind": "success", "Label": "Concepts extracted", "Detail": null, "OccurredAt": "2026-07-13T13:07:08+00:00" } ],
           "WorkflowPackage": "general@v2026.07.4",
           "EffectiveInputHash": "703f1b53",
-          "AgentVersion": "47"
+          "AgentVersion": "47",
+          "ConceptAgentVersion": "1"
         }
         """;
 
     [Fact]
-    public void LegacySnapshot_DeserializesAndProducesLegacyEvents()
+    public void LegacySnapshot_DeserializesAndToResponseDoesNotThrow()
     {
         var state = JsonSerializer.Deserialize<ConsultGenerationJobState>(Fixture)!;
 
         Assert.Equal(2, state.SchemaVersion);
         Assert.Null(state.NodeOutputs);
         Assert.Null(state.Nodes);
-        Assert.Single(state.PatientConcepts);
 
         var response = state.ToResponse();
+
+        Assert.Equal("Prose.", response.GeneratedSections["hpi"]);
         Assert.Null(response.NodeOutputs);
-
-        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(response);
-
-        // Legacy snapshots regenerate no stage or node candidates; their events were
-        // materialized while they ran and replay from the event store.
-        Assert.DoesNotContain(candidates, c => c.EventKey.StartsWith("analysis:"));
-        Assert.DoesNotContain(candidates, c => c.EventType == ConsultGenerationNodeEvents.EventName);
-        Assert.Contains(candidates, c => c.EventType == "snapshot");
+        Assert.Contains(
+            ConsultGenerationJobs.CreateSemanticEventCandidates(response),
+            c => c.EventType == "snapshot");
     }
 }
 
