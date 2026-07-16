@@ -146,6 +146,33 @@ This example is normative: the canonical v5 spelling of the consult pipeline
 | `result` | yes | `node:<id>` of a forEach node; its per-item outputs are the workflow's deliverable (the generated sections) |
 | `nodes` | yes | The DAG; one kind, no `kind` field |
 
+### What the manifest deliberately excludes: publication metadata (decided 2026-07-16)
+
+The manifest describes *content*; author and publication time describe a *publish
+event* — so `author`/`publishedAt` fields are deliberately absent. A manifest
+authored in the repo cannot truthfully know its publication time (the field would
+be a lie in source, or the publish script would have to rewrite the file it
+uploads, diverging source from registry); a client-asserted author field is
+forgeable, and the trust rule is the same as `derivedFrom`'s — such facts are
+stamped by the publishing layer, never asserted by the published document. The
+facts already live in more trustworthy places: CalVer encodes the date to the
+month, the registry blob's creation time records it exactly, git (GPG-signed
+commits) records repo-package authorship, and `acct-*` names carry account-package
+ownership by construction.
+
+If a package-picker UI or the editor's "Editing `general@v2026.07.6`" banner later
+wants display metadata, the right home is the **registry layer, stamped at
+publish**: blob metadata on the manifest blob (or a sidecar record) carrying
+`publishedBy`/`publishedAt`, set by the publish script for repo packages and the
+registry writer for `acct-*` ones (see registry-operations.md). Same trust posture
+as `derivedFrom`, zero format change, and the manifest stays byte-round-trippable.
+
+The one nuance: **authored** metadata — a human `description`, a display title,
+maybe a license — genuinely belongs in the manifest someday, because the author
+writes it and it travels with the content. That would be a legitimate future
+format addition. But "who published this, when" is event data, and the registry
+already knows.
+
 ### Node object
 
 | Field | Required | Meaning |
