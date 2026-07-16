@@ -11,7 +11,9 @@ specVersion-2 package with prompts).
 artifact:
 
 - **Public**: `consultologistpublic` (resource group `consultologist_group`),
-  container `workflow-packages`, **blob-level anonymous read** — the one and
+  container `workflow-packages`, **container-level anonymous read** (anonymous
+  listing included — a public registry is browsable by design; blob-level
+  access alone breaks enumeration, as #95's verification found) — the one and
   only home of repo-owned packages (`general`, future specialty bundles).
   Anyone can fetch
   `https://consultologistpublic.blob.core.windows.net/workflow-packages/general/v2026.07.6/manifest.json`
