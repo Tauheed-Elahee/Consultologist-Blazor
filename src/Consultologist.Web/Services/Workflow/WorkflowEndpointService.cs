@@ -16,7 +16,6 @@ public record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    string StandardsMarkdown,
     IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null)
 {
     public string Ref => $"{Name}@{Version}";

@@ -6,8 +6,8 @@
 # Usage:
 #   ./scripts/publish-workflow-package.sh <storage-account> <package-dir>
 #
-# <package-dir> must contain manifest.json (with name, version "vYYYY.MM.N", specVersion)
-# and standards.md. Example:
+# <package-dir> must contain manifest.json (with name, version "vYYYY.MM.N", specVersion).
+# Example:
 #   ./scripts/publish-workflow-package.sh mystorageaccount packages/general
 set -euo pipefail
 
@@ -27,14 +27,6 @@ STANDARDS="$PACKAGE_DIR/standards.md"
 
 NAME=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['name'])")
 VERSION=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])")
-SPEC_VERSION_EARLY=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['specVersion'])")
-
-# standards.md is the pre-v5 section source; v5 packages ship sections as a data
-# collection instead (package-format-v5.md).
-if [[ "$SPEC_VERSION_EARLY" -lt 5 && ! -f "$STANDARDS" ]]; then
-	echo "error: specVersion $SPEC_VERSION_EARLY packages must contain standards.md" >&2
-	exit 1
-fi
 
 if ! [[ "$VERSION" =~ ^v[0-9]{4}\.[0-9]{2}\.[1-9][0-9]*$ ]]; then
 	echo "error: version '$VERSION' is not vYYYY.MM.N (zero-padded month, counter >= 1)" >&2

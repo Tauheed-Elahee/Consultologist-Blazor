@@ -73,7 +73,6 @@ public sealed class WorkflowPackages
                 package.Manifest.Name,
                 package.Manifest.Version,
                 package.Manifest.SpecVersion,
-                package.StandardsMarkdown,
                 WorkflowPackageSections.Resolve(package)
                     .Select(section => new WorkflowPackageSectionResponse(section.Id, section.Name, section.Content))
                     .ToList()),

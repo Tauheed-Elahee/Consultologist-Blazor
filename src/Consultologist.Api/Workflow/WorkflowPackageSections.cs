@@ -1,21 +1,17 @@
 namespace Consultologist.Api.Workflow;
 
+/// <summary>One section of the consult note: an item of the standards collection.</summary>
+public sealed record WorkflowStandardsSection(string Id, string Name, string Content);
+
 /// <summary>
-/// The single section source for a resolved package: specVersion 5 reads the result
-/// node's forEach collection (sections are package data); earlier spec versions
-/// parse standards.md. The account standards override is retired — nothing merges
-/// here (package-format-v5-design.md §1). Shared by the WorkflowPackages/Current
-/// endpoint and consult job start.
+/// The single section source for a resolved package: the result node's forEach
+/// collection (sections are package data; package-format-v5.md). Shared by the
+/// WorkflowPackages/Current endpoint and consult job start.
 /// </summary>
 public static class WorkflowPackageSections
 {
     public static IReadOnlyList<WorkflowStandardsSection> Resolve(WorkflowPackage package)
     {
-        if (package.Manifest.SpecVersion < 5)
-        {
-            return WorkflowStandardsParser.Parse(package.StandardsMarkdown);
-        }
-
         return ResolveCollection(package).Items
             .Select(item => new WorkflowStandardsSection(
                 item.Id,

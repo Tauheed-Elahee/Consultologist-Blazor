@@ -184,42 +184,13 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
-            // The input model forks on the package's spec version: v5 sections are
-            // package data resolved here (client-sent sections are ignored); spec≤4
-            // sections are request input and required (package-format-v5.md).
-            var isV5Package = package.Manifest.SpecVersion >= 5;
-            IReadOnlyList<IReadOnlyDictionary<string, string>>? items = null;
-            IReadOnlyDictionary<string, string>? dataScalars = null;
-
-            if (isV5Package)
-            {
-                if (request.Sections is { Count: > 0 })
-                {
-                    _logger.LogInformation("Client-sent sections ignored for specVersion-5 package {Package}.", package.Ref);
-                }
-
-                var collection = WorkflowPackageSections.ResolveCollection(package);
-                items = collection.Items
-                    .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
-                    .ToList();
-                dataScalars = package.Data?.Scalars;
-
-                // One section source everywhere: the entity, the orchestrator's
-                // fallback, and the response all see the package-resolved list.
-                request = request with
-                {
-                    Sections = collection.Items
-                        .Select(item => new ConsultGenerationSectionRequest(
-                            item.Id,
-                            item.Fields.GetValueOrDefault("name", item.Id),
-                            item.Fields.GetValueOrDefault("content", string.Empty)))
-                        .ToList()
-                };
-            }
-            else if (request.Sections is not { Count: > 0 })
-            {
-                return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest, new { error = "Sections are required for specVersion 4 and earlier packages." }, cancellationToken);
-            }
+            // Sections are package data: the result node's collection is the one
+            // section source (package-format-v5.md).
+            var collection = WorkflowPackageSections.ResolveCollection(package);
+            var items = collection.Items
+                .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
+                .ToList();
+            var dataScalars = package.Data?.Scalars;
 
             var resolvedPackageRef = package.Ref;
             // The per-section step list is the forEach chain, in manifest order — the
@@ -231,19 +202,15 @@ public sealed class ConsultGenerationJobs
             var nodes = package.Nodes.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
-            // Every catalog contract's agent version is recorded, keyed by contract id;
-            // the legacy scalar fields mirror the text/concept-list entries until the
-            // next response SchemaVersion bump. See docs/customizable-workflow/provenance.md.
-            var effectiveInputHash = isV5Package
-                ? ConsultGenerationProvenance.ComputeDraftOnlyHash(request)
-                : ConsultGenerationProvenance.ComputeEffectiveInputHash(request);
-            var effectiveInputHashVersion = isV5Package ? 2 : (int?)null;
+            // Every catalog contract's agent version is recorded, keyed by contract id.
+            // The hash covers the draft only (definition version 2); sections are
+            // package content, covered by the workflowPackage ref.
+            // See docs/customizable-workflow/provenance.md.
+            var effectiveInputHash = ConsultGenerationProvenance.ComputeDraftOnlyHash(request);
             var agentVersions = _catalog.Entries.Values.ToDictionary(
                 entry => entry.ContractId,
                 entry => entry.AgentVersion,
                 StringComparer.Ordinal);
-            var agentVersion = agentVersions.GetValueOrDefault(OutputContracts.Text);
-            var conceptAgentVersion = agentVersions.GetValueOrDefault(OutputContracts.ConceptList);
 
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
@@ -256,15 +223,12 @@ public sealed class ConsultGenerationJobs
                 new ConsultGenerationJobInitialize(
                     jobId,
                     account.AppUserId,
-                    request.Sections,
+                    items,
                     resolvedPackageRef,
                     effectiveInputHash,
-                    agentVersion,
                     sectionSteps,
-                    conceptAgentVersion,
                     nodes,
-                    agentVersions,
-                    effectiveInputHashVersion));
+                    agentVersions));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -278,15 +242,12 @@ public sealed class ConsultGenerationJobs
                     account.AppUserId,
                     resolvedPackageRef,
                     effectiveInputHash,
-                    agentVersion,
                     sectionSteps,
-                    conceptAgentVersion,
                     nodes,
                     agentVersions,
                     package.ResultNodeId,
                     items,
-                    dataScalars,
-                    effectiveInputHashVersion),
+                    dataScalars),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
@@ -295,7 +256,7 @@ public sealed class ConsultGenerationJobs
             _logger.LogInformation(
                 "Consult generation job started. JobId={JobId}, SectionCount={SectionCount}, ElapsedMs={ElapsedMs}",
                 instanceId,
-                request.Sections.Count,
+                items.Count,
                 stopwatch.ElapsedMilliseconds);
 
             return await CreateJsonResponseAsync(req, HttpStatusCode.Accepted, new ConsultGenerationJobStartResponse(instanceId, statusUrl), cancellationToken);
@@ -689,8 +650,6 @@ public sealed class ConsultGenerationJobs
         return $"{authority}/api/ConsultGenerationJobs/{jobId}";
     }
 
-    // Sections are optional at parse time: v5 pins resolve them from the package,
-    // and the pin is only known after resolution — spec≤4 enforcement happens there.
     internal static string? ValidateRequest(ConsultGenerationRequest? request)
     {
         if (request == null)
@@ -701,22 +660,6 @@ public sealed class ConsultGenerationJobs
         if (string.IsNullOrWhiteSpace(request.ConsultDraft))
         {
             return "ConsultDraft is required.";
-        }
-
-        foreach (var section in request.Sections ?? Array.Empty<ConsultGenerationSectionRequest>())
-        {
-            if (string.IsNullOrWhiteSpace(section.Id)
-                || string.IsNullOrWhiteSpace(section.Name))
-            {
-                return "Each section requires Id and Name.";
-            }
-        }
-
-        if ((request.Sections ?? Array.Empty<ConsultGenerationSectionRequest>())
-            .GroupBy(section => section.Id, StringComparer.Ordinal)
-            .Any(group => group.Count() > 1))
-        {
-            return "Duplicate section IDs are not allowed.";
         }
 
         return null;

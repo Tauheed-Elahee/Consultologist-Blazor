@@ -113,14 +113,12 @@ public class PackageSourceValidationTests
         var canonical = V5Fixtures.Manifest().Nodes!;
 
         Assert.Equal(
-            canonical.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.ForEach)),
-            manifest.Nodes!.Select(node => (node.Id, node.Kind, node.Label, node.Prompt, node.ForEach)));
+            canonical.Select(node => (node.Id, node.Label, node.Prompt, node.ForEach)),
+            manifest.Nodes!.Select(node => (node.Id, node.Label, node.Prompt, node.ForEach)));
 
         foreach (var (declared, expected) in manifest.Nodes!.Zip(canonical))
         {
             Assert.Equal(expected.Output, declared.Output);
-            Assert.Null(declared.Over);
-            Assert.Null(declared.Steps);
             Assert.Equal(
                 (expected.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal),
                 (declared.Bindings ?? new Dictionary<string, WorkflowBindingValue>()).OrderBy(b => b.Key, StringComparer.Ordinal));

@@ -35,9 +35,11 @@ workflow-packages/
             └── <nine per-section .md files>
 ```
 
-A package version is **one artifact**: standards and prompts (and, in later
-specVersions, more) travel together under a single CalVer version. `latest.json` files
-are the only mutable blobs; published versions are immutable by convention.
+A package version is **one artifact**: prompts, schemas, and data collections travel
+together under a single CalVer version. `latest.json` files are the only mutable
+blobs; published versions are immutable by convention. **Versions ≤ v2026.07.5 are
+pre-v5 archives** — immutable historical artifacts the current engine will not
+execute (the v5-only rebase, #77).
 
 ## Via `az` CLI
 

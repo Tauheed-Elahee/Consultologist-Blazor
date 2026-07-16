@@ -15,27 +15,11 @@ internal static class ConsultGenerationProvenance
         WriteIndented = false
     };
 
-    /// <summary>The version-1 definition (specVersion ≤4 jobs): draft plus sections.</summary>
-    public static string ComputeEffectiveInputHash(ConsultGenerationRequest request)
-    {
-        var canonical = JsonSerializer.Serialize(
-            new
-            {
-                consultDraft = request.ConsultDraft,
-                sections = request.Sections
-                    .Select(section => new { id = section.Id, name = section.Name, standard = section.Standard })
-                    .ToArray()
-            },
-            CanonicalJsonOptions);
-
-        return Sha256Hex(canonical);
-    }
-
     /// <summary>
-    /// The version-2 definition (specVersion-5 jobs): the draft only — sections are
+    /// The effective-input hash, definition version 2: the draft only — sections are
     /// package data, covered by the workflowPackage ref. Jobs record
-    /// EffectiveInputHashVersion = 2 so the two definitions are never compared as
-    /// equals (package-format-v5.md).
+    /// EffectiveInputHashVersion = 2; the retired version-1 definition (draft +
+    /// sections, pre-v5 jobs) is historical (package-format-v5.md).
     /// </summary>
     public static string ComputeDraftOnlyHash(ConsultGenerationRequest request)
     {

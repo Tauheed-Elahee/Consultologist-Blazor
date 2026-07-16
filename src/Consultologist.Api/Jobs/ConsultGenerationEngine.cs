@@ -42,18 +42,10 @@ public sealed class ConsultGenerationOrchestrator
         var resultNodeId = input.ResultNodeId
             ?? throw new InvalidOperationException("Consult generation input names no result node; the job start snapshots it from the workflow package.");
 
-        // The work items: package data collections arrive snapshotted in the input
-        // (specVersion 5); earlier spec versions fan over the request's sections.
+        // The work items: the package data collection, snapshotted at job start.
         var items = input.Items is { Count: > 0 }
             ? input.Items
-            : request.Sections
-                .Select(section => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["id"] = section.Id,
-                    ["name"] = section.Name,
-                    ["standard"] = section.Standard
-                })
-                .ToList();
+            : throw new InvalidOperationException("Consult generation input carries no work items; the job start snapshots them from the workflow package.");
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -61,12 +53,10 @@ public sealed class ConsultGenerationOrchestrator
             new ConsultGenerationJobInitialize(
                 context.InstanceId,
                 input.AppUserId,
-                request.Sections,
+                items,
                 input.WorkflowPackage,
                 input.EffectiveInputHash,
-                input.AgentVersion,
                 input.SectionSteps,
-                input.ConceptAgentVersion,
                 nodes,
                 input.AgentVersions,
                 input.EffectiveInputHashVersion));

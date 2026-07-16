@@ -132,9 +132,8 @@ and `name`; item ids must be unique. (`index.json` over `collection.json`: the
 }
 ```
 
-This example is normative twice over: it is the canonical v5 respelling of the
-verbatim current pipeline, and it is exactly what v2–v4 packages lower to at
-snapshot time (see Compatibility). Note the step chain is plain graph structure —
+This example is normative: the canonical v5 spelling of the consult pipeline
+(published as general@v2026.07.6). Note the step chain is plain graph structure —
 `node:standard-section-draft` between two same-collection forEach nodes is an
 **item-aligned** edge (instance *i* reads instance *i*).
 
@@ -233,24 +232,20 @@ data-table integrity — scalar files exist; collection directories contain a
 parseable `index.json` whose `fields` include `id` and `name`, with unique item
 ids and every item file present.
 
-## Compatibility and rollout
+## Compatibility
 
-- The engine accepts `specVersion` ≤ 5. **v2–v4 packages remain valid forever.**
-  At snapshot time every spec version lowers to the one-kind form: v2/v3
-  synthesize the canonical v4 DAG as before, and a v4 map node lowers
-  mechanically to a forEach chain (`steps` → nodes with the step ids;
-  `previous_step_output` → item-aligned `node:` edges; the collection is the
-  request-supplied section list, fields `id`/`name`/`standard`). One interpreter
-  path for every spec version, as always.
-- **Sections move server-side**: for v5 packages the job resolves sections from
-  the `result` node's collection; the request's `Sections` are not required (and
-  are ignored). v2–v4 packages keep the request-supplied sections.
-- **Concept sources**: unchanged (the four canonical ids keep their legacy
-  stamps; custom ids stamp the node id).
-- Rollout order: format layer (this PR, load/validate only) → one-kind
-  interpreter (strict drain) → v5 job start + frontend → publish the first v5
-  package. Until the interpreter lands, v5 packages validate and load but job
-  start rejects them — guard-then-implement, as with v4.
+- **The engine accepts exactly `specVersion: 5`** (the v5-only rebase, issue #77,
+  2026-07-15). Pre-v5 registry versions (≤ v2026.07.5) remain archived immutable
+  artifacts but are not executable; the store rejects them with a clear error. The
+  original "one interpreter path for every spec version" synthesis story
+  (v2/v3 → canonical v4 DAG → forEach lowering) is historical — see the
+  superseded headers on package-format-v2/-v3/-v4.md.
+- **Sections are server-resolved**: the request is `{consultDraft, workflowPackage?}`;
+  the job fans over the `result` node's collection. The retired vocabulary
+  (`kind`/`over`/`steps`, `sectionSteps`, `previous_step_output`, `input:sections`,
+  `item:standard`'s closed field set) no longer parses or validates.
+- **Concept sources**: unchanged (the four canonical ids keep their legacy stamps;
+  custom ids stamp the node id).
 
 ## Out of scope in v5.0
 

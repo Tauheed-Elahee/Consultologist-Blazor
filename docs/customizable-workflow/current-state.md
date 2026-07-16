@@ -3,7 +3,8 @@
 > **Milestone 5 note (2026-07-15)**: everything below describing hardcoded section
 > handling, the map container, `run-prose-step`, or the account standards override
 > is historical — see package-format-v5.md and the Milestone 5 block in
-> workflow-packages.md.
+> workflow-packages.md. The v5-only rebase (#77) then deleted pre-v5 engine
+> support entirely: the engine accepts exactly specVersion 5.
 
 Verified against the code on 2026-07-09 — **historical**: milestones 1–4 have since
 shipped (registry/pinning/provenance, prompts as content, section steps as content,

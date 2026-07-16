@@ -1,5 +1,14 @@
 # Workflow Package Format — specVersion 4 (DAG-as-Data)
 
+> **Historical format — engine support removed 2026-07-15** (the v5-only rebase,
+> issue #77). Packages in this format remain archived in the registry (immutable
+> artifacts, versions ≤ v2026.07.5) but are **not executable**: the engine accepts
+> exactly specVersion 5 (package-format-v5.md). The revocation of the
+> "remains valid forever" compatibility promise is licensed by the recorded
+> pre-release-churn doctrine; job records referencing these packages are no longer
+> re-runnable.
+
+
 Normative specification for `specVersion: 4` packages, authored for milestone 4
 (issue #6, phases B1–D, gate lifted by decision 2026-07-14). v4 replaces the ordered
 `sectionSteps` list with a declared **node DAG**: the analysis pipeline's shape, its

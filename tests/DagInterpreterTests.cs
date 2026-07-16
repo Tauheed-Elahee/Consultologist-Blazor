@@ -10,9 +10,9 @@ namespace Consultologist.Api.Tests;
 
 /// <summary>
 /// The byte-parity seam of the interpreter cutover: resolving variables over the
-/// synthesized canonical DAG must produce exactly the dictionaries the four deleted
-/// analysis activities built (transcribed verbatim below), and the lowered map steps
-/// must feed the prose builder the same values as before.
+/// canonical v5 DAG must produce exactly the dictionaries the deleted pre-DAG
+/// analysis activities built (transcribed verbatim below), and forEach instances
+/// must resolve the same values the deleted prose-step builder did.
 /// </summary>
 public class NodeVariableResolverTests
 {
@@ -40,9 +40,7 @@ public class NodeVariableResolverTests
     };
 
     private static readonly IReadOnlyList<ConsultNodeDescriptor> Nodes =
-        WorkflowNodeDefaults.LowerToOneKind(
-                WorkflowNodeDefaults.V3SynthesizedDag(WorkflowSectionStepDefaults.V2Synthesized))
-            .Nodes
+        V5Fixtures.Manifest().Nodes!
             .Select(Describe)
             .ToList();
 
@@ -51,10 +49,10 @@ public class NodeVariableResolverTests
 
     private static readonly IReadOnlyDictionary<string, NodeRunResult> Outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
     {
-        [WorkflowPromptContract.ExtractPatientConcepts] = new("{}", PatientConcepts, "in1", "out1"),
-        [WorkflowPromptContract.IdentifyProblem] = new("{}", ProblemConcepts, "in2", "out2"),
-        [WorkflowPromptContract.CreateTypicalTrajectory] = new("{}", TypicalConcepts, "in3", "out3"),
-        [WorkflowPromptContract.CreatePatientTrajectory] = new("{}", TrajectoryConcepts, "in4", "out4")
+        ["extract-patient-concepts"] = new("{}", PatientConcepts, "in1", "out1"),
+        ["identify-problem"] = new("{}", ProblemConcepts, "in2", "out2"),
+        ["create-typical-trajectory"] = new("{}", TypicalConcepts, "in3", "out3"),
+        ["create-patient-trajectory"] = new("{}", TrajectoryConcepts, "in4", "out4")
     };
 
     private static ConsultNodeDescriptor Describe(WorkflowNodeSpec node) => new(
@@ -77,8 +75,8 @@ public class NodeVariableResolverTests
     {
         // Deleted activity body: { [ConsultDraft] = input.ConsultDraft }
         Assert.Equal(
-            new Dictionary<string, string> { [WorkflowPromptContract.ConsultDraft] = Draft },
-            Resolve(WorkflowPromptContract.ExtractPatientConcepts));
+            new Dictionary<string, string> { ["consult_draft"] = Draft },
+            Resolve("extract-patient-concepts"));
     }
 
     [Fact]
@@ -88,9 +86,9 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(PatientConcepts)
+                ["patient_concepts"] = ConsultGenerationConceptFormatter.Format(PatientConcepts)
             },
-            Resolve(WorkflowPromptContract.IdentifyProblem));
+            Resolve("identify-problem"));
     }
 
     [Fact]
@@ -100,9 +98,9 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(ProblemConcepts)
+                ["problem_concepts"] = ConsultGenerationConceptFormatter.Format(ProblemConcepts)
             },
-            Resolve(WorkflowPromptContract.CreateTypicalTrajectory));
+            Resolve("create-typical-trajectory"));
     }
 
     [Fact]
@@ -112,11 +110,11 @@ public class NodeVariableResolverTests
         Assert.Equal(
             new Dictionary<string, string>
             {
-                [WorkflowPromptContract.ProblemConcepts] = ConsultGenerationConceptFormatter.Format(ProblemConcepts),
-                [WorkflowPromptContract.PatientConcepts] = ConsultGenerationConceptFormatter.Format(PatientConcepts),
-                [WorkflowPromptContract.TypicalTrajectoryConcepts] = ConsultGenerationConceptFormatter.Format(TypicalConcepts)
+                ["problem_concepts"] = ConsultGenerationConceptFormatter.Format(ProblemConcepts),
+                ["patient_concepts"] = ConsultGenerationConceptFormatter.Format(PatientConcepts),
+                ["typical_trajectory_concepts"] = ConsultGenerationConceptFormatter.Format(TypicalConcepts)
             },
-            Resolve(WorkflowPromptContract.CreatePatientTrajectory));
+            Resolve("create-patient-trajectory"));
     }
 
     [Fact]
@@ -174,9 +172,9 @@ public class NodeVariableResolverTests
         var variables = ConsultNodeVariableResolver.Resolve(firstStep, Draft, item, null, NodesById, Outputs);
 
         // The R3 pin: the concept-context rendering carries source: patient-trajectory.
-        Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
-        Assert.Contains("source: patient-trajectory", variables[WorkflowPromptContract.PatientTrajectoryConcepts]);
-        Assert.Equal("History of Present Illness", variables[WorkflowPromptContract.SectionName]);
+        Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables["patient_trajectory_concepts"]);
+        Assert.Contains("source: patient-trajectory", variables["patient_trajectory_concepts"]);
+        Assert.Equal("History of Present Illness", variables["section_name"]);
     }
 }
 
@@ -252,26 +250,12 @@ public class ProvenanceHashTests
     }
 
     [Fact]
-    public void DraftOnlyHash_IgnoresSections_AndDiffersFromV1()
+    public void DraftOnlyHash_PinsTheCanonicalShape()
     {
-        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "HPI", "std") };
-        var request = new ConsultGenerationRequest("Draft text.", sections);
-        var requestOtherSections = request with
-        {
-            Sections = new[] { new ConsultGenerationSectionRequest("pmh", "PMH", "other") }
-        };
+        var request = new ConsultGenerationRequest("Draft text.");
 
-        // v2 covers the draft only: section changes don't move it.
-        Assert.Equal(
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(request),
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(requestOtherSections));
-
-        // The two definitions never collide for the same request.
-        Assert.NotEqual(
-            ConsultGenerationProvenance.ComputeEffectiveInputHash(request),
-            ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
-
-        // Canonical shape pin: {"consultDraft":"Draft text."}
+        // Canonical shape pin: {"consultDraft":"Draft text."} — the definition jobs
+        // record as effectiveInputHashVersion 2.
         Assert.Equal(
             ConsultGenerationProvenance.Sha256Hex("""{"consultDraft":"Draft text."}"""),
             ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
@@ -281,32 +265,11 @@ public class ProvenanceHashTests
 public class StartRequestValidationTests
 {
     [Fact]
-    public void ValidateRequest_SectionsAreOptional()
+    public void ValidateRequest_RequiresBodyAndDraft()
     {
-        Assert.Null(ConsultGenerationJobs.ValidateRequest(
-            new ConsultGenerationRequest("Draft.", Array.Empty<ConsultGenerationSectionRequest>())));
-    }
-
-    [Theory]
-    [InlineData("", "HPI", "Each section requires Id and Name.")]
-    [InlineData("hpi", "", "Each section requires Id and Name.")]
-    public void ValidateRequest_ProvidedSectionsStillValidated(string id, string name, string expected)
-    {
-        var request = new ConsultGenerationRequest("Draft.", new[] { new ConsultGenerationSectionRequest(id, name, "std") });
-
-        Assert.Equal(expected, ConsultGenerationJobs.ValidateRequest(request));
-    }
-
-    [Fact]
-    public void ValidateRequest_RejectsDuplicateSectionIds()
-    {
-        var request = new ConsultGenerationRequest("Draft.", new[]
-        {
-            new ConsultGenerationSectionRequest("hpi", "HPI", "a"),
-            new ConsultGenerationSectionRequest("hpi", "HPI 2", "b")
-        });
-
-        Assert.Equal("Duplicate section IDs are not allowed.", ConsultGenerationJobs.ValidateRequest(request));
+        Assert.Equal("Request body is required.", ConsultGenerationJobs.ValidateRequest(null));
+        Assert.Equal("ConsultDraft is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest("Draft.")));
     }
 }
 
@@ -315,11 +278,14 @@ public class ConsultGenerationNodeEntityTests
     private static readonly PropertyInfo StateProperty = typeof(ConsultGenerationJobEntity)
         .GetProperty("State", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!;
 
+    private static IReadOnlyDictionary<string, string> Item(string id, string name) =>
+        new Dictionary<string, string>(StringComparer.Ordinal) { ["id"] = id, ["name"] = name, ["content"] = "std" };
+
     private static (ConsultGenerationJobEntity Entity, Func<ConsultGenerationJobState> State) CreateEntity()
     {
         var entity = new ConsultGenerationJobEntity(Substitute.For<IConsultGenerationJobIndexStore>());
         var state = ConsultGenerationJobState.Create(
-            "job-1", "user-1", new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") });
+            "job-1", "user-1", new[] { Item("hpi", "History of Present Illness") });
         StateProperty.SetValue(entity, state);
         return (entity, () => (ConsultGenerationJobState)StateProperty.GetValue(entity)!);
     }
@@ -335,7 +301,7 @@ public class ConsultGenerationNodeEntityTests
             "hash-in", "hash-out", 1, 5));
 
         var node = state().NodeOutputs!["extract-patient-concepts"];
-        Assert.Equal(4, state().SchemaVersion);
+        Assert.Equal(5, state().SchemaVersion);
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, node.Status);
         Assert.Equal("hash-in", node.InputHash);
         Assert.Equal("hash-out", node.OutputHash);
@@ -355,7 +321,7 @@ public class ConsultGenerationNodeEntityTests
             null, "hash-in", "hash-out", 1, 3));
 
         var s = state();
-        Assert.Equal(4, s.SchemaVersion);
+        Assert.Equal(5, s.SchemaVersion);
         var output = s.NodeOutputs!["standard-section-draft:hpi"];
         Assert.Equal("standard-section-draft", output.NodeId);
         Assert.Equal("hpi", output.ItemId);
@@ -401,15 +367,15 @@ public class ConsultGenerationNodeEntityTests
     public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
     {
         var (entity, state) = CreateEntity();
-        var sections = new[] { new ConsultGenerationSectionRequest("hpi", "History of Present Illness", "std") };
+        var items = new[] { Item("hpi", "History of Present Illness") };
 
         entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", sections,
+            "job-1", "user-1", items,
             AgentVersions: new Dictionary<string, string> { ["text"] = "47", ["concept-list"] = "1" })).GetAwaiter().GetResult();
 
         // Write-once: a second Initialize (Durable replay) must not overwrite.
         entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", sections,
+            "job-1", "user-1", items,
             AgentVersions: new Dictionary<string, string> { ["text"] = "99" })).GetAwaiter().GetResult();
 
         Assert.Equal("47", state().AgentVersions!["text"]);
@@ -435,9 +401,11 @@ public class ConsultGenerationNodeEntityTests
     }
 }
 
-public class SchemaVersion2SnapshotToleranceTests
+public class LegacySnapshotToleranceTests
 {
-    // A trimmed but shape-faithful pre-DAG (SchemaVersion 2) entity state snapshot.
+    // A trimmed pre-rebase entity snapshot carrying fields the v5-only purge deleted
+    // (pre-DAG concept lists, scalar agent versions). Old job records must keep
+    // deserializing — unknown JSON fields are ignored — and ToResponse must not throw.
     private const string Fixture = """
         {
           "JobId": "legacy-job",
@@ -456,38 +424,30 @@ public class SchemaVersion2SnapshotToleranceTests
                      "GeneratedText": "Prose.", "ProseStepStatus": "section-instructions",
                      "CompletedProseStepCount": 3, "TotalProseStepCount": 3 }
           },
-          "SectionSteps": [
-            { "Id": "standard-section-draft", "Label": "Drafting section" },
-            { "Id": "patient-section-draft", "Label": "Applying patient information" },
-            { "Id": "section-instructions", "Label": "Applying section instructions" }
-          ],
           "History": [ { "Kind": "success", "Label": "Concepts extracted", "Detail": null, "OccurredAt": "2026-07-13T13:07:08+00:00" } ],
           "WorkflowPackage": "general@v2026.07.4",
           "EffectiveInputHash": "703f1b53",
-          "AgentVersion": "47"
+          "AgentVersion": "47",
+          "ConceptAgentVersion": "1"
         }
         """;
 
     [Fact]
-    public void LegacySnapshot_DeserializesAndProducesLegacyEvents()
+    public void LegacySnapshot_DeserializesAndToResponseDoesNotThrow()
     {
         var state = JsonSerializer.Deserialize<ConsultGenerationJobState>(Fixture)!;
 
         Assert.Equal(2, state.SchemaVersion);
         Assert.Null(state.NodeOutputs);
         Assert.Null(state.Nodes);
-        Assert.Single(state.PatientConcepts);
 
         var response = state.ToResponse();
+
+        Assert.Equal("Prose.", response.GeneratedSections["hpi"]);
         Assert.Null(response.NodeOutputs);
-
-        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(response);
-
-        // Legacy snapshots regenerate no stage or node candidates; their events were
-        // materialized while they ran and replay from the event store.
-        Assert.DoesNotContain(candidates, c => c.EventKey.StartsWith("analysis:"));
-        Assert.DoesNotContain(candidates, c => c.EventType == ConsultGenerationNodeEvents.EventName);
-        Assert.Contains(candidates, c => c.EventType == "snapshot");
+        Assert.Contains(
+            ConsultGenerationJobs.CreateSemanticEventCandidates(response),
+            c => c.EventType == "snapshot");
     }
 }
 
@@ -501,7 +461,7 @@ public class NodeEventCandidateTests
         var nodes = new[]
         {
             new ConsultNodeDescriptor("extract", "Extracting clinical concepts"),
-            new ConsultNodeDescriptor("sections", "Generating sections", ForEach: WorkflowNodeBindingSources.InputSections)
+            new ConsultNodeDescriptor("sections", "Generating sections", ForEach: "data:standards")
         };
         var outputs = new Dictionary<string, ConsultGenerationNodeStatusResponse>
         {
@@ -557,5 +517,179 @@ public class NodeEventCandidateTests
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response());
 
         Assert.DoesNotContain(candidates, c => c.EventKey.StartsWith("analysis:"));
+    }
+}
+
+public class ForEachInstanceResolutionTests
+{
+    // Byte parity with the deleted ProseStepVariableBuilder: a lowered map step's
+    // bindings, resolved as a forEach instance, must produce the exact values the
+    // prose-step activity used to build.
+    private static readonly IReadOnlyList<ClinicalConcept> Concepts = new[]
+    {
+        new ClinicalConcept("Malignant neoplasm of breast", "disorder", "254837009", true, true, "draft")
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> Item = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["id"] = "hpi",
+        ["name"] = "History of Present Illness",
+        ["standard"] = "Chronological prose."
+    };
+
+    private static readonly ConsultNodeDescriptor Trajectory = new(
+        "create-patient-trajectory", "Building patient trajectory", OutputContract: "concept-list");
+
+    private static readonly ConsultNodeDescriptor PreviousStep = new(
+        "standard-section-draft", "Drafting section", ForEach: "input:sections");
+
+    private static ConsultNodeDescriptor Node(params (string Variable, string From, string? As)[] bindings) => new(
+        "patient-section-draft",
+        "Applying patient information",
+        PromptId: "patient-section-draft",
+        Bindings: bindings.ToDictionary(
+            b => b.Variable,
+            b => new ConsultNodeBindingDescriptor(b.From, b.As),
+            StringComparer.Ordinal),
+        ForEach: "input:sections");
+
+    private static readonly IReadOnlyDictionary<string, ConsultNodeDescriptor> NodesById =
+        new[] { Trajectory, PreviousStep }.ToDictionary(n => n.Id, StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, NodeRunResult> Outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+    {
+        ["create-patient-trajectory"] = new("{}", Concepts, "in", "out"),
+        ["standard-section-draft:hpi"] = new("Previous step prose.", null, "in2", "out2")
+    };
+
+    [Fact]
+    public void Resolve_MapsEveryLoweredSourceToItsLegacyValue()
+    {
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(
+                ("draft", "input:consult_draft", null),
+                ("name", "item:name", null),
+                ("standard", "item:standard", null),
+                ("concepts", "node:create-patient-trajectory", "concept-context"),
+                ("previous", "node:standard-section-draft", null)),
+            "Draft consult text.",
+            Item,
+            dataScalars: null,
+            NodesById,
+            Outputs);
+
+        Assert.Equal("Draft consult text.", variables["draft"]);
+        Assert.Equal("History of Present Illness", variables["name"]);
+        Assert.Equal("Chronological prose.", variables["standard"]);
+        Assert.Equal(AgentSectionGenerator.FormatConcepts(Concepts), variables["concepts"]);
+        Assert.Equal("Previous step prose.", variables["previous"]);
+    }
+
+    [Fact]
+    public void Resolve_ItemAlignment_ReadsTheInstancesOwnUpstreamOutput()
+    {
+        var outputs = new Dictionary<string, NodeRunResult>(Outputs.ToDictionary(p => p.Key, p => p.Value), StringComparer.Ordinal)
+        {
+            ["standard-section-draft:pmh"] = new("Other section prose.", null, "in3", "out3")
+        };
+        var pmhItem = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["id"] = "pmh", ["name"] = "Past Medical History", ["standard"] = "List."
+        };
+
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("previous", "node:standard-section-draft", null)),
+            "draft", pmhItem, null, NodesById, outputs);
+
+        Assert.Equal("Other section prose.", variables["previous"]);
+    }
+
+    [Theory]
+    [InlineData("item:title", "which the item does not carry")]
+    [InlineData("data:notes", "carries no data scalars")]
+    [InlineData("not_a_source", "cannot resolve")]
+    public void Resolve_ThrowsOnUnresolvableSources(string from, string expected)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => ConsultNodeVariableResolver.Resolve(
+            Node(("value", from, null)), "draft", Item, null, NodesById, Outputs));
+
+        Assert.Contains(expected, ex.Message);
+    }
+
+    [Fact]
+    public void Resolve_DataScalars_BindByEntryId()
+    {
+        var variables = ConsultNodeVariableResolver.Resolve(
+            Node(("value", "data:clinic-guidelines", null)),
+            "draft", Item,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["clinic-guidelines"] = "Local guidance." },
+            NodesById, Outputs);
+
+        Assert.Equal("Local guidance.", variables["value"]);
+    }
+}
+
+public class SectionProseStepEventTests
+{
+    private static ConsultGenerationJobResponse Response(
+        IReadOnlyList<ConsultSectionStepDescriptor>? sectionSteps,
+        int completedStepCount,
+        int totalStepCount)
+    {
+        return new ConsultGenerationJobResponse(
+            "job-1",
+            "user-1",
+            ConsultGenerationJobStatuses.Running,
+            1,
+            0,
+            0,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>(),
+            false,
+            SectionProseProgress: new Dictionary<string, ConsultGenerationSectionProseProgress>
+            {
+                ["hpi"] = new("hpi", "History of Present Illness", null, completedStepCount, totalStepCount)
+            },
+            SectionSteps: sectionSteps);
+    }
+
+    [Fact]
+    public void Candidates_UsePackageStepIdsAndLabels_UnderTheGenericEventName()
+    {
+        var steps = new[]
+        {
+            new ConsultSectionStepDescriptor("draft", "Drafting section"),
+            new ConsultSectionStepDescriptor("tighten", "Tightening prose")
+        };
+
+        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response(steps, 2, 2))
+            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .ToList();
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("section-prose:hpi:draft", candidates[0].EventKey);
+        Assert.Equal("section-prose:hpi:tighten", candidates[1].EventKey);
+
+        var payload = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(
+            candidates[1].PayloadJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        Assert.Equal("tighten", payload.Step);
+        Assert.Equal("Tightening prose", payload.Label);
+        Assert.Equal("Tightening prose completed.", payload.Message);
+        Assert.Equal(2, payload.CompletedStepCount);
+        Assert.Equal(2, payload.TotalStepCount);
+    }
+
+    [Fact]
+    public void Candidates_SkipLegacySnapshotsWithoutStepLists()
+    {
+        // Pre-milestone-3 snapshots regenerate no prose candidates; their events were
+        // materialized while they ran and replay from the event store.
+        var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(
+                Response(sectionSteps: null, completedStepCount: 2, totalStepCount: 3))
+            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .ToList();
+
+        Assert.Empty(candidates);
     }
 }

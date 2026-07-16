@@ -1,5 +1,14 @@
 # Workflow Package Format — specVersion 3 (Section Steps)
 
+> **Historical format — engine support removed 2026-07-15** (the v5-only rebase,
+> issue #77). Packages in this format remain archived in the registry (immutable
+> artifacts, versions ≤ v2026.07.5) but are **not executable**: the engine accepts
+> exactly specVersion 5 (package-format-v5.md). The revocation of the
+> "remains valid forever" compatibility promise is licensed by the recorded
+> pre-release-churn doctrine; job records referencing these packages are no longer
+> re-runnable.
+
+
 > Superseded for new packages by [package-format-v4.md](package-format-v4.md)
 > (milestone 4, DAG-as-data). v3 packages remain fully valid; v4 defines the DAG the
 > engine synthesizes for them.

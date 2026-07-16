@@ -32,7 +32,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     {
         if (State == null || State.Sections.Count == 0)
         {
-            State = ConsultGenerationJobState.Create(input.JobId, input.AppUserId, input.Sections);
+            State = ConsultGenerationJobState.Create(input.JobId, input.AppUserId, input.Items);
         }
         else
         {
@@ -46,20 +46,18 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 
             if (State.TotalSectionCount == 0)
             {
-                State.TotalSectionCount = input.Sections.Count;
+                State.TotalSectionCount = input.Items.Count;
             }
 
-            foreach (var section in input.Sections)
+            foreach (var item in input.Items)
             {
-                State.GetOrAddSection(section.Id, section.Name);
+                State.GetOrAddSection(item["id"], item.GetValueOrDefault("name", item["id"]));
             }
         }
 
         State.WorkflowPackage ??= input.WorkflowPackage;
         State.EffectiveInputHash ??= input.EffectiveInputHash;
-        State.AgentVersion ??= input.AgentVersion;
         State.SectionSteps ??= input.SectionSteps?.ToList();
-        State.ConceptAgentVersion ??= input.ConceptAgentVersion;
         State.Nodes ??= input.Nodes?.ToList();
         State.AgentVersions ??= input.AgentVersions?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
@@ -113,7 +111,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     public void MarkNodeItemCompleted(ConsultGenerationNodeItemUpdate input)
     {
         var state = EnsureState();
-        state.SchemaVersion = 4;
+        state.SchemaVersion = 5;
 
         var output = state.GetOrAddNodeOutput($"{input.NodeId}:{input.ItemId}", input.Label);
         output.NodeId = input.NodeId;
@@ -139,7 +137,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     public void MarkNodeCompleted(ConsultGenerationNodeUpdate input)
     {
         var state = EnsureState();
-        state.SchemaVersion = 4;
+        state.SchemaVersion = 5;
 
         var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
         node.Status = ConsultGenerationNodeStatuses.Completed;
@@ -157,7 +155,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
     public async Task MarkNodeFailed(ConsultGenerationNodeFailure input)
     {
         var state = EnsureState();
-        state.SchemaVersion = 4;
+        state.SchemaVersion = 5;
 
         var node = state.GetOrAddNodeOutput(input.NodeId, input.Label);
         node.Status = ConsultGenerationNodeStatuses.Failed;
@@ -245,7 +243,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 
     private ConsultGenerationJobState EnsureState()
     {
-        return State ?? ConsultGenerationJobState.Create(string.Empty, string.Empty, Array.Empty<ConsultGenerationSectionRequest>());
+        return State ?? ConsultGenerationJobState.Create(string.Empty, string.Empty, Array.Empty<IReadOnlyDictionary<string, string>>());
     }
 
 }
@@ -255,28 +253,24 @@ public sealed record ConsultGenerationOrchestrationInput(
     string AppUserId,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
     string? ResultNodeId = null,
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
     IReadOnlyDictionary<string, string>? DataScalars = null,
-    int? EffectiveInputHashVersion = null);
+    int EffectiveInputHashVersion = 2);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
     string AppUserId,
-    IReadOnlyList<ConsultGenerationSectionRequest> Sections,
+    IReadOnlyList<IReadOnlyDictionary<string, string>> Items,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
-    int? EffectiveInputHashVersion = null);
+    int EffectiveInputHashVersion = 2);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -323,22 +317,13 @@ public sealed class ConsultGenerationJobState
     public int SchemaVersion { get; set; } = 2;
     public string? AnalysisStatus { get; set; }
     public string? AnalysisError { get; set; }
-    public List<ClinicalConcept> PatientConcepts { get; set; } = new();
-    public List<ClinicalConcept> ProblemContext { get; set; } = new();
-    public List<ClinicalConcept> TypicalTrajectoryConcepts { get; set; } = new();
-    public List<ClinicalConcept> PatientTrajectoryConcepts { get; set; } = new();
     public int CompletedStageCount { get; set; }
-
-    // Deserialization default for pre-DAG snapshots (their fixed six-stage pipeline).
-    public int TotalStageCount { get; set; } = 6;
+    public int TotalStageCount { get; set; }
     public Dictionary<string, ConsultGenerationSectionState> Sections { get; set; } = new();
     public List<JobHistoryEvent> History { get; set; } = new();
     public string? FailureError { get; set; }
     public string? WorkflowPackage { get; set; }
     public string? EffectiveInputHash { get; set; }
-    public string? AgentVersion { get; set; }
-    public string? ConceptAgentVersion { get; set; }
-
     // The effective-input hash definition this job used: null/1 = draft+sections
     // (v2-v4 packages), 2 = draft only (v5 packages, package-format-v5.md).
     public int? EffectiveInputHashVersion { get; set; }
@@ -354,7 +339,7 @@ public sealed class ConsultGenerationJobState
     public static ConsultGenerationJobState Create(
         string jobId,
         string appUserId,
-        IReadOnlyList<ConsultGenerationSectionRequest> sections)
+        IReadOnlyList<IReadOnlyDictionary<string, string>> items)
     {
         return new ConsultGenerationJobState
         {
@@ -362,13 +347,13 @@ public sealed class ConsultGenerationJobState
             AppUserId = appUserId,
             Status = ConsultGenerationJobStatuses.Queued,
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            TotalSectionCount = sections.Count,
-            Sections = sections.ToDictionary(
-                section => section.Id,
-                section => new ConsultGenerationSectionState
+            TotalSectionCount = items.Count,
+            Sections = items.ToDictionary(
+                item => item["id"],
+                item => new ConsultGenerationSectionState
                 {
-                    Id = section.Id,
-                    Name = section.Name,
+                    Id = item["id"],
+                    Name = item.GetValueOrDefault("name", item["id"]),
                     Status = ConsultGenerationSectionStatuses.Pending
                 })
         };
@@ -451,10 +436,6 @@ public sealed class ConsultGenerationJobState
             SchemaVersion,
             AnalysisStatus,
             AnalysisError,
-            PatientConcepts,
-            ProblemContext,
-            TypicalTrajectoryConcepts,
-            PatientTrajectoryConcepts,
             CompletedStageCount,
             TotalStageCount,
             sectionProseProgress,
@@ -465,9 +446,7 @@ public sealed class ConsultGenerationJobState
             History: History.Count > 0 ? History.AsReadOnly() : null,
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
-            AgentVersion: AgentVersion,
             SectionSteps: SectionSteps,
-            ConceptAgentVersion: ConceptAgentVersion,
             Nodes: Nodes,
             NodeOutputs: NodeOutputs?.ToDictionary(
                 pair => pair.Key,

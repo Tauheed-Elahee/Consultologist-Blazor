@@ -202,7 +202,6 @@
   private string consultDraft = string.Empty;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
-  private int workflowPackageSpecVersion;
   private Dictionary<string, string> generatedSections = new();
   private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
@@ -238,7 +237,6 @@
       // model; customization returns as package forking (the in-app editor).
       var package = await WorkflowService.GetCurrentPackageAsync();
       workflowPackageRef = package.Ref;
-      workflowPackageSpecVersion = package.SpecVersion;
 
       sectionStandards = (package.Sections ?? Array.Empty<WorkflowPackageSectionResponse>())
         .Select(section => new SectionStandard(section.Id, section.Name, section.Content))
@@ -291,15 +289,9 @@
       totalSectionCount = sectionSnapshots.Count;
       await InvokeAsync(StateHasChanged);
 
-      // v5 packages resolve sections server-side from package data; the request
-      // carries them only for specVersion ≤4 pins.
-      var requestSections = workflowPackageSpecVersion >= 5
-        ? new List<ConsultGenerationSectionRequest>()
-        : sectionSnapshots
-            .Select(section => new ConsultGenerationSectionRequest(section.Id, section.Name, section.Standard))
-            .ToList();
-
-      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, requestSections, workflowPackageRef);
+      // Sections are package data resolved server-side; the request carries only
+      // the draft (and the resolved package ref).
+      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, workflowPackageRef);
       var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
 
       if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)

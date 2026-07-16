@@ -14,16 +14,9 @@ public static class WorkflowDagDiagram
 {
     public static string Generate(WorkflowPackageManifest manifest)
     {
-        var declared = manifest.Nodes
+        var nodes = manifest.Nodes
             ?? throw new InvalidOperationException(
-                $"Package {manifest.Name}@{manifest.Version} declares no nodes; the DAG diagram requires specVersion 4 or newer.");
-
-        // Pre-v5 manifests carry the map container; render the one-kind lowering so
-        // a single renderer serves both eras (the v4 path retires with the v5-only
-        // rebase).
-        var nodes = declared.Any(node => string.Equals(node.Kind, WorkflowNodeKinds.Map, StringComparison.Ordinal))
-            ? WorkflowNodeDefaults.LowerToOneKind(declared).Nodes
-            : declared;
+                $"Package {manifest.Name}@{manifest.Version} declares no nodes; the DAG diagram requires specVersion 5.");
 
         var sb = new StringBuilder();
         sb.Append("flowchart TD\n");

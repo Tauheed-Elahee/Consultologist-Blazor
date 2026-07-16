@@ -4,13 +4,7 @@ namespace Consultologist.Api.Models;
 
 public record ConsultGenerationRequest(
     string ConsultDraft,
-    IReadOnlyList<ConsultGenerationSectionRequest> Sections,
     string? WorkflowPackage = null);
-
-public record ConsultGenerationSectionRequest(
-    string Id,
-    string Name,
-    string Standard);
 
 public record ConsultGenerationJobStartResponse(
     string JobId,
@@ -29,14 +23,6 @@ public record ConsultGenerationJobResponse(
     int? SchemaVersion = null,
     string? AnalysisStatus = null,
     string? AnalysisError = null,
-    [property: JsonIgnore]
-    IReadOnlyList<ClinicalConcept>? PatientConcepts = null,
-    [property: JsonIgnore]
-    IReadOnlyList<ClinicalConcept>? ProblemContext = null,
-    [property: JsonIgnore]
-    IReadOnlyList<ClinicalConcept>? TypicalTrajectoryConcepts = null,
-    [property: JsonIgnore]
-    IReadOnlyList<ClinicalConcept>? PatientTrajectoryConcepts = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
     IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
@@ -48,9 +34,7 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<JobHistoryEvent>? History = null,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    string? AgentVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    string? ConceptAgentVersion = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
