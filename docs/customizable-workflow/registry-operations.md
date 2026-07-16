@@ -100,3 +100,17 @@ file) and commit it alongside the manifest. `git push` never generates anything 
 CI regenerates in memory and fails the build on drift
 (`GeneratedDiagram_MatchesCheckedInFile`); CI is deliberately never a writer to git
 history. The publish script uploads the diagram with the version folder when present.
+
+## Publication metadata (decided 2026-07-16; not yet implemented)
+
+Author and publication time are **publish-event data, not package content**, so
+they will never appear in the manifest (rationale in package-format-v5.md, "What
+the manifest deliberately excludes"). When a package-picker UI or the editor's
+"Editing `general@v2026.07.6`" banner wants display metadata, the home is the
+registry layer, stamped at publish: blob metadata on the manifest blob (or a
+sidecar record) carrying `publishedBy`/`publishedAt` — set by the publish script
+for repo packages and by the registry writer (#57) for `acct-*` ones. Same trust
+posture as the server-stamped `derivedFrom`, zero format change, and the manifest
+stays byte-round-trippable through the editor. Until then, the blob's creation
+time and CalVer already answer "when", and git / the `acct-*` name already answer
+"who".
