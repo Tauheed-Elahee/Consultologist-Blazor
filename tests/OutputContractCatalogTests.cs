@@ -117,3 +117,76 @@ public class OutputContractCatalogTests
         }
     }
 }
+
+public class CatalogRegistryIdentityTests
+{
+    private static string RepoAgents()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        return Path.Combine(dir!.FullName, "agents");
+    }
+
+    private const string MinimalCatalog = """
+        { "version": "v2026.07.1", "contracts": { "text": { "agentName": "a", "agentVersion": "1" } } }
+        """;
+
+    [Fact]
+    public void Load_ExposesConcreteResolvedRef()
+    {
+        var catalog = OutputContractCatalog.Load(RepoAgents());
+
+        Assert.StartsWith("output-contracts@v", catalog.ResolvedRef);
+        Assert.True(Consultologist.Api.Workflow.CalVerVersion.TryParse(
+            catalog.ResolvedRef["output-contracts@".Length..], out _));
+    }
+
+    [Fact]
+    public void CompareCatalogToBundled_IdenticalCatalogs_NoMismatches()
+    {
+        var runtime = OutputContractCatalog.Build(MinimalCatalog, _ => null, "test");
+        var bundled = OutputContractCatalog.Build(MinimalCatalog, _ => null, "test");
+
+        Assert.Empty(AgentAttestationService.CompareCatalogToBundled(runtime, bundled));
+    }
+
+    [Fact]
+    public void CompareCatalogToBundled_VersionDrift_Fails()
+    {
+        var runtime = OutputContractCatalog.Build(MinimalCatalog, _ => null, "test");
+        var bundled = OutputContractCatalog.Build(MinimalCatalog.Replace("v2026.07.1", "v2026.07.2"), _ => null, "test");
+
+        Assert.Contains(
+            AgentAttestationService.CompareCatalogToBundled(runtime, bundled),
+            m => m.Contains("publish/pin/deploy drift", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CompareCatalogToBundled_PinDrift_Fails()
+    {
+        var runtime = OutputContractCatalog.Build(MinimalCatalog, _ => null, "test");
+        var bundled = OutputContractCatalog.Build(MinimalCatalog.Replace("\"agentVersion\": \"1\"", "\"agentVersion\": \"2\""), _ => null, "test");
+
+        Assert.Contains(
+            AgentAttestationService.CompareCatalogToBundled(runtime, bundled),
+            m => m.Contains("pins a@1 (runtime) != a@2 (bundled)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CompareCatalogToBundled_MissingEntry_Fails()
+    {
+        var runtime = OutputContractCatalog.Build(MinimalCatalog, _ => null, "test");
+        var bundled = OutputContractCatalog.Build(
+            """{ "version": "v2026.07.1", "contracts": { "text": { "agentName": "a", "agentVersion": "1" }, "extra": { "agentName": "b", "agentVersion": "3" } } }""",
+            _ => null,
+            "test");
+
+        Assert.Contains(
+            AgentAttestationService.CompareCatalogToBundled(runtime, bundled),
+            m => m.Contains("'extra' is not in the runtime catalog", StringComparison.Ordinal));
+    }
+}
