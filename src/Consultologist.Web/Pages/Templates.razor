@@ -1,8 +1,9 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
-@using System.Net
-@using System.Text
+@using System.Text.Json
 @inject IWorkflowEndpointService WorkflowService
+@inject IAccountEndpointService AccountService
+@inject IJSRuntime JS
 @attribute [Authorize]
 
 @page "/templates"
@@ -12,9 +13,11 @@
 <section class="page-header">
     <div class="page-header__content">
         <span class="section-eyebrow">Templates</span>
-        <h1 class="page-title">Section standards for consult notes.</h1>
+        <h1 class="page-title">Your consult workflow, editable.</h1>
         <p class="page-description">
-            The clinical writing standards used for each generated section, as shipped by the active workflow package.
+            Edit the active package's prompt and section-standard texts. Publishing creates a new
+            immutable version of your own package — with full provenance — and your consults start
+            using it immediately.
         </p>
     </div>
 </section>
@@ -23,49 +26,120 @@
     <Authorized>
         <section class="content-card">
             <div class="form-stack">
-                <div class="result-header">
-                    <div>
-                        <h2 class="panel-title">Active standards</h2>
-                        <p class="panel-description">
-                            Standards guide organization and tone only. Patient facts still come from the draft consult.
-                        </p>
-                    </div>
-                </div>
-
-                <FluentMessageBar Intent="MessageIntent.Info" AllowDismiss="false">
-                    Standards customization is moving to the workflow package editor, where edits publish
-                    as your own package version with full provenance. Until it ships, standards are
-                    read-only here. Previously saved custom standards are preserved on your account and
-                    will seed your first customized package.
-                </FluentMessageBar>
-
                 @if (isLoading)
                 {
                     <div class="loading-state">
                         <FluentProgressRing />
-                        <span>Loading section standards...</span>
+                        <span>Loading workflow package...</span>
                     </div>
                 }
-
-                @if (!string.IsNullOrWhiteSpace(loadError))
+                else if (!string.IsNullOrWhiteSpace(loadError))
                 {
-                    <FluentMessageBar Intent="MessageIntent.Error">@loadError</FluentMessageBar>
+                    <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@loadError</FluentMessageBar>
                 }
-
-                @foreach (var standard in standards)
+                else if (content != null)
                 {
-                    <article class="template-section">
-                        <div class="template-section__header">
-                            <div>
-                                <h3 class="panel-title">@standard.Name</h3>
-                                <p class="muted-text">@standard.Id</p>
-                            </div>
+                    <div class="result-header">
+                        <div>
+                            <h2 class="panel-title">Editing <code>@content.Ref</code></h2>
+                            <p class="panel-description">
+                                Publishing creates a new immutable version of your account package
+                                (derived from <code>@content.Ref</code>) and switches your consults to it.
+                                "Revert to default" returns you to the standard package; published versions
+                                are never deleted.
+                            </p>
                         </div>
+                    </div>
 
-                        <div class="markdown-preview">
-                            @((MarkupString)RenderMarkdownPreview(standard.Content))
-                        </div>
-                    </article>
+                    @if (!string.IsNullOrWhiteSpace(publishSuccess))
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Success" AllowDismiss="false">@publishSuccess</FluentMessageBar>
+                    }
+
+                    @if (publishErrors.Count > 0)
+                    {
+                        <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">
+                            <strong>Publish rejected — nothing was saved.</strong>
+                            <ul>
+                                @foreach (var error in publishErrors)
+                                {
+                                    <li>@error</li>
+                                }
+                            </ul>
+                        </FluentMessageBar>
+                    }
+
+                    <div class="action-row">
+                        <FluentButton Appearance="Appearance.Accent"
+                                      Disabled="@(edits.Count == 0 || isPublishing)"
+                                      @onclick="PublishAsync">
+                            @if (isPublishing)
+                            {
+                                <FluentProgressRing style="width: 16px; height: 16px;" />
+                                <span>Publishing&hellip;</span>
+                            }
+                            else
+                            {
+                                <span>Publish@(edits.Count > 0 ? $" ({edits.Count} edited)" : "")</span>
+                            }
+                        </FluentButton>
+                        <FluentButton Appearance="Appearance.Outline"
+                                      Disabled="@(edits.Count == 0 || isPublishing)"
+                                      @onclick="DiscardAsync">
+                            Discard changes
+                        </FluentButton>
+                        <FluentButton Appearance="Appearance.Outline"
+                                      Disabled="@isPublishing"
+                                      @onclick="RevertToDefaultAsync">
+                            Revert to default
+                        </FluentButton>
+                    </div>
+
+                    <h2 class="panel-title">Section standards</h2>
+                    <p class="panel-description">
+                        Standards guide organization and tone only. Patient facts still come from the draft consult.
+                    </p>
+
+                    @foreach (var collection in collections)
+                    {
+                        @foreach (var item in collection.Items)
+                        {
+                            <WorkflowEditorCard Title="@item.Name"
+                                                Subtitle="@item.Id"
+                                                EditLabel="Standard"
+                                                Rows="8"
+                                                Text="@GetText(item.File)"
+                                                Modified="@edits.ContainsKey(item.File)"
+                                                TextChanged="@(value => OnTextChangedAsync(item.File, value))" />
+                        }
+                    }
+
+                    <h2 class="panel-title">Prompts</h2>
+                    <p class="panel-description">
+                        The instructions each workflow step sends to the model. Variables are fixed —
+                        the highlighted <code>{{ placeholders }}</code> must all remain in the text.
+                    </p>
+
+                    @foreach (var prompt in prompts)
+                    {
+                        <WorkflowEditorCard Title="@prompt.Id"
+                                            Subtitle="@prompt.File"
+                                            EditLabel="Prompt text"
+                                            Rows="12"
+                                            Text="@GetText(prompt.File)"
+                                            Modified="@edits.ContainsKey(prompt.File)"
+                                            TextChanged="@(value => OnTextChangedAsync(prompt.File, value))">
+                            <p class="muted-text">
+                                Variables: @string.Join(", ", prompt.Variables.Select(v => $"{{{{ {v} }}}}"))
+                                @if (prompt.Prelude != null)
+                                {
+                                    <span> · shared prelude: @prompt.Prelude (read-only)</span>
+                                }
+                            </p>
+                        </WorkflowEditorCard>
+                    }
+
+                    <WorkflowNodeSummary Nodes="@nodes" />
                 }
             </div>
         </section>
@@ -73,108 +147,198 @@
 </AuthorizeView>
 
 @code {
-  private IReadOnlyList<WorkflowPackageSectionResponse> standards = Array.Empty<WorkflowPackageSectionResponse>();
-  private bool isLoading;
-  private string? loadError;
+    private const string DraftKeyPrefix = "workflow-editor-draft:";
 
-  protected override async Task OnInitializedAsync()
-  {
-    await LoadStandardsAsync();
-  }
+    private WorkflowPackageContentResponse? content;
+    private IReadOnlyList<WorkflowManifestReader.PromptView> prompts = Array.Empty<WorkflowManifestReader.PromptView>();
+    private IReadOnlyList<WorkflowManifestReader.NodeView> nodes = Array.Empty<WorkflowManifestReader.NodeView>();
+    private IReadOnlyList<WorkflowManifestReader.CollectionView> collections = Array.Empty<WorkflowManifestReader.CollectionView>();
 
-  private async Task LoadStandardsAsync()
-  {
-    isLoading = true;
-    loadError = null;
+    // Path -> edited text, only where it differs from the loaded package;
+    // mirrored to localStorage so drafts survive refresh on this browser.
+    private readonly Dictionary<string, string> edits = new(StringComparer.Ordinal);
 
-    try
-    {
-      // The package endpoint is the single section source (the account standards
-      // override retired with the v5 input model; customization returns as package
-      // forking in the in-app editor).
-      var package = await WorkflowService.GetCurrentPackageAsync();
-      standards = package.Sections ?? Array.Empty<WorkflowPackageSectionResponse>();
-    }
-    catch (AccessTokenNotAvailableException exception)
-    {
-      exception.Redirect();
-    }
-    catch (Exception ex)
-    {
-      standards = Array.Empty<WorkflowPackageSectionResponse>();
-      loadError = $"Unable to load section standards: {ex.Message}";
-    }
-    finally
-    {
-      isLoading = false;
-    }
-  }
+    private bool isLoading;
+    private bool isPublishing;
+    private string? loadError;
+    private string? publishSuccess;
+    private List<string> publishErrors = new();
 
-  private static string RenderMarkdownPreview(string markdown)
-  {
-    if (string.IsNullOrWhiteSpace(markdown))
+    protected override async Task OnInitializedAsync()
     {
-      return "<p class=\"muted-text\">No standard text.</p>";
+        await LoadAsync();
     }
 
-    var builder = new StringBuilder();
-    var lines = markdown.Replace("\r\n", "\n").Split('\n');
-    var inList = false;
+    private string DraftKey => DraftKeyPrefix + content!.Ref;
 
-    foreach (var rawLine in lines)
+    private string GetText(string path) =>
+        edits.TryGetValue(path, out var edited) ? edited : content!.Files.GetValueOrDefault(path, string.Empty);
+
+    private async Task LoadAsync()
     {
-      var line = rawLine.Trim();
+        isLoading = true;
+        loadError = null;
+        edits.Clear();
 
-      if (string.IsNullOrEmpty(line))
-      {
-        if (inList)
+        try
         {
-          builder.AppendLine("</ul>");
-          inList = false;
+            content = await WorkflowService.GetCurrentPackageContentAsync();
+            prompts = WorkflowManifestReader.ReadPrompts(content.Manifest);
+            nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
+            collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
+            await RestoreDraftAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            content = null;
+            loadError = $"Unable to load the workflow package: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RestoreDraftAsync()
+    {
+        var stored = await JS.InvokeAsync<string?>("localStorage.getItem", DraftKey);
+
+        if (string.IsNullOrWhiteSpace(stored))
+        {
+            return;
         }
 
-        continue;
-      }
-
-      if (line.StartsWith("- ", StringComparison.Ordinal))
-      {
-        if (!inList)
+        Dictionary<string, string>? draft;
+        try
         {
-          builder.AppendLine("<ul>");
-          inList = true;
+            draft = JsonSerializer.Deserialize<Dictionary<string, string>>(stored);
+        }
+        catch (JsonException)
+        {
+            return;
         }
 
-        builder.Append("<li>");
-        builder.Append(WebUtility.HtmlEncode(line[2..]));
-        builder.AppendLine("</li>");
-        continue;
-      }
-
-      if (inList)
-      {
-        builder.AppendLine("</ul>");
-        inList = false;
-      }
-
-      if (line.StartsWith("### ", StringComparison.Ordinal))
-      {
-        builder.Append("<h4>");
-        builder.Append(WebUtility.HtmlEncode(line[4..]));
-        builder.AppendLine("</h4>");
-      }
-      else
-      {
-        builder.Append("<p>");
-        builder.Append(WebUtility.HtmlEncode(line));
-        builder.AppendLine("</p>");
-      }
+        foreach (var (path, text) in draft ?? new Dictionary<string, string>())
+        {
+            // Drop entries that no longer differ (or no longer exist) in the
+            // loaded package version.
+            if (content!.Files.TryGetValue(path, out var original) && !string.Equals(original, text, StringComparison.Ordinal))
+            {
+                edits[path] = text;
+            }
+        }
     }
 
-    if (inList)
+    private async Task OnTextChangedAsync(string path, string value)
     {
-      builder.AppendLine("</ul>");
+        publishSuccess = null;
+
+        if (content!.Files.TryGetValue(path, out var original) && string.Equals(original, value, StringComparison.Ordinal))
+        {
+            edits.Remove(path);
+        }
+        else
+        {
+            edits[path] = value;
+        }
+
+        if (edits.Count == 0)
+        {
+            await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(edits));
+        }
     }
 
-    return builder.ToString();
-  }
+    private async Task PublishAsync()
+    {
+        if (content == null || edits.Count == 0 || isPublishing)
+        {
+            return;
+        }
+
+        isPublishing = true;
+        publishErrors = new List<string>();
+        publishSuccess = null;
+
+        try
+        {
+            var files = new Dictionary<string, string>(content.Files, StringComparer.Ordinal);
+            foreach (var (path, text) in edits)
+            {
+                files[path] = text;
+            }
+
+            var outcome = await WorkflowService.PublishPackageAsync(
+                new WorkflowPackagePublishRequest(content.Ref, content.Manifest, files));
+
+            if (!outcome.Succeeded)
+            {
+                publishErrors = outcome.Errors.ToList();
+                return;
+            }
+
+            await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+            var publishedRef = outcome.Response!.Ref;
+            await LoadAsync();
+            publishSuccess = $"Published {publishedRef} and switched your consults to it.";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            publishErrors = new List<string> { $"Publish failed: {ex.Message}" };
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+
+    private async Task DiscardAsync()
+    {
+        if (content == null)
+        {
+            return;
+        }
+
+        edits.Clear();
+        publishErrors = new List<string>();
+        publishSuccess = null;
+        await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+    }
+
+    private async Task RevertToDefaultAsync()
+    {
+        if (isPublishing)
+        {
+            return;
+        }
+
+        publishErrors = new List<string>();
+        publishSuccess = null;
+
+        try
+        {
+            await AccountService.DeleteSettingAsync("consult.workflowPackage");
+            await LoadAsync();
+            publishSuccess = $"Reverted to the default package ({content?.Ref}). Your published versions are kept.";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            publishErrors = new List<string> { $"Revert failed: {ex.Message}" };
+        }
+    }
 }

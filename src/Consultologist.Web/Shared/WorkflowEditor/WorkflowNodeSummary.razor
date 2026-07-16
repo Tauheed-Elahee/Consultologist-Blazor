@@ -1,0 +1,49 @@
+@* Read-only view of the workflow graph: v1 edits texts only, so nodes,
+   bindings, and the deliverable are shown but never editable here. *@
+@using Consultologist.Web.Services.Workflow
+
+<details class="template-section">
+    <summary class="panel-title">Workflow graph (read-only)</summary>
+    <p class="muted-text">
+        Node structure, bindings, and output contracts are fixed in this editor —
+        edits here are prompt and standards texts only.
+    </p>
+
+    @foreach (var node in Nodes)
+    {
+        <article class="template-section">
+            <div class="template-section__header">
+                <div>
+                    <h3 class="panel-title">
+                        @node.Label
+                        @if (node.IsResult)
+                        {
+                            <span class="muted-text"> — deliverable</span>
+                        }
+                    </h3>
+                    <p class="muted-text">
+                        @node.Id
+                        @if (node.Prompt != null)
+                        {
+                            <span> · prompt: @node.Prompt</span>
+                        }
+                        @if (node.ForEach != null)
+                        {
+                            <span> · for each @node.ForEach item</span>
+                        }
+                    </p>
+                </div>
+            </div>
+            <ul>
+                @foreach (var binding in node.Bindings)
+                {
+                    <li class="muted-text"><code>@binding.Key</code> ← <code>@binding.Value</code></li>
+                }
+            </ul>
+        </article>
+    }
+</details>
+
+@code {
+    [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
+}
