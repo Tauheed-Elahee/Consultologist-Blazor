@@ -26,6 +26,7 @@ contain hyphens; derive a string key from the object when needed).
 | `snomed_version` | Terminology edition + version + import date | MCP `get_terminology_info` (returns exactly this) |
 | `mcp_version` | Release (git tag) of the Apache-2.0 `snomed-snowstorm-mcp` repo | Git tag; deployed app should attest its build (e.g. info endpoint returning the commit) |
 | `workflow_package` | `name@version` of the pinned workflow package (CalVer `vYYYY.MM.N`, e.g. `general@v2026.07.1`) | Package registry |
+| `catalogRef` | `output-contracts@vYYYY.MM.N` — the concrete catalog version the job ran under, resolving every `agentVersions` entry to its contract→agent mapping (#93) | Public catalog registry (immutable versions); attested equal to git at startup |
 | `input_hash` | Hash of the **effective** input | Computed at job start |
 | `inference_stack` (optional) | Inference engine + version, for bit-exact re-run attempts | Deployment config |
 
