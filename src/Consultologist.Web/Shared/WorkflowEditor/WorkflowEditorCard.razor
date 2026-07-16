@@ -1,0 +1,44 @@
+@* One editable text of the package — a prompt or a data item. The textarea is
+   the source of truth; the preview renders live from the bound value. *@
+
+<article class="template-section">
+    <div class="template-section__header">
+        <div>
+            <h3 class="panel-title">@Title</h3>
+            <p class="muted-text">
+                @Subtitle
+                @if (Modified)
+                {
+                    <strong> — edited</strong>
+                }
+            </p>
+        </div>
+    </div>
+
+    @ChildContent
+
+    <label class="input-field">
+        <span>@EditLabel</span>
+        <FluentTextArea Value="@Text"
+                        ValueChanged="@(async (string? value) => await TextChanged.InvokeAsync(value ?? string.Empty))"
+                        Rows="@Rows" />
+    </label>
+
+    <details>
+        <summary class="muted-text">Preview</summary>
+        <div class="markdown-preview">
+            @((MarkupString)MarkdownPreview.Render(Text))
+        </div>
+    </details>
+</article>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string Subtitle { get; set; } = string.Empty;
+    [Parameter] public string EditLabel { get; set; } = "Content";
+    [Parameter] public string Text { get; set; } = string.Empty;
+    [Parameter] public int Rows { get; set; } = 10;
+    [Parameter] public bool Modified { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public EventCallback<string> TextChanged { get; set; }
+}
