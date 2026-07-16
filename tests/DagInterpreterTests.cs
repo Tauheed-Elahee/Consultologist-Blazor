@@ -364,6 +364,25 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
+    public void Initialize_RecordsTheCatalogRefWriteOnce_AndSurfacesItOnTheResponse()
+    {
+        var (entity, state) = CreateEntity();
+        var items = new[] { Item("hpi", "History of Present Illness") };
+
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", items,
+            CatalogRef: "output-contracts@v2026.07.1")).GetAwaiter().GetResult();
+
+        // Write-once: a second Initialize (Durable replay) must not overwrite.
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-1", "user-1", items,
+            CatalogRef: "output-contracts@v2026.07.9")).GetAwaiter().GetResult();
+
+        Assert.Equal("output-contracts@v2026.07.1", state().CatalogRef);
+        Assert.Equal("output-contracts@v2026.07.1", state().ToResponse().CatalogRef);
+    }
+
+    [Fact]
     public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
     {
         var (entity, state) = CreateEntity();

@@ -119,6 +119,19 @@ CI regenerates in memory and fails the build on drift
 (`GeneratedDiagram_MatchesCheckedInFile`); CI is deliberately never a writer to git
 history. The publish script uploads the diagram with the version folder when present.
 
+## The output-contracts registry — implemented 2026-07-16 (#93)
+
+The catalog is a versioned artifact in the public account, container
+`output-contracts`: `vYYYY.MM.N/output-contracts.json` + `vYYYY.MM.N/schemas/…`,
+with the usual mutable `latest.json` pointer and refuse-overwrite immutability
+(`scripts/publish-output-contracts.sh`). The engine loads the pinned version at
+startup (`OutputContracts__Pin`, default `@latest`) — **the registry is the
+runtime source**; changing the catalog is publish + restart, no redeploy. Every
+job record stamps the resolved concrete ref (`catalogRef`), and startup
+attestation fails loud if the registry version differs from the bundled
+git-tracked `agents/output-contracts.json` (publish/pin/deploy drift). Local dev
+(public URI unset) loads the bundled file directly.
+
 ## Account packages (`acct-*`) — implemented 2026-07-16 (#57)
 
 The in-app editor publishes per-account forks under `acct-<12 hex of the

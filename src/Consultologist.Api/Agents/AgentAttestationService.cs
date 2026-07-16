@@ -86,6 +86,18 @@ public sealed class AgentAttestationService : IHostedService
 
         var mismatches = new List<string>();
 
+        // The registry leg (#93): the runtime catalog (loaded from the public
+        // registry at the pinned version) must equal the bundled, git-tracked
+        // catalog — publish/pin/deploy drift fails loud here.
+        try
+        {
+            mismatches.AddRange(CompareCatalogToBundled(_catalog, OutputContractCatalog.Load()));
+        }
+        catch (Exception ex)
+        {
+            mismatches.Add($"catalog: bundled baseline could not be loaded ({ex.Message})");
+        }
+
         // Every catalog entry's agent gets attested against its git manifest, plus the
         // catalog↔manifest schema cross-check: an entry whose declared schema drifts
         // from the schema welded into its agent definition is a config defect, not a
@@ -125,6 +137,49 @@ public sealed class AgentAttestationService : IHostedService
             }
 
             mismatches.AddRange(agentMismatches.Select(m => $"{entry.AgentName}@{entry.AgentVersion}: {m}"));
+        }
+
+        return mismatches;
+    }
+
+    /// <summary>
+    /// The registry leg: whatever catalog the runtime resolved (registry@pin in
+    /// Azure, the bundled file in local dev — trivially equal there) must match
+    /// the bundled git catalog version-for-version and entry-for-entry.
+    /// </summary>
+    internal static List<string> CompareCatalogToBundled(OutputContractCatalog runtime, OutputContractCatalog bundled)
+    {
+        var mismatches = new List<string>();
+
+        if (!string.Equals(runtime.ResolvedRef, bundled.ResolvedRef, StringComparison.Ordinal))
+        {
+            mismatches.Add($"catalog: runtime {runtime.ResolvedRef} != bundled {bundled.ResolvedRef} (publish/pin/deploy drift)");
+        }
+
+        foreach (var key in runtime.Entries.Keys.Union(bundled.Entries.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal))
+        {
+            var inRuntime = runtime.Entries.TryGetValue(key, out var runtimeEntry);
+            var inBundled = bundled.Entries.TryGetValue(key, out var bundledEntry);
+
+            if (!inRuntime || !inBundled)
+            {
+                mismatches.Add($"catalog: contract '{key}' is {(inRuntime ? "not in the bundled" : "not in the runtime")} catalog");
+                continue;
+            }
+
+            if (!string.Equals(runtimeEntry!.AgentName, bundledEntry!.AgentName, StringComparison.Ordinal)
+                || !string.Equals(runtimeEntry.AgentVersion, bundledEntry.AgentVersion, StringComparison.Ordinal))
+            {
+                mismatches.Add($"catalog: contract '{key}' pins {runtimeEntry.AgentName}@{runtimeEntry.AgentVersion} (runtime) != {bundledEntry.AgentName}@{bundledEntry.AgentVersion} (bundled)");
+            }
+
+            var runtimeSchema = runtimeEntry.SchemaJson is null ? null : JsonNode.Parse(runtimeEntry.SchemaJson);
+            var bundledSchema = bundledEntry.SchemaJson is null ? null : JsonNode.Parse(bundledEntry.SchemaJson);
+
+            if (AttestedAgentManifest.CanonicalJson(runtimeSchema) != AttestedAgentManifest.CanonicalJson(bundledSchema))
+            {
+                mismatches.Add($"catalog: contract '{key}' schema differs between the runtime and bundled catalogs");
+            }
         }
 
         return mismatches;
