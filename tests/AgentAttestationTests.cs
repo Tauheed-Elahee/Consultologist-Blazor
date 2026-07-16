@@ -275,3 +275,60 @@ public class AgentAttestationTests
         Assert.Contains(mismatches, m => m.Contains("text.format.type is 'text'"));
     }
 }
+
+public class AgentDefinitionRedactionTests
+{
+    [Fact]
+    public void Redact_StripsExactlyThePlumbingFields()
+    {
+        var yaml = """
+            name: example
+            version: "3"
+            definition:
+              instructions: |
+                Talk about server_url: inside prose stays.
+              tools:
+                - type: mcp
+                  server_label: Example
+                  server_url: https://example.net/mcp
+                  require_approval: never
+                  project_connection_id: ExampleConnection
+              tool_choice: auto
+            """;
+
+        var redacted = AgentDefinitionRedaction.Redact(yaml);
+
+        Assert.DoesNotContain("server_url:", redacted.Replace("Talk about server_url: inside prose stays.", string.Empty));
+        Assert.DoesNotContain("project_connection_id:", redacted);
+        Assert.Contains("server_label: Example", redacted);
+        Assert.Contains("type: mcp", redacted);
+        Assert.Contains("Talk about server_url: inside prose stays.", redacted);
+        Assert.Equal(yaml.Split('\n').Length - 2, redacted.Split('\n').Length);
+    }
+
+    [Fact]
+    public void Redact_RepoManifests_RemoveExactlyTwoLinesEach_AndStayLoadable()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        foreach (var name in new[] { "test-json", "concept-extraction" })
+        {
+            var yaml = File.ReadAllText(Path.Combine(dir!.FullName, "agents", $"{name}.yaml"));
+            var redacted = AgentDefinitionRedaction.Redact(yaml);
+
+            Assert.Equal(yaml.Replace("\r\n", "\n").Split('\n').Length - 2, redacted.Split('\n').Length);
+            Assert.DoesNotContain("mcp.snomed.consultologist.ai", redacted);
+            Assert.DoesNotContain("project_connection_id", redacted);
+
+            // The redacted document still parses as an agent manifest with the
+            // same identity and schema — only plumbing left.
+            var manifest = AttestedAgentManifest.Load(redacted);
+            Assert.Equal(name, manifest.Name);
+            Assert.NotEmpty(manifest.Definition.Instructions);
+        }
+    }
+}

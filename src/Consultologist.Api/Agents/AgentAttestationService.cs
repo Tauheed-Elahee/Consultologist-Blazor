@@ -77,6 +77,7 @@ public sealed class AgentAttestationService : IHostedService
     {
         var endpoint = Environment.GetEnvironmentVariable("AzureAI__Endpoint");
         var apiVersion = Environment.GetEnvironmentVariable("AzureAI__ApiVersion") ?? "v1";
+        var publicRegistryUri = Environment.GetEnvironmentVariable("WorkflowPackages__PublicBlobServiceUri");
 
         if (string.IsNullOrWhiteSpace(endpoint))
         {
@@ -113,7 +114,8 @@ public sealed class AgentAttestationService : IHostedService
                 continue;
             }
 
-            var manifest = AttestedAgentManifest.Load(await File.ReadAllTextAsync(manifestPath, cancellationToken));
+            var manifestYaml = await File.ReadAllTextAsync(manifestPath, cancellationToken);
+            var manifest = AttestedAgentManifest.Load(manifestYaml);
             var agentMismatches = new List<string>();
 
             if (!string.Equals(manifest.Version, entry.AgentVersion, StringComparison.Ordinal))
@@ -125,6 +127,14 @@ public sealed class AgentAttestationService : IHostedService
 
             var deployed = await FetchDeployedDefinitionAsync(endpoint, entry.AgentName, entry.AgentVersion, apiVersion, cancellationToken);
             agentMismatches.AddRange(AttestedAgentManifest.Compare(manifest, deployed));
+
+            // The public-registry leg (#94): the published (redacted) definition
+            // must equal Redact(bundled git manifest) — publish drift and
+            // redaction-transform drift both fail here.
+            if (!string.IsNullOrWhiteSpace(publicRegistryUri))
+            {
+                agentMismatches.AddRange(await CompareRegistryDefinitionAsync(publicRegistryUri, entry, manifestYaml, cancellationToken));
+            }
 
             if (agentMismatches.Count == 0)
             {
@@ -217,6 +227,32 @@ public sealed class AgentAttestationService : IHostedService
         }
 
         return mismatches;
+    }
+
+    private async Task<List<string>> CompareRegistryDefinitionAsync(
+        string publicRegistryUri,
+        OutputContractEntry entry,
+        string manifestYaml,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{publicRegistryUri.TrimEnd('/')}/agent-definitions/{Uri.EscapeDataString(entry.AgentName)}/{Uri.EscapeDataString(entry.AgentVersion)}/definition.yaml";
+
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(15);
+
+        using var response = await client.GetAsync(url, cancellationToken);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return new List<string> { $"definition not published to the public registry ({url})" };
+        }
+
+        response.EnsureSuccessStatusCode();
+        var published = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        return AttestedAgentManifest.NormalizeText(published) == AttestedAgentManifest.NormalizeText(AgentDefinitionRedaction.Redact(manifestYaml))
+            ? new List<string>()
+            : new List<string> { "published registry definition differs from redact(git manifest)" };
     }
 
     private async Task<JsonNode> FetchDeployedDefinitionAsync(
@@ -362,7 +398,7 @@ public sealed class AttestedAgentManifest
 
     // Line endings and trailing whitespace differ between YAML block scalars and the
     // API's JSON strings without changing agent behavior.
-    private static string NormalizeText(string? text) =>
+    internal static string NormalizeText(string? text) =>
         (text ?? string.Empty).Replace("\r\n", "\n").TrimEnd();
 
     /// <summary>Order-insensitive JSON equality: objects re-serialized with sorted keys.</summary>

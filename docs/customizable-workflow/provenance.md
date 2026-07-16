@@ -39,6 +39,15 @@ contain hyphens; derive a string key from the object when needed).
 > `AgentAttestation__Enforce=true` fails the host instead. The MCP-deployment
 > attestation remains future work.
 
+> **Registry legs added 2026-07-16 (Milestone 6)**: attestation now welds **three**
+> stores per startup — git ↔ Foundry (above), git ↔ the public catalog registry
+> (runtime `output-contracts@pin` must equal the bundled file, #93), and git ↔ the
+> public agent-definition registry (the published artifact must equal
+> `redact(bundled manifest)` — the redaction strips only `tools[].server_url` and
+> `project_connection_id`, #94). A job record's `agentVersions` + `catalogRef`
+> therefore resolve through publicly readable, immutable registry versions that are
+> attested equal to git at every startup.
+
 The Foundry agent (system prompt, parameters, tool wiring) is edited in a portal and is
 therefore mutable state. Rule: **track the agent config in git; at startup or job start,
 fetch the deployed agent version and verify it matches the tracked manifest** — fail or

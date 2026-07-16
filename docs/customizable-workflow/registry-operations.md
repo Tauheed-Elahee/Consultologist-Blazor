@@ -132,6 +132,19 @@ attestation fails loud if the registry version differs from the bundled
 git-tracked `agents/output-contracts.json` (publish/pin/deploy drift). Local dev
 (public URI unset) loads the bundled file directly.
 
+## The agent-definitions registry — implemented 2026-07-16 (#94)
+
+Public account, container `agent-definitions`:
+`<name>/<foundry-version>/definition.yaml` + `<name>/latest.json` — keyed by
+**Foundry's version sequence**, the same numbers job records store in
+`agentVersions`, so a record resolves with zero translation. Published
+definitions are **redacted**: instructions, model, schema, and tool types are
+public; `tools[].server_url` and `project_connection_id` are stripped
+(`scripts/publish-agent-definition.sh`; the transform is line-for-line
+equivalent to `AgentDefinitionRedaction.Redact`, and startup attestation fails
+loud if the published artifact differs from `redact(bundled git manifest)`).
+Versions are refuse-overwrite immutable.
+
 ## Account packages (`acct-*`) — implemented 2026-07-16 (#57)
 
 The in-app editor publishes per-account forks under `acct-<12 hex of the
