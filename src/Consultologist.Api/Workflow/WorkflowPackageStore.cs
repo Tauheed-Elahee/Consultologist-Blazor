@@ -1,10 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Azure;
-using Azure.Core;
 using Azure.Storage.Blobs;
 using Consultologist.Api.Agents;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Consultologist.Api.Workflow;
@@ -16,7 +14,7 @@ public interface IWorkflowPackageStore
 
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
-    private const string ContainerName = "workflow-packages";
+    private const string ContainerName = WorkflowPackageBlobContainerFactory.ContainerName;
     public const int SupportedSpecVersion = 5;
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
@@ -35,38 +33,13 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     private readonly ConcurrentDictionary<string, (string Version, DateTimeOffset FetchedAt)> _latestCache = new();
 
     public WorkflowPackageStore(
-        IConfiguration configuration,
-        TokenCredential credential,
+        WorkflowPackageBlobContainerFactory containerFactory,
         OutputContractCatalog catalog,
         ILogger<WorkflowPackageStore> logger)
     {
         _catalog = catalog;
         _logger = logger;
-
-        // Entra ID first: when a blob service URI is configured, authenticate with the
-        // app's managed identity (requires the Storage Blob Data Reader RBAC role on the
-        // storage account). The connection-string path remains only as the local-dev
-        // fallback (Azurite has no Entra endpoint).
-        var serviceUri = configuration["WorkflowPackages:BlobServiceUri"];
-        if (!string.IsNullOrWhiteSpace(serviceUri))
-        {
-            _container = new BlobServiceClient(new Uri(serviceUri), credential).GetBlobContainerClient(ContainerName);
-            _logger.LogInformation("Workflow package store using Entra ID auth. BlobServiceUri={BlobServiceUri}", serviceUri);
-            return;
-        }
-
-        var connectionStringName = configuration["WorkflowPackages:ConnectionStringName"] ?? "AzureWebJobsStorage";
-        var connectionString = configuration[connectionStringName]
-            ?? Environment.GetEnvironmentVariable(connectionStringName);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                $"Workflow package storage is not configured: set WorkflowPackages__BlobServiceUri (Entra ID) or {connectionStringName} (local dev).");
-        }
-
-        _container = new BlobContainerClient(connectionString, ContainerName);
-        _logger.LogWarning("Workflow package store using connection-string auth (local-dev fallback). Prefer WorkflowPackages__BlobServiceUri with managed identity.");
+        _container = containerFactory.GetContainer();
     }
 
     public async Task<WorkflowPackage> ResolveAsync(WorkflowPackageRef packageRef, CancellationToken cancellationToken)

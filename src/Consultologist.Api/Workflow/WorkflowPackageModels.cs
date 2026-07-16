@@ -268,5 +268,21 @@ public readonly record struct CalVerVersion(int Year, int Month, int Counter) : 
         return byMonth != 0 ? byMonth : Counter.CompareTo(other.Counter);
     }
 
+    /// <summary>
+    /// The next version to publish under a name: the current month's counter
+    /// starts at 1 and increments past the latest published version. Pure —
+    /// the publish endpoint injects the clock. A latest that sorts at or above
+    /// the current month's opener (clock skew, imported history) keeps its own
+    /// month and increments, so the latest pointer never moves backwards.
+    /// </summary>
+    public static CalVerVersion AssignNext(CalVerVersion? latest, DateTimeOffset nowUtc)
+    {
+        var opener = new CalVerVersion(nowUtc.Year, nowUtc.Month, 1);
+
+        return latest is { } current && current.CompareTo(opener) >= 0
+            ? current with { Counter = current.Counter + 1 }
+            : opener;
+    }
+
     public override string ToString() => $"v{Year:D4}.{Month:D2}.{Counter}";
 }
