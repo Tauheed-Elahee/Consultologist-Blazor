@@ -15,7 +15,7 @@ public interface IWorkflowPackagePinResolver
 /// </summary>
 public sealed class WorkflowPackagePinResolver : IWorkflowPackagePinResolver
 {
-    private const string PackagePinSettingKey = "consult.workflowPackage";
+    public const string PackagePinSettingKey = "consult.workflowPackage";
     private const string DefaultPinFallback = "general@latest";
 
     private readonly IAccountSettingsStore _settingsStore;
@@ -32,10 +32,19 @@ public sealed class WorkflowPackagePinResolver : IWorkflowPackagePinResolver
         var accountPin = await _settingsStore.GetAsync(appUserId, PackagePinSettingKey, cancellationToken);
         if (WorkflowPackageRef.TryParse(accountPin?.Value, out var accountRef))
         {
-            return accountRef!;
-        }
+            // The acct-* access rule: a foreign account package behaves like a
+            // malformed pin — warn and fall through to the default.
+            if (WorkflowPackageNaming.CanAccess(accountRef!.Name, appUserId))
+            {
+                return accountRef!;
+            }
 
-        if (!string.IsNullOrWhiteSpace(accountPin?.Value))
+            _logger.LogWarning(
+                "Ignoring foreign account-package pin. AppUserId={AppUserId}, Pin={Pin}",
+                appUserId,
+                accountPin!.Value);
+        }
+        else if (!string.IsNullOrWhiteSpace(accountPin?.Value))
         {
             _logger.LogWarning(
                 "Ignoring malformed workflow package pin on account. AppUserId={AppUserId}, Pin={Pin}",

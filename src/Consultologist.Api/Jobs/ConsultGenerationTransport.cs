@@ -166,6 +166,16 @@ public sealed class ConsultGenerationJobs
 
                 packageRef = await _pinResolver.ResolvePinAsync(account.AppUserId, cancellationToken);
             }
+            else if (!WorkflowPackageNaming.CanAccess(packageRef!.Name, account.AppUserId))
+            {
+                // The acct-* access rule at job start: a client-supplied ref to a
+                // foreign account package is rejected before any registry read.
+                _logger.LogWarning(
+                    "Rejected foreign account-package ref at job start. AppUserId={AppUserId}, Ref={Ref}",
+                    account.AppUserId,
+                    request.WorkflowPackage);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.Forbidden, new { error = "Workflow package is not accessible from this account." }, cancellationToken);
+            }
 
             WorkflowPackage package;
             try

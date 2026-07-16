@@ -101,6 +101,18 @@ CI regenerates in memory and fails the build on drift
 (`GeneratedDiagram_MatchesCheckedInFile`); CI is deliberately never a writer to git
 history. The publish script uploads the diagram with the version folder when present.
 
+## Account packages (`acct-*`)
+
+The in-app editor (#57) publishes per-account forks under `acct-<12 hex of the
+AppUserId>` — same container, same layout, same validator as repo packages. The
+server assigns name, version, and `derivedFrom` (the fork's concrete source ref);
+the manifest is uploaded last under a conditional create, so a version is
+invisible until it commits and can never be overwritten. `acct-*` names are
+usable only by their owning account (enforced in the pin resolver and at job
+start); account versions are never deleted. Publishing requires the Function
+App's managed identity to hold Storage Blob Data **Contributor** on the storage
+account (reads need only Reader).
+
 ## Publication metadata (decided 2026-07-16; not yet implemented)
 
 Author and publication time are **publish-event data, not package content**, so
