@@ -1,4 +1,5 @@
 {
+  "version": "v2026.07.1",
   "contracts": {
     "text": {
       "agentName": "test-json",

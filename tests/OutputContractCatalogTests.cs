@@ -91,9 +91,11 @@ public class OutputContractCatalogTests
     [InlineData(null, "catalog not found")]
     [InlineData("not json", "not valid JSON")]
     [InlineData("""{ "contracts": {} }""", "declares no contracts")]
-    [InlineData("""{ "contracts": { "text": { "agentName": "a" } } }""", "agentName and agentVersion")]
-    [InlineData("""{ "contracts": { "concept-list": { "agentName": "a", "agentVersion": "1" } } }""", "must declare the 'text' entry")]
-    [InlineData("""{ "contracts": { "text": { "agentName": "a", "agentVersion": "1", "schemaFile": "missing.json" } } }""", "missing schema file")]
+    [InlineData("""{ "contracts": { "text": { "agentName": "a", "agentVersion": "1" } } }""", "must declare a CalVer version")]
+    [InlineData("""{ "version": "2026.07", "contracts": { "text": { "agentName": "a", "agentVersion": "1" } } }""", "must declare a CalVer version")]
+    [InlineData("""{ "version": "v2026.07.1", "contracts": { "text": { "agentName": "a" } } }""", "agentName and agentVersion")]
+    [InlineData("""{ "version": "v2026.07.1", "contracts": { "concept-list": { "agentName": "a", "agentVersion": "1" } } }""", "must declare the 'text' entry")]
+    [InlineData("""{ "version": "v2026.07.1", "contracts": { "text": { "agentName": "a", "agentVersion": "1", "schemaFile": "missing.json" } } }""", "missing schema file")]
     public void Load_DefectiveCatalog_FailsFast(string? catalogJson, string expectedMessagePart)
     {
         var dir = Path.Combine(Path.GetTempPath(), $"catalog-test-{Guid.NewGuid():N}");
