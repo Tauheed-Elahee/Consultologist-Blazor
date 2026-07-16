@@ -23,7 +23,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly BlobContainerClient _container;
+    private readonly WorkflowPackageBlobContainerFactory _containers;
     private readonly OutputContractCatalog _catalog;
     private readonly ILogger<WorkflowPackageStore> _logger;
 
@@ -39,7 +39,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     {
         _catalog = catalog;
         _logger = logger;
-        _container = containerFactory.GetContainer();
+        _containers = containerFactory;
     }
 
     public async Task<WorkflowPackage> ResolveAsync(WorkflowPackageRef packageRef, CancellationToken cancellationToken)
@@ -54,7 +54,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             return cached;
         }
 
-        var manifestJson = await DownloadTextAsync($"{packageRef.Name}/{version}/manifest.json", cancellationToken);
+        var manifestJson = await DownloadTextAsync(packageRef.Name, $"{packageRef.Name}/{version}/manifest.json", cancellationToken);
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(manifestJson, JsonOptions)
             ?? throw new InvalidOperationException($"Workflow package manifest for {cacheKey} is empty or malformed.");
 
@@ -102,7 +102,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
 
         foreach (var path in paths)
         {
-            files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
+            files[path] = await DownloadTextAsync(name, $"{name}/{version}/{path}", cancellationToken);
         }
 
         await GatherDataFilesAsync(name, version, manifest, files, cancellationToken);
@@ -209,7 +209,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     {
         try
         {
-            files[path] = await DownloadTextAsync($"{name}/{version}/{path}", cancellationToken);
+            files[path] = await DownloadTextAsync(name, $"{name}/{version}/{path}", cancellationToken);
             return true;
         }
         catch (InvalidOperationException)
@@ -226,7 +226,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
             return cached.Version;
         }
 
-        var pointerJson = await DownloadTextAsync($"{name}/latest.json", cancellationToken);
+        var pointerJson = await DownloadTextAsync(name, $"{name}/latest.json", cancellationToken);
         var pointer = JsonSerializer.Deserialize<LatestPointer>(pointerJson, JsonOptions);
 
         if (pointer is null || !CalVerVersion.TryParse(pointer.Version, out _))
@@ -238,11 +238,13 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         return pointer.Version;
     }
 
-    private async Task<string> DownloadTextAsync(string blobPath, CancellationToken cancellationToken)
+    private async Task<string> DownloadTextAsync(string packageName, string blobPath, CancellationToken cancellationToken)
     {
         try
         {
-            var blob = _container.GetBlobClient(blobPath);
+            // Ownership split: repo-owned names resolve from the public container,
+            // acct-* forks from the private one (#92).
+            var blob = _containers.GetContainerFor(packageName).GetBlobClient(blobPath);
             var response = await blob.DownloadContentAsync(cancellationToken);
             return response.Value.Content.ToString();
         }
