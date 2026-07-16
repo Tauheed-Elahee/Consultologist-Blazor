@@ -56,7 +56,7 @@ disagreement, not transient.
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
-| `WorkflowPackages__BlobServiceUri` | Blob service URI, e.g. `https://<account>.blob.core.windows.net` — enables Entra ID auth via the managed identity (needs Storage Blob Data Reader) | none (falls back to connection string) | recommended in Azure |
+| `WorkflowPackages__BlobServiceUri` | Blob service URI, e.g. `https://<account>.blob.core.windows.net` — enables Entra ID auth via the managed identity (reading needs Storage Blob Data Reader; the in-app editor's publish endpoint needs Storage Blob Data **Contributor**) | none (falls back to connection string) | recommended in Azure |
 | `WorkflowPackages__ConnectionStringName` | *Name of another setting* holding a storage connection string (local-dev fallback path) | `AzureWebJobsStorage` | no |
 | `WorkflowPackages__Default` | Package ref: `name@vYYYY.MM.N` or `name@latest` | `general@latest` | no |
 
@@ -96,7 +96,8 @@ via `appsettings.Development.json`), not by environment variables:
 - `AzureAd:Authority`, `AzureAd:ClientId`, `AzureAd:ValidateAuthority` — MSAL sign-in.
 - `AzureFunction:ApiScope` — scope requested for API tokens.
 - `AzureFunction:*Url` — endpoint URLs: `AccountMeUrl`, `ConsultGenerationJobsUrl`,
-  `DiagnosticsSseExitUrl`, `WorkflowPackageCurrentUrl`. (`AgentProxyUrl` and
-  `ConsultGenerationUrl` were removed with their legacy endpoints in milestone 3.)
+  `DiagnosticsSseExitUrl`, `WorkflowPackageCurrentUrl`, and the editor pair
+  `WorkflowPackageContentUrl` / `WorkflowPackagePublishUrl` (#57). (`AgentProxyUrl`
+  and `ConsultGenerationUrl` were removed with their legacy endpoints in milestone 3.)
 - `AzureFunction:TimeoutSeconds` — HTTP client timeout for AI calls (default 240 when
   absent; shipped value 300).
