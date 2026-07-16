@@ -11,7 +11,6 @@ public sealed record WorkflowPackageManifest(
     WorkflowTemplatingSpec? Templating = null,
     Dictionary<string, string>? Preludes = null,
     List<WorkflowPromptSpec>? Prompts = null,
-    List<WorkflowSectionStepSpec>? SectionSteps = null,
     Dictionary<string, string>? Schemas = null,
     List<WorkflowNodeSpec>? Nodes = null,
     string? DerivedFrom = null,
@@ -29,34 +28,16 @@ public sealed record WorkflowPromptSpec(
     string? Prelude = null);
 
 /// <summary>
-/// One ordered step of the per-section prose pipeline (specVersion 3): renders one
-/// prompt template with each declared variable bound to an engine binding source.
-/// See docs/customizable-workflow/package-format-v3.md.
-/// </summary>
-public sealed record WorkflowSectionStepSpec(
-    string Prompt,
-    string Label,
-    Dictionary<string, string> Bindings,
-    string? Id = null)
-{
-    public string StepId => Id ?? Prompt;
-}
-
-/// <summary>
-/// One node of the workflow DAG. Edges are implicit in the bindings' node:
-/// references. specVersion 4 declares Kind (prompt/map) with Over/Steps on the map
-/// node; specVersion 5 has one kind (Kind absent) with ForEach as the multiplicity
-/// property. See package-format-v4.md and -v5.md.
+/// One node of the workflow DAG: one kind, with ForEach as the multiplicity
+/// property. Edges are implicit in the bindings' node: references
+/// (docs/customizable-workflow/package-format-v5.md).
 /// </summary>
 public sealed record WorkflowNodeSpec(
     string Id,
-    string? Kind,
     string Label,
     string? Prompt = null,
     Dictionary<string, WorkflowBindingValue>? Bindings = null,
     WorkflowNodeOutputSpec? Output = null,
-    string? Over = null,
-    List<WorkflowMapStepSpec>? Steps = null,
     string? ForEach = null);
 
 public sealed record WorkflowNodeOutputSpec(
@@ -92,17 +73,8 @@ public sealed record WorkflowDataIndexItem(
     string? Name,
     string? File);
 
-public sealed record WorkflowMapStepSpec(
-    string Prompt,
-    string Label,
-    Dictionary<string, WorkflowBindingValue> Bindings,
-    string? Id = null)
-{
-    public string StepId => Id ?? Prompt;
-}
-
 /// <summary>
-/// A binding value in a specVersion-4 manifest: either a plain source string
+/// A binding value in a manifest: either a plain source string
 /// ("input:consult_draft") or an object selecting a renderer
 /// ({ "from": "node:x", "as": "concept-context" }).
 /// </summary>
@@ -173,7 +145,6 @@ public sealed record WorkflowPromptTemplate(
 
 public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
-    string StandardsMarkdown,
     IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
     IReadOnlyList<WorkflowNodeSpec>? Nodes = null,
     IReadOnlyDictionary<string, string>? SchemaContracts = null,
@@ -191,7 +162,6 @@ public sealed record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    string StandardsMarkdown,
     IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null);
 
 /// <summary>

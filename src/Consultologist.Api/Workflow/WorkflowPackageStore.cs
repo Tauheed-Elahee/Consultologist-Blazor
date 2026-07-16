@@ -85,66 +85,22 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(manifestJson, JsonOptions)
             ?? throw new InvalidOperationException($"Workflow package manifest for {cacheKey} is empty or malformed.");
 
-        if (manifest.SpecVersion > SupportedSpecVersion)
+        // v5-only engine: pre-v5 registry versions remain archived artifacts but are
+        // not executable (the v5-only rebase; see registry-operations.md).
+        if (manifest.SpecVersion != SupportedSpecVersion)
         {
             throw new InvalidOperationException(
-                $"Workflow package {cacheKey} requires spec version {manifest.SpecVersion}, but this runtime supports up to {SupportedSpecVersion}.");
+                $"Workflow package {cacheKey} is specVersion {manifest.SpecVersion}; this engine accepts exactly specVersion {SupportedSpecVersion}. Pre-v5 packages are archived and not executable.");
         }
 
-        // v5 packages have no standards.md — standards live in the data table
-        // (package-format-v5.md); earlier spec versions require it.
-        var standards = manifest.SpecVersion >= 5
-            ? string.Empty
-            : await DownloadTextAsync($"{packageRef.Name}/{version}/standards.md", cancellationToken);
-
-        var loaded = manifest.SpecVersion >= 2
-            ? await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken)
-            : default;
+        var loaded = await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken);
         var prompts = loaded.Prompts;
 
-        // Every spec version resolves to one one-kind forEach node list plus a result
-        // node, so a single interpreter path serves them all: v5 is already in that
-        // shape; v4's map container lowers to a forEach chain; v3 declares section
-        // steps and v2 synthesizes them, both raising to the canonical v4 DAG first.
-        var sectionSteps = manifest.SpecVersion switch
-        {
-            3 => manifest.SectionSteps,
-            2 => WorkflowSectionStepDefaults.V2Synthesized,
-            _ => null
-        };
+        var nodes = manifest.Nodes;
+        var resultNodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
+        var schemaContracts = loaded.SchemaContracts;
 
-        IReadOnlyList<WorkflowNodeSpec>? nodes = null;
-        string? resultNodeId = null;
-
-        if (manifest.SpecVersion >= 5)
-        {
-            nodes = manifest.Nodes;
-            resultNodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
-        }
-        else if (manifest.SpecVersion == 4)
-        {
-            (nodes, resultNodeId) = WorkflowNodeDefaults.LowerToOneKind(manifest.Nodes!);
-        }
-        else if (manifest.SpecVersion >= 2)
-        {
-            (nodes, resultNodeId) = WorkflowNodeDefaults.LowerToOneKind(
-                WorkflowNodeDefaults.V3SynthesizedDag(sectionSteps!));
-        }
-
-        // Package schema ids resolve to catalog contract ids here, while the schema
-        // file contents are in hand: v4 by canonical match, synthesized DAGs directly
-        // (their nodes are built against the engine's concept-list contract).
-        var schemaContracts = manifest.SpecVersion switch
-        {
-            >= 4 => loaded.SchemaContracts,
-            >= 2 => new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [WorkflowNodeDefaults.ConceptListSchemaId] = OutputContracts.ConceptList
-            },
-            _ => null
-        };
-
-        var package = new WorkflowPackage(manifest, standards, prompts, nodes, schemaContracts, loaded.Data, resultNodeId);
+        var package = new WorkflowPackage(manifest, prompts, nodes, schemaContracts, loaded.Data, resultNodeId);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
@@ -219,9 +175,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
 
         // Post-validation resolve: the validator has already guaranteed integrity,
         // so this collects no errors.
-        var data = manifest.SpecVersion >= 5
-            ? WorkflowDataResolver.Resolve(manifest, files, new List<string>())
-            : null;
+        var data = WorkflowDataResolver.Resolve(manifest, files, new List<string>());
 
         return (prompts, schemaContracts, data);
     }

@@ -499,7 +499,7 @@ public class NodeEventCandidateTests
         var nodes = new[]
         {
             new ConsultNodeDescriptor("extract", "Extracting clinical concepts"),
-            new ConsultNodeDescriptor("sections", "Generating sections", ForEach: WorkflowNodeBindingSources.InputSections)
+            new ConsultNodeDescriptor("sections", "Generating sections", ForEach: "data:standards")
         };
         var outputs = new Dictionary<string, ConsultGenerationNodeStatusResponse>
         {
