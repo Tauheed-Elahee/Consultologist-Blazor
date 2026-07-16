@@ -141,7 +141,10 @@ when a specialty needs a structurally different pipeline.
 > The account standards override retired (customization returns as package forking
 > with the in-app editor, #57). Agent selection is catalog-keyed
 > (`agents/output-contracts.json`, #55). First v5 package: `general@v2026.07.6`
-> (#72).
+> (#72). **v5-only rebase (#77, 2026-07-15)**: specVersions 1–4 retired from the
+> engine entirely — synthesis, the map container, `standards.md`, the request's
+> section payload, the v1 input hash, and the legacy entity/response fields are
+> deleted (entity SchemaVersion 5); pre-v5 registry versions remain as archives.
 
 UI consequences: the Templates page grows from "edit section standards" toward a package
 view with per-account overrides; progress displays become generic step lists rather than

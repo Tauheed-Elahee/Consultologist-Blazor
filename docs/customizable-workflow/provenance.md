@@ -53,12 +53,17 @@ precondition — a registry humans can write would make the attestation tautolog
 ## The effective-input hash
 
 > **Versioned 2026-07-15 (Milestone 5)**: jobs record `effectiveInputHashVersion` —
-> **v1** (null/absent, specVersion ≤4 packages) covers draft + sections as described
-> below; **v2** (specVersion-5 packages) covers **the draft only**, because sections
-> are package data covered by the `workflowPackage` ref and the account standards
+> **v1** (null/absent, pre-v5 jobs) covered draft + sections as described below;
+> **v2** (specVersion-5 jobs) covers **the draft only**, because sections are
+> package data covered by the `workflowPackage` ref and the account standards
 > override is retired. The two definitions are never compared as equals. The
 > per-node chain below extends to **per-(node, item)** entries (`nodeId:itemId`
 > keys) — every forEach instance records its own input/output hashes.
+>
+> **v5-only rebase (#77, 2026-07-15)**: the v1 definition is historical — the
+> engine computes only v2, and job records referencing pre-v5 packages are no
+> longer re-runnable (pre-release test data; the reproducibility promise starts at
+> specVersion 5). Explicit revocation under the pre-release-churn doctrine.
 
 The input is not just the consult draft. The request reaching the orchestrator is
 draft + section list + standards, and account-level overrides change the standards.
