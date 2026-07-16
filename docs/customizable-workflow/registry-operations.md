@@ -162,6 +162,17 @@ granted to the identity the app *actually authenticates as*: the
 setting, not the Function App's system-assigned identity (the first production
 publish 403'd on exactly this distinction).
 
+## The anonymous chain view — implemented 2026-07-16 (#95)
+
+`GET /api/Public/Chain` (no auth, open CORS, 60s cache): one JSON document
+naming the whole public chain — repo-owned packages (versions + latest), the
+output-contract catalog (versions, latest, contract → agent@version table),
+and the redacted agent definitions (Foundry versions + latest). Backed
+exclusively by `PublicRegistryReader`, which holds no credential and no
+private-container client — `acct-*` content is unreachable from this endpoint
+by construction, not by filtering. This is the surface the app's logged-out
+view and the marketing site consume.
+
 ## Publication metadata (decided 2026-07-16; not yet implemented)
 
 Author and publication time are **publish-event data, not package content**, so

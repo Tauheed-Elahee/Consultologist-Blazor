@@ -491,3 +491,93 @@ public class ContainerRoutingTests
         Assert.NotEqual("public.example.net", factory.GetContainer().Uri.Host);
     }
 }
+
+public class PublicChainAssembleTests
+{
+    private static readonly IReadOnlyList<string> PackageBlobs = new[]
+    {
+        "general/latest.json",
+        "general/v2026.07.1/manifest.json",
+        "general/v2026.07.6/manifest.json",
+        "general/v2026.07.6/prompts/identify-problem.md",
+        "general/v2026.07.10/manifest.json"
+    };
+
+    private static readonly IReadOnlyList<string> ContractBlobs = new[]
+    {
+        "latest.json",
+        "v2026.07.1/output-contracts.json",
+        "v2026.07.1/schemas/concept-list.json"
+    };
+
+    private static readonly IReadOnlyList<string> AgentBlobs = new[]
+    {
+        "test-json/latest.json",
+        "test-json/47/definition.yaml",
+        "concept-extraction/latest.json",
+        "concept-extraction/1/definition.yaml"
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> SmallFiles = new Dictionary<string, string>
+    {
+        ["workflow-packages/general/latest.json"] = """{"version": "v2026.07.10"}""",
+        ["output-contracts/latest.json"] = """{"version": "v2026.07.1"}""",
+        ["output-contracts/v2026.07.1/output-contracts.json"] =
+            """{"version": "v2026.07.1", "contracts": {"text": {"agentName": "test-json", "agentVersion": "47"}, "concept-list": {"agentName": "concept-extraction", "agentVersion": "1", "schemaFile": "schemas/concept-list.json"}}}""",
+        ["agent-definitions/test-json/latest.json"] = """{"version": "47"}""",
+        ["agent-definitions/concept-extraction/latest.json"] = """{"version": "1"}"""
+    };
+
+    [Fact]
+    public void Assemble_BuildsTheWholeChainView()
+    {
+        var chain = PublicRegistryReader.Assemble(PackageBlobs, ContractBlobs, AgentBlobs, SmallFiles, DateTimeOffset.UnixEpoch);
+
+        var package = Assert.Single(chain.Packages);
+        Assert.Equal("general", package.Name);
+        Assert.Equal("v2026.07.10", package.Latest);
+        // CalVer-numeric ordering, not lexicographic: .10 sorts after .6.
+        Assert.Equal(new[] { "v2026.07.1", "v2026.07.6", "v2026.07.10" }, package.Versions);
+
+        Assert.NotNull(chain.OutputContracts);
+        Assert.Equal("v2026.07.1", chain.OutputContracts!.Latest);
+        Assert.Equal(new[] { "v2026.07.1" }, chain.OutputContracts.Versions);
+        Assert.Equal("test-json", chain.OutputContracts.Contracts!["text"].AgentName);
+        Assert.False(chain.OutputContracts.Contracts["text"].HasSchema);
+        Assert.True(chain.OutputContracts.Contracts["concept-list"].HasSchema);
+
+        Assert.Equal(2, chain.AgentDefinitions.Count);
+        var conceptAgent = chain.AgentDefinitions.First(a => a.Name == "concept-extraction");
+        Assert.Equal("1", conceptAgent.Latest);
+        Assert.Equal(new[] { "1" }, conceptAgent.Versions);
+    }
+
+    [Fact]
+    public void Assemble_EmptyRegistries_ProducesEmptyView()
+    {
+        var chain = PublicRegistryReader.Assemble(
+            Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(),
+            new Dictionary<string, string>(), DateTimeOffset.UnixEpoch);
+
+        Assert.Empty(chain.Packages);
+        Assert.Null(chain.OutputContracts);
+        Assert.Empty(chain.AgentDefinitions);
+    }
+
+    [Fact]
+    public void Assemble_UnparseablePointerOrCatalog_DegradesGracefully()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["workflow-packages/general/latest.json"] = "not json",
+            ["output-contracts/latest.json"] = """{"version": "v2026.07.1"}""",
+            ["output-contracts/v2026.07.1/output-contracts.json"] = "also not json"
+        };
+
+        var chain = PublicRegistryReader.Assemble(PackageBlobs, ContractBlobs, Array.Empty<string>(), files, DateTimeOffset.UnixEpoch);
+
+        Assert.Null(chain.Packages[0].Latest);
+        Assert.NotNull(chain.OutputContracts);
+        Assert.Null(chain.OutputContracts!.Contracts);
+    }
+}
