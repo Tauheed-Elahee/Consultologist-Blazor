@@ -28,7 +28,7 @@ public static class WorkflowManifestReader
     {
         var prompts = new List<PromptView>();
 
-        if (!manifest.TryGetProperty("prompts", out var array) || array.ValueKind != JsonValueKind.Array)
+        if (!TryGetProperty(manifest, "prompts", out var array) || array.ValueKind != JsonValueKind.Array)
         {
             return prompts;
         }
@@ -37,7 +37,7 @@ public static class WorkflowManifestReader
         {
             var variables = new List<string>();
 
-            if (prompt.TryGetProperty("variables", out var vars) && vars.ValueKind == JsonValueKind.Array)
+            if (TryGetProperty(prompt, "variables", out var vars) && vars.ValueKind == JsonValueKind.Array)
             {
                 variables.AddRange(vars.EnumerateArray().Select(v => v.GetString() ?? string.Empty));
             }
@@ -57,7 +57,7 @@ public static class WorkflowManifestReader
         var nodes = new List<NodeView>();
         var resultNodeId = ReadResultNodeId(manifest);
 
-        if (!manifest.TryGetProperty("nodes", out var array) || array.ValueKind != JsonValueKind.Array)
+        if (!TryGetProperty(manifest, "nodes", out var array) || array.ValueKind != JsonValueKind.Array)
         {
             return nodes;
         }
@@ -66,7 +66,7 @@ public static class WorkflowManifestReader
         {
             var bindings = new List<KeyValuePair<string, string>>();
 
-            if (node.TryGetProperty("bindings", out var bindingsElement) && bindingsElement.ValueKind == JsonValueKind.Object)
+            if (TryGetProperty(node, "bindings", out var bindingsElement) && bindingsElement.ValueKind == JsonValueKind.Object)
             {
                 foreach (var binding in bindingsElement.EnumerateObject())
                 {
@@ -95,7 +95,7 @@ public static class WorkflowManifestReader
     {
         var collections = new List<CollectionView>();
 
-        if (!manifest.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        if (!TryGetProperty(manifest, "data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
             return collections;
         }
@@ -159,8 +159,25 @@ public static class WorkflowManifestReader
         _ => value.ToString()
     };
 
+    /// <summary>
+    /// The manifest element's property casing depends on the server's response
+    /// serializer (the Functions worker default writes PascalCase; repo manifest
+    /// sources are camelCase) — the reader accepts either, like the server's own
+    /// case-insensitive parsing does.
+    /// </summary>
+    private static bool TryGetProperty(JsonElement element, string camelName, out JsonElement value)
+    {
+        if (element.TryGetProperty(camelName, out value))
+        {
+            return true;
+        }
+
+        var pascalName = char.ToUpperInvariant(camelName[0]) + camelName[1..];
+        return element.TryGetProperty(pascalName, out value);
+    }
+
     private static string? ReadString(JsonElement element, string property) =>
-        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+        TryGetProperty(element, property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
 }
