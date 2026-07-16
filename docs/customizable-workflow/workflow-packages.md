@@ -69,6 +69,11 @@ keeps its native scheme.
   today's `consult.sectionStandardsMarkdown` overriding the bundled file), not
   free-floating documents. Overrides change the effective-input hash (provenance.md).
 
+  > **Superseded 2026-07-15 (v5)**: overlays lost. The override retired with the
+  > specVersion-5 input model (#71); account customization is package *forking*
+  > (`derivedFrom` lineage, in-app editor #57 —
+  > [in-app-editing.md](in-app-editing.md)). See the Milestone 5 block below.
+
 ## Two rules imposed by Durable Functions and by versioning
 
 1. **Snapshot the package (name, version, resolved content hash) into the orchestration
@@ -147,7 +152,8 @@ when a specialty needs a structurally different pipeline.
 > deleted (entity SchemaVersion 5); pre-v5 registry versions remain as archives.
 
 UI consequences: the Templates page grows from "edit section standards" toward a package
-view with per-account overrides; progress displays become generic step lists rather than
+view — post-v5, the fork editor (#57), the override path having retired; progress
+displays become generic step lists rather than
 hardcoded stage names (done for the prose steps in milestone 3 — the client renders
 package-declared labels from the `section-prose-step` event; the analysis stages stay
 hardcoded until milestone 4).

@@ -70,13 +70,15 @@ PUT    /api/Account/Settings/{key}
 DELETE /api/Account/Settings/{key}
 ```
 
-The initial setting key is:
+The current setting key is:
 
 ```text
-consult.sectionStandardsMarkdown
+consult.workflowPackage
 ```
 
-`GET` returns `404` when the setting has not been saved, and the Blazor app falls back to `wwwroot/templates/consult_section_standards.md`. `PUT` accepts a JSON body with `value` and `contentType`. `DELETE` removes the override and restores the default behavior.
+It holds the account's workflow-package pin (`name` or `name@version`), resolved server-side at job start; when unset, the `WorkflowPackages__Default` app setting (`general@latest`) applies. `GET` returns `404` when the setting has not been saved. `PUT` accepts a JSON body with `value` and `contentType`. `DELETE` removes the pin and restores the default resolution.
+
+Historical: the original key, `consult.sectionStandardsMarkdown` (a per-account section-standards override), retired 2026-07-15 with the specVersion-5 input model (#71) — section standards are now package data, and account customization is package forking (the in-app editor, #57; see docs/customizable-workflow/in-app-editing.md).
 
 ## LinkedIn Login
 
