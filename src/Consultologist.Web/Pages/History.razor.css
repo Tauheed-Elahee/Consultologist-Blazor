@@ -170,3 +170,105 @@
 	color: var(--consultologist-text-muted);
 	font-style: italic;
 }
+
+.provenance-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin-bottom: 0.75rem;
+}
+
+.provenance-chip {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.75rem;
+	padding: 0.2rem 0.6rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: 999px;
+	background: var(--consultologist-surface);
+}
+
+.provenance-chip--fork {
+	border-style: dashed;
+	font-weight: 600;
+}
+
+.job-detail-section {
+	margin: 0.5rem 0;
+}
+
+.job-detail-section > summary {
+	cursor: pointer;
+	user-select: none;
+	font-size: 0.85rem;
+}
+
+.provenance-list {
+	margin: 0.5rem 0 0.25rem;
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.25rem 1rem;
+	font-size: 0.8rem;
+}
+
+.provenance-list dt {
+	font-weight: 600;
+}
+
+.provenance-list dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.hash-text {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.75rem;
+}
+
+.node-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	margin-top: 0.5rem;
+}
+
+.node-row {
+	display: flex;
+	align-items: baseline;
+	gap: 0.75rem;
+	padding: 0.2rem 0.25rem;
+	font-size: 0.8rem;
+	list-style: none;
+}
+
+.node-row__status {
+	width: 1rem;
+	text-align: center;
+}
+
+.node-row__label {
+	font-weight: 600;
+}
+
+.node-row--item {
+	padding-left: 1.75rem;
+}
+
+.node-row--item .node-row__label {
+	font-weight: 400;
+}
+
+.node-row__hashes {
+	display: flex;
+	gap: 0.75rem;
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.node-group > summary.node-row {
+	cursor: pointer;
+	user-select: none;
+}
+
+.node-group > summary.node-row::-webkit-details-marker {
+	display: none;
+}
