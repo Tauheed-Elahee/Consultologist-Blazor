@@ -42,6 +42,10 @@
                     <div class="result-header">
                         <div>
                             <h2 class="panel-title">Editing <code>@content.Ref</code></h2>
+                            @if (WorkflowManifestReader.ReadDerivedFrom(content.Manifest) is { } parentRef)
+                            {
+                                <p class="muted-text">derived from <code>@parentRef</code></p>
+                            }
                             <p class="panel-description">
                                 Publishing creates a new immutable version of your account package
                                 (derived from <code>@content.Ref</code>) and switches your consults to it.

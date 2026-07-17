@@ -1,0 +1,115 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
+using Azure;
+
+namespace Consultologist.Api.Workflow;
+
+/// <summary>
+/// Walks a package's derivedFrom chain to the root (#89). Reads manifests only —
+/// never full package resolution — so lineage displays even for chain members the
+/// engine wouldn't execute, and each hop is one small blob read. Published
+/// versions are immutable, so resolved derivedFrom values cache forever.
+/// </summary>
+public sealed class WorkflowPackageLineageResolver
+{
+    /// <summary>Defensive: publish stamping prevents cycles and deep chains by construction.</summary>
+    public const int MaxDepth = 10;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private readonly WorkflowPackageBlobContainerFactory _containers;
+    private readonly ConcurrentDictionary<string, string?> _derivedFromCache = new(StringComparer.Ordinal);
+
+    public WorkflowPackageLineageResolver(WorkflowPackageBlobContainerFactory containers)
+    {
+        _containers = containers;
+    }
+
+    /// <summary>
+    /// The ordered chain, start → root, as concrete refs. The start ref must be
+    /// concrete (job records and the content endpoint always are).
+    /// </summary>
+    public Task<IReadOnlyList<string>> GetLineageAsync(WorkflowPackageRef start, CancellationToken cancellationToken)
+        => WalkAsync(start, reference => ReadDerivedFromAsync(reference, cancellationToken));
+
+    /// <summary>The pure chain walk over a derivedFrom reader — the unit-tested core.</summary>
+    internal static async Task<IReadOnlyList<string>> WalkAsync(
+        WorkflowPackageRef start,
+        Func<WorkflowPackageRef, Task<string?>> readDerivedFrom)
+    {
+        if (start.IsLatest)
+        {
+            throw new ArgumentException($"Lineage requires a concrete ref; '{start}' is a latest pointer.", nameof(start));
+        }
+
+        var chain = new List<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = start;
+
+        while (true)
+        {
+            var currentRef = current.ToString();
+
+            if (!visited.Add(currentRef))
+            {
+                throw new InvalidOperationException($"Workflow package lineage of '{start}' contains a cycle at '{currentRef}'.");
+            }
+
+            if (chain.Count >= MaxDepth)
+            {
+                throw new InvalidOperationException($"Workflow package lineage of '{start}' exceeds the depth cap of {MaxDepth}.");
+            }
+
+            chain.Add(currentRef);
+
+            var derivedFrom = await readDerivedFrom(current);
+
+            if (derivedFrom is null)
+            {
+                return chain;
+            }
+
+            if (!WorkflowPackageRef.TryParse(derivedFrom, out var parent) || parent!.IsLatest)
+            {
+                throw new InvalidOperationException(
+                    $"Workflow package '{currentRef}' declares an invalid derivedFrom '{derivedFrom}' (a concrete ref is required).");
+            }
+
+            current = parent;
+        }
+    }
+
+    private async Task<string?> ReadDerivedFromAsync(WorkflowPackageRef reference, CancellationToken cancellationToken)
+    {
+        var cacheKey = reference.ToString();
+
+        if (_derivedFromCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        string manifestJson;
+        try
+        {
+            var blob = _containers.GetContainerFor(reference.Name)
+                .GetBlobClient($"{reference.Name}/{reference.Version}/manifest.json");
+            var response = await blob.DownloadContentAsync(cancellationToken);
+            manifestJson = response.Value.Content.ToString();
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            throw new InvalidOperationException($"Workflow package '{cacheKey}' was not found in the registry.", ex);
+        }
+
+        var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(manifestJson, JsonOptions)
+            ?? throw new InvalidOperationException($"Workflow package manifest for '{cacheKey}' is empty or malformed.");
+
+        _derivedFromCache.TryAdd(cacheKey, manifest.DerivedFrom);
+        return manifest.DerivedFrom;
+    }
+}
+
+public sealed record WorkflowPackageLineageResponse(IReadOnlyList<string> Chain);

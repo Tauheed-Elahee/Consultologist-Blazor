@@ -112,6 +112,11 @@
                                                     <dt>Output hash (v@(detail.WorkflowOutputHashVersion?.ToString() ?? "—"))</dt>
                                                     <dd class="hash-text">@detail.WorkflowOutputHash</dd>
                                                 }
+                                                @if (LineageFor(detail.WorkflowPackage) is { Count: > 1 } lineage)
+                                                {
+                                                    <dt>Lineage</dt>
+                                                    <dd class="hash-text">@string.Join(" → ", lineage)</dd>
+                                                }
                                                 @if (AgentContracts(detail).Any())
                                                 {
                                                     <dt>Agents</dt>
@@ -272,6 +277,24 @@
         await InvokeAsync(StateHasChanged);
     }
 
+    // Lineage chains per package ref, from the authorized lineage endpoint;
+    // fetched lazily when a detail expands, cached for the page's lifetime.
+    private readonly Dictionary<string, IReadOnlyList<string>?> _lineageCache = new(StringComparer.Ordinal);
+
+    private IReadOnlyList<string>? LineageFor(string? packageRef) =>
+        packageRef != null && _lineageCache.TryGetValue(packageRef, out var chain) ? chain : null;
+
+    private async Task EnsureLineageLoadedAsync(string? packageRef)
+    {
+        if (packageRef == null || _lineageCache.ContainsKey(packageRef))
+        {
+            return;
+        }
+
+        _lineageCache[packageRef] = await WorkflowService.GetLineageAsync(packageRef);
+        await InvokeAsync(StateHasChanged);
+    }
+
     // Per-version catalog documents, fetched from the public registry — the
     // job's own catalogRef resolves to historically exact agent identities
     // (#105: purified records carry no agentVersions map).
@@ -401,6 +424,7 @@
             var detail = await AIService.GetConsultGenerationJobAsync(jobId);
             _jobDetails[jobId] = detail;
             await EnsureCatalogLoadedAsync(detail?.CatalogRef);
+            await EnsureLineageLoadedAsync(detail?.WorkflowPackage);
         }
         catch (AccessTokenNotAvailableException exception)
         {
