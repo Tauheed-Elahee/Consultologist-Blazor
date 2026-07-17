@@ -134,6 +134,7 @@
                                             <summary class="muted-text">Workflow (@nodeGroups.Count nodes)</summary>
                                             <div class="node-grid">
                                                 <div class="node-row">
+                                                    <span class="node-row__chevron" aria-hidden="true"></span>
                                                     <span class="node-row__status @setupBadge.Item2">@setupBadge.Item1</span>
                                                     <span class="node-row__label">Setup</span>
                                                     <span class="node-row__contract muted-text">
@@ -148,6 +149,7 @@
                                                         @if (group.Items.Count == 0)
                                                         {
                                                             <div class="node-row">
+                                                                <span class="node-row__chevron" aria-hidden="true"></span>
                                                                 <span class="node-row__status @StatusCss(group.NodeLevel?.Status)">@StatusGlyph(group.NodeLevel?.Status)</span>
                                                                 <span class="node-row__label">@group.Descriptor.Label</span>
                                                                 <span class="node-row__contract muted-text">@ContractLabel(group.Descriptor, detail)</span>
@@ -161,6 +163,7 @@
                                                         {
                                                             <details class="node-group">
                                                                 <summary class="node-row">
+                                                                    <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
                                                                     <span class="node-row__status @StatusCss(group.NodeLevel?.Status)">@StatusGlyph(group.NodeLevel?.Status)</span>
                                                                     <span class="node-row__label">@group.Descriptor.Label</span>
                                                                     <span class="node-row__contract muted-text">
@@ -170,6 +173,7 @@
                                                                 @foreach (var (itemId, entry) in group.Items)
                                                                 {
                                                                     <div class="node-row node-row--item">
+                                                                        <span class="node-row__chevron" aria-hidden="true"></span>
                                                                         <span class="node-row__status @StatusCss(entry.Status)">@StatusGlyph(entry.Status)</span>
                                                                         <span class="node-row__label">@itemId</span>
                                                                         <span class="node-row__hashes hash-text">
@@ -186,6 +190,7 @@
                                                         }
                                                 }
                                                 <div class="node-row">
+                                                    <span class="node-row__chevron" aria-hidden="true"></span>
                                                     <span class="node-row__status @doneBadge.Item3">@doneBadge.Item1</span>
                                                     <span class="node-row__label">@doneBadge.Item2</span>
                                                     <span class="node-row__contract muted-text">
