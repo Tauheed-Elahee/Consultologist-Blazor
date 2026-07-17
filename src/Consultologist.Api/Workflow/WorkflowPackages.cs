@@ -148,6 +148,53 @@ public sealed class WorkflowPackages
         return response;
     }
 
+    [Function("WorkflowPackageDiagram")]
+    public async Task<HttpResponseData> GetDiagramAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "WorkflowPackages/Current/Diagram")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        var packageRef = await _pinResolver.ResolvePinAsync(account.AppUserId, cancellationToken);
+
+        WorkflowPackage package;
+        try
+        {
+            package = await _packageStore.ResolveAsync(packageRef, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "Workflow package diagram resolution failed. Pin={Pin}", packageRef);
+            var errorResponse = req.CreateResponse(HttpStatusCode.ServiceUnavailable);
+            FunctionCors.Apply(req, errorResponse);
+            await errorResponse.WriteAsJsonAsync(new { error = "Workflow package registry is unavailable." }, cancellationToken);
+            return errorResponse;
+        }
+
+        // The same generator that produces the checked-in dag.mmd (pinned by
+        // WorkflowDagDiagramTests) — a read-only projection of the manifest.
+        return await CreateJsonResponseAsync(req, HttpStatusCode.OK,
+            new { diagram = WorkflowDagDiagram.Generate(package.Manifest) }, cancellationToken);
+    }
+
     [Function("WorkflowPackageLineage")]
     public async Task<HttpResponseData> GetLineageAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "WorkflowPackages/Lineage")] HttpRequestData req)
