@@ -1,0 +1,143 @@
+/* Master–detail editor layout (#110). */
+
+.editor-bar {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	padding: 0.75rem 1rem;
+	margin-bottom: 0.75rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-md);
+	background: var(--consultologist-surface);
+}
+
+.editor-bar__info {
+	display: flex;
+	align-items: baseline;
+	gap: 0.75rem;
+	flex-wrap: wrap;
+}
+
+.editor-bar__actions {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+
+.editor-layout {
+	display: grid;
+	grid-template-columns: 240px 1fr;
+	gap: 1rem;
+	align-items: start;
+	margin-top: 0.75rem;
+}
+
+.editor-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	position: sticky;
+	top: 4.5rem;
+}
+
+.editor-nav__group {
+	font-size: 0.7rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--consultologist-text-muted);
+	margin: 0.75rem 0 0.25rem 0.5rem;
+}
+
+.editor-nav__group:first-child {
+	margin-top: 0;
+}
+
+.editor-nav__item {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.35rem 0.5rem;
+	border: none;
+	border-radius: var(--consultologist-radius-md);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 0.85rem;
+	text-align: left;
+	cursor: pointer;
+}
+
+.editor-nav__item:hover {
+	background: var(--consultologist-surface);
+}
+
+.editor-nav__item--selected {
+	background: var(--consultologist-surface);
+	font-weight: 600;
+	border-left: 3px solid var(--accent-fill-rest, #4f6bed);
+}
+
+.editor-nav__dot {
+	width: 0.75rem;
+	color: var(--accent-fill-rest, #4f6bed);
+	font-size: 0.6rem;
+}
+
+.editor-pane {
+	min-height: 24rem;
+}
+
+::deep .pane-header {
+	margin-bottom: 0.5rem;
+}
+
+::deep .pane-split {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1rem;
+	align-items: start;
+	margin-top: 0.75rem;
+}
+
+::deep .pane-editor {
+	width: 100%;
+}
+
+::deep .pane-editor fluent-text-area {
+	width: 100%;
+}
+
+::deep .pane-preview {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	min-width: 0;
+}
+
+@media (max-width: 900px) {
+	.editor-layout {
+		grid-template-columns: 1fr;
+	}
+
+	.editor-nav {
+		position: static;
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+	}
+
+	.editor-nav__group {
+		width: 100%;
+		margin-left: 0;
+	}
+
+	::deep .pane-split {
+		grid-template-columns: 1fr;
+	}
+}
