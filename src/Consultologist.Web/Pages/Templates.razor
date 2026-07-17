@@ -51,7 +51,7 @@
                 </div>
                 <div class="editor-bar__actions">
                     <FluentButton Appearance="Appearance.Accent"
-                                  Disabled="@(edits.Count == 0 || isPublishing)"
+                                  Disabled="@(PendingCount == 0 || isPublishing)"
                                   @onclick="PublishAsync">
                         @if (isPublishing)
                         {
@@ -60,11 +60,11 @@
                         }
                         else
                         {
-                            <span>Publish@(edits.Count > 0 ? $" ({edits.Count} edited)" : "")</span>
+                            <span>Publish@(PendingSummary())</span>
                         }
                     </FluentButton>
                     <FluentButton Appearance="Appearance.Outline"
-                                  Disabled="@(edits.Count == 0 || isPublishing)"
+                                  Disabled="@(PendingCount == 0 || isPublishing)"
                                   @onclick="DiscardAsync">
                         Discard
                     </FluentButton>
@@ -112,18 +112,44 @@
                         <details class="editor-nav__folder" open>
                             <summary class="editor-nav__item editor-nav__folder-summary">
                                 <span class="editor-nav__chevron" aria-hidden="true">&#x203A;</span>
-                                <span class="editor-nav__dot">@(collection.Items.Any(item => edits.ContainsKey(item.File)) ? "●" : "")</span>
-                                <span>@collection.Id (@collection.Items.Count)</span>
+                                <span class="editor-nav__dot">@(CollectionHasPending(collection) ? "●" : "")</span>
+                                <span>@collection.Id (@CollectionCount(collection))</span>
                             </summary>
                             @foreach (var item in collection.Items)
                             {
+                                @if (removedFiles.Contains(item.File))
+                                {
+                                    <div class="editor-nav__item editor-nav__item--nested editor-nav__item--removed">
+                                        <span class="editor-nav__dot"></span>
+                                        <span class="editor-nav__strike">@item.Name</span>
+                                        <button type="button" class="editor-nav__restore" @onclick="() => RestoreItem(item.File)">(restore)</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <button type="button"
+                                            class="editor-nav__item editor-nav__item--nested @(selectedKey == item.File ? "editor-nav__item--selected" : "")"
+                                            @onclick="() => Select(item.File)">
+                                        <span class="editor-nav__dot">@(edits.ContainsKey(item.File) ? "●" : "")</span>
+                                        <span>@item.Name</span>
+                                    </button>
+                                }
+                            }
+                            @foreach (var added in addedItems.Where(a => a.Collection == collection.Id))
+                            {
                                 <button type="button"
-                                        class="editor-nav__item editor-nav__item--nested @(selectedKey == item.File ? "editor-nav__item--selected" : "")"
-                                        @onclick="() => Select(item.File)">
-                                    <span class="editor-nav__dot">@(edits.ContainsKey(item.File) ? "●" : "")</span>
-                                    <span>@item.Name</span>
+                                        class="editor-nav__item editor-nav__item--nested @(selectedKey == added.Key ? "editor-nav__item--selected" : "")"
+                                        @onclick="() => Select(added.Key)">
+                                    <span class="editor-nav__dot">●</span>
+                                    <span>@added.Name</span>
                                 </button>
                             }
+                            <button type="button"
+                                    class="editor-nav__item editor-nav__item--nested editor-nav__add @(selectedKey == NewKeyFor(collection.Id) ? "editor-nav__item--selected" : "")"
+                                    @onclick="() => Select(NewKeyFor(collection.Id))">
+                                <span class="editor-nav__dot"></span>
+                                <span>+ Add item</span>
+                            </button>
                         </details>
                     }
                     <span class="editor-nav__group">Workflow</span>
@@ -136,7 +162,66 @@
                 </nav>
 
                 <section class="content-card editor-pane">
-                    @if (selectedKey == GraphKey)
+                    @if (selectedKey != null && selectedKey.StartsWith(NewKeyPrefix, StringComparison.Ordinal))
+                    {
+                        var newCollection = selectedKey[NewKeyPrefix.Length..];
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">New @newCollection item</h3>
+                                <p class="muted-text">Adds a generated section to every future consult.</p>
+                            </div>
+                        </div>
+                        @if (newItemError != null)
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@newItemError</FluentMessageBar>
+                        }
+                        <div class="new-item-fields">
+                            <label class="input-field">
+                                <span>id (lowercase, letters/digits/-/_)</span>
+                                <FluentTextField @bind-Value="newItemId" Placeholder="ros" />
+                            </label>
+                            <label class="input-field">
+                                <span>name</span>
+                                <FluentTextField @bind-Value="newItemName" Placeholder="Review of Systems" />
+                            </label>
+                        </div>
+                        <div class="pane-split">
+                            <label class="input-field pane-editor">
+                                <span>Standard</span>
+                                <FluentTextArea @bind-Value="newItemContent" Rows="14" />
+                            </label>
+                            <div class="pane-preview">
+                                <span class="muted-text">Preview</span>
+                                <div class="markdown-preview">
+                                    @((MarkupString)MarkdownPreview.Render(newItemContent ?? string.Empty))
+                                </div>
+                            </div>
+                        </div>
+                        <div class="action-row">
+                            <FluentButton Appearance="Appearance.Accent" @onclick="() => AddItemAsync(newCollection)">
+                                Add to @newCollection
+                            </FluentButton>
+                        </div>
+                    }
+                    else if (SelectedAdded() is { } addedItem)
+                    {
+                        <WorkflowEditorPane Title="@addedItem.Name"
+                                            Subtitle="@($"{AddedPath(addedItem)} — new, unpublished")"
+                                            EditLabel="Standard"
+                                            Text="@addedItem.Content"
+                                            Modified="true"
+                                            TextChanged="@(async value => { addedItem.Content = value; await PersistDraftAsync(); })">
+                            <HeaderActions>
+                                <FluentButton Appearance="Appearance.Outline" @onclick="() => RemoveAddedAsync(addedItem)">
+                                    Remove
+                                </FluentButton>
+                            </HeaderActions>
+                            <ChildContent>
+                                <p class="muted-text">Adds a generated section to every future consult.</p>
+                            </ChildContent>
+                        </WorkflowEditorPane>
+                    }
+                    else if (selectedKey == GraphKey)
                     {
                         <div class="pane-header">
                             <div>
@@ -159,9 +244,16 @@
                                             Text="@GetText(standard.File)"
                                             Modified="@edits.ContainsKey(standard.File)"
                                             TextChanged="@(value => OnTextChangedAsync(standard.File, value))">
-                            <p class="muted-text">
-                                Standards guide organization and tone only. Patient facts still come from the draft consult.
-                            </p>
+                            <HeaderActions>
+                                <FluentButton Appearance="Appearance.Outline" @onclick="() => RemoveItemAsync(standard.File)">
+                                    Remove
+                                </FluentButton>
+                            </HeaderActions>
+                            <ChildContent>
+                                <p class="muted-text">
+                                    Standards guide organization and tone only. Patient facts still come from the draft consult.
+                                </p>
+                            </ChildContent>
                         </WorkflowEditorPane>
                     }
                     else if (SelectedPrompt() is { } prompt)
@@ -195,6 +287,134 @@
 @code {
     private const string DraftKeyPrefix = "workflow-editor-draft:";
     private const string GraphKey = "graph";
+    private const string NewKeyPrefix = "new:";
+
+    // Membership changes (#115): pending until publish, mirrored to the draft.
+    private sealed class AddedItem
+    {
+        public string Key { get; } = Guid.NewGuid().ToString("N")[..8];
+        public string Collection { get; set; } = string.Empty;
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+
+    private readonly List<AddedItem> addedItems = new();
+    private readonly HashSet<string> removedFiles = new(StringComparer.Ordinal);
+
+    private string? newItemId;
+    private string? newItemName;
+    private string? newItemContent;
+    private string? newItemError;
+
+    private static readonly System.Text.RegularExpressions.Regex ItemIdPattern =
+        new("^[a-z0-9][a-z0-9_-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private int PendingCount => edits.Count + addedItems.Count + removedFiles.Count;
+
+    private string PendingSummary()
+    {
+        if (PendingCount == 0)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>();
+        if (edits.Count > 0) parts.Add($"{edits.Count} edited");
+        if (addedItems.Count > 0) parts.Add($"+{addedItems.Count}");
+        if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
+        return $" ({string.Join(" · ", parts)})";
+    }
+
+    private static string NewKeyFor(string collectionId) => NewKeyPrefix + collectionId;
+
+    private string AddedPath(AddedItem item) => $"data/{item.Collection}/{item.Id}.md";
+
+    private AddedItem? SelectedAdded() => addedItems.FirstOrDefault(a => a.Key == selectedKey);
+
+    private bool CollectionHasPending(WorkflowManifestReader.CollectionView collection) =>
+        collection.Items.Any(item => edits.ContainsKey(item.File) || removedFiles.Contains(item.File))
+        || addedItems.Any(a => a.Collection == collection.Id);
+
+    private string CollectionCount(WorkflowManifestReader.CollectionView collection)
+    {
+        var added = addedItems.Count(a => a.Collection == collection.Id);
+        var removed = collection.Items.Count(item => removedFiles.Contains(item.File));
+        var text = collection.Items.Count.ToString();
+        if (added > 0) text += $" + {added}";
+        if (removed > 0) text += $" − {removed}";
+        return text;
+    }
+
+    private async Task AddItemAsync(string collectionId)
+    {
+        var id = newItemId?.Trim() ?? string.Empty;
+        var name = newItemName?.Trim() ?? string.Empty;
+
+        if (!ItemIdPattern.IsMatch(id))
+        {
+            newItemError = "The id must be lowercase letters, digits, '-' or '_', starting with a letter or digit.";
+            return;
+        }
+
+        var collection = collections.FirstOrDefault(c => c.Id == collectionId);
+        var existingIds = (collection?.Items.Select(i => i.Id) ?? Enumerable.Empty<string>())
+            .Concat(addedItems.Where(a => a.Collection == collectionId).Select(a => a.Id));
+
+        if (existingIds.Contains(id, StringComparer.Ordinal))
+        {
+            newItemError = $"An item with id '{id}' already exists in {collectionId}.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            newItemError = "A display name is required.";
+            return;
+        }
+
+        var added = new AddedItem { Collection = collectionId, Id = id, Name = name, Content = newItemContent ?? string.Empty };
+        addedItems.Add(added);
+        newItemId = newItemName = newItemContent = null;
+        newItemError = null;
+        publishSuccess = null;
+        selectedKey = added.Key;
+        await PersistDraftAsync();
+    }
+
+    private async Task RemoveItemAsync(string file)
+    {
+        removedFiles.Add(file);
+        edits.Remove(file);
+        publishSuccess = null;
+
+        if (selectedKey == file)
+        {
+            selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault(i => !removedFiles.Contains(i.File))?.File
+                ?? prompts.FirstOrDefault()?.File
+                ?? GraphKey;
+        }
+
+        await PersistDraftAsync();
+    }
+
+    private async Task RestoreItem(string file)
+    {
+        removedFiles.Remove(file);
+        await PersistDraftAsync();
+    }
+
+    private async Task RemoveAddedAsync(AddedItem item)
+    {
+        addedItems.Remove(item);
+
+        if (selectedKey == item.Key)
+        {
+            selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault(i => !removedFiles.Contains(i.File))?.File ?? GraphKey;
+        }
+
+        await PersistDraftAsync();
+    }
 
     private WorkflowPackageContentResponse? content;
     private IReadOnlyList<WorkflowManifestReader.PromptView> prompts = Array.Empty<WorkflowManifestReader.PromptView>();
@@ -253,6 +473,9 @@
         isLoading = true;
         loadError = null;
         edits.Clear();
+        addedItems.Clear();
+        removedFiles.Clear();
+        newItemError = null;
 
         try
         {
@@ -286,6 +509,10 @@
         }
     }
 
+    private sealed record DraftAdded(string Collection, string Id, string Name, string Content);
+
+    private sealed record DraftPayload(int Version, Dictionary<string, string>? Edits, List<DraftAdded>? Added, List<string>? Removed);
+
     private async Task RestoreDraftAsync()
     {
         var stored = await JS.InvokeAsync<string?>("localStorage.getItem", DraftKey);
@@ -295,17 +522,31 @@
             return;
         }
 
-        Dictionary<string, string>? draft;
+        Dictionary<string, string>? textEdits = null;
+        List<DraftAdded>? added = null;
+        List<string>? removed = null;
+
         try
         {
-            draft = JsonSerializer.Deserialize<Dictionary<string, string>>(stored);
+            // Versioned draft (#115) first; legacy plain-dictionary drafts fall through.
+            if (stored.Contains("\"Version\"", StringComparison.OrdinalIgnoreCase) || stored.Contains("\"version\"", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = JsonSerializer.Deserialize<DraftPayload>(stored);
+                textEdits = payload?.Edits;
+                added = payload?.Added;
+                removed = payload?.Removed;
+            }
+            else
+            {
+                textEdits = JsonSerializer.Deserialize<Dictionary<string, string>>(stored);
+            }
         }
         catch (JsonException)
         {
             return;
         }
 
-        foreach (var (path, text) in draft ?? new Dictionary<string, string>())
+        foreach (var (path, text) in textEdits ?? new Dictionary<string, string>())
         {
             // Drop entries that no longer differ (or no longer exist) in the
             // loaded package version.
@@ -314,6 +555,40 @@
                 edits[path] = text;
             }
         }
+
+        var loadedIds = collections.SelectMany(c => c.Items.Select(i => (c.Id, i.Id))).ToHashSet();
+
+        foreach (var draftItem in added ?? new List<DraftAdded>())
+        {
+            if (!string.IsNullOrWhiteSpace(draftItem.Id) && !loadedIds.Contains((draftItem.Collection, draftItem.Id)))
+            {
+                addedItems.Add(new AddedItem { Collection = draftItem.Collection, Id = draftItem.Id, Name = draftItem.Name, Content = draftItem.Content });
+            }
+        }
+
+        foreach (var path in removed ?? new List<string>())
+        {
+            if (content!.Files.ContainsKey(path))
+            {
+                removedFiles.Add(path);
+            }
+        }
+    }
+
+    private async Task PersistDraftAsync()
+    {
+        if (PendingCount == 0)
+        {
+            await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+            return;
+        }
+
+        var payload = new DraftPayload(
+            2,
+            edits,
+            addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
+            removedFiles.ToList());
+        await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
     private async Task OnTextChangedAsync(string path, string value)
@@ -329,19 +604,44 @@
             edits[path] = value;
         }
 
-        if (edits.Count == 0)
+        await PersistDraftAsync();
+    }
+
+    private bool CollectionHasMembershipChanges(WorkflowManifestReader.CollectionView collection) =>
+        collection.Items.Any(item => removedFiles.Contains(item.File))
+        || addedItems.Any(a => a.Collection == collection.Id);
+
+    private string ComposeIndexJson(WorkflowManifestReader.CollectionView collection)
+    {
+        // Preserve the loaded field list; existing items keep their order,
+        // removals drop, additions append.
+        List<string> fields;
+        try
         {
-            await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+            using var loadedIndex = System.Text.Json.JsonDocument.Parse(content!.Files[collection.Directory + "index.json"]);
+            fields = loadedIndex.RootElement.TryGetProperty("fields", out var f) && f.ValueKind == JsonValueKind.Array
+                ? f.EnumerateArray().Select(v => v.GetString() ?? string.Empty).ToList()
+                : new List<string> { "id", "name", "content" };
         }
-        else
+        catch (JsonException)
         {
-            await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(edits));
+            fields = new List<string> { "id", "name", "content" };
         }
+
+        var items = collection.Items
+            .Where(item => !removedFiles.Contains(item.File))
+            .Select(item => new { id = item.Id, name = item.Name, file = item.File[collection.Directory.Length..] })
+            .Concat(addedItems
+                .Where(a => a.Collection == collection.Id)
+                .Select(a => new { id = a.Id, name = a.Name, file = $"{a.Id}.md" }))
+            .ToList();
+
+        return JsonSerializer.Serialize(new { fields, items }, new JsonSerializerOptions { WriteIndented = true });
     }
 
     private async Task PublishAsync()
     {
-        if (content == null || edits.Count == 0 || isPublishing)
+        if (content == null || PendingCount == 0 || isPublishing)
         {
             return;
         }
@@ -356,6 +656,26 @@
             foreach (var (path, text) in edits)
             {
                 files[path] = text;
+            }
+
+            foreach (var path in removedFiles)
+            {
+                files.Remove(path);
+            }
+
+            foreach (var added in addedItems)
+            {
+                files[AddedPath(added)] = added.Content;
+            }
+
+            // Membership changed => the collection's index.json is recomposed;
+            // the server validator remains the authority on the result.
+            foreach (var collection in collections)
+            {
+                if (CollectionHasMembershipChanges(collection))
+                {
+                    files[collection.Directory + "index.json"] = ComposeIndexJson(collection);
+                }
             }
 
             var outcome = await WorkflowService.PublishPackageAsync(
@@ -394,6 +714,10 @@
         }
 
         edits.Clear();
+        addedItems.Clear();
+        removedFiles.Clear();
+        newItemId = newItemName = newItemContent = null;
+        newItemError = null;
         publishErrors = new List<string>();
         publishSuccess = null;
         await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
