@@ -292,9 +292,42 @@ public record ConsultGenerationJobResponse(
     string? RuntimeFailureStage = null,
     string? RuntimeFailureError = null,
     IReadOnlyList<ConsultGenerationJobHistoryEvent>? History = null,
-    IReadOnlyList<ConsultGenerationNodeDescriptor>? Nodes = null);
+    IReadOnlyList<ConsultGenerationNodeDescriptor>? Nodes = null,
+    DateTimeOffset? CreatedAtUtc = null,
+    DateTimeOffset? StartedAtUtc = null,
+    DateTimeOffset? CompletedAtUtc = null,
+    string? WorkflowPackage = null,
+    string? EffectiveInputHash = null,
+    int? EffectiveInputHashVersion = null,
+    IReadOnlyDictionary<string, string>? AgentVersions = null,
+    string? CatalogRef = null,
+    string? WorkflowOutputHash = null,
+    int? WorkflowOutputHashVersion = null,
+    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    IReadOnlyDictionary<string, ConsultGenerationNodeStatus>? NodeOutputs = null);
 
-public record ConsultGenerationNodeDescriptor(string Id, string Kind, string Label);
+/// <summary>
+/// One node of the job's workflow DAG (v5: one kind, ForEach as multiplicity).
+/// The provenance panel joins OutputContract with AgentVersions per row.
+/// </summary>
+public record ConsultGenerationNodeDescriptor(
+    string Id,
+    string Label,
+    string? PromptId = null,
+    string? OutputContract = null,
+    string? ForEach = null);
+
+public record ConsultSectionStepDescriptor(string Id, string Label);
+
+/// <summary>One chain entry: keyed "nodeId" (node level) or "nodeId:itemId" (per item).</summary>
+public record ConsultGenerationNodeStatus(
+    string NodeId,
+    string Label,
+    string Status,
+    string? InputHash,
+    string? OutputHash,
+    DateTimeOffset? CompletedAtUtc,
+    string? Error);
 
 public record ConsultGenerationJobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
