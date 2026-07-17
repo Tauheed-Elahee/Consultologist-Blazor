@@ -468,7 +468,15 @@ public sealed class ConsultGenerationJobState
                     pair.Value.Error)),
             AgentVersions: AgentVersions,
             EffectiveInputHashVersion: EffectiveInputHashVersion,
-            CatalogRef: CatalogRef);
+            CatalogRef: CatalogRef,
+            // Derived, never stored: the deliverable hash of a partial job is
+            // undefined, so only completed jobs carry it (provenance.md).
+            WorkflowOutputHash: Status == ConsultGenerationJobStatuses.Completed
+                ? ConsultGenerationProvenance.ComputeWorkflowOutputHash(completedSections)
+                : null,
+            WorkflowOutputHashVersion: Status == ConsultGenerationJobStatuses.Completed
+                ? ConsultGenerationProvenance.WorkflowOutputHashVersion
+                : null);
     }
 }
 

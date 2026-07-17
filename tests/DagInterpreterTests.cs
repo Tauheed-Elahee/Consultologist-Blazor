@@ -364,6 +364,37 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
+    public void WorkflowOutputHash_PinnedDefinition_AndOnlyOnCompletedJobs()
+    {
+        // Definition v1 pin: sha256 of canonical {sectionId: sha256(text)} with
+        // ordinal-sorted keys — recomputable by anyone from GeneratedSections.
+        Assert.Equal(
+            "6f52afd079adaed357b430559c22864adb46a075e6ca0d6922201230cfd50a73",
+            ConsultGenerationProvenance.ComputeWorkflowOutputHash(new Dictionary<string, string>
+            {
+                ["hpi"] = "alpha",
+                ["allergies"] = "beta"
+            }));
+
+        var (entity, state) = CreateEntity();
+        var items = new[] { Item("hpi", "History of Present Illness") };
+        entity.Initialize(new ConsultGenerationJobInitialize("job-1", "user-1", items)).GetAwaiter().GetResult();
+        entity.MarkRunning().GetAwaiter().GetResult();
+
+        Assert.Null(state().ToResponse().WorkflowOutputHash);
+
+        entity.CompleteSection(new SectionGenerationResult("hpi", "History of Present Illness", true, "alpha", null)).GetAwaiter().GetResult();
+        entity.FinalizeJob(new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Completed)).GetAwaiter().GetResult();
+
+        var response = state().ToResponse();
+        Assert.NotNull(response.WorkflowOutputHash);
+        Assert.Equal(ConsultGenerationProvenance.WorkflowOutputHashVersion, response.WorkflowOutputHashVersion);
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeWorkflowOutputHash(response.GeneratedSections),
+            response.WorkflowOutputHash);
+    }
+
+    [Fact]
     public void Initialize_RecordsTheCatalogRefWriteOnce_AndSurfacesItOnTheResponse()
     {
         var (entity, state) = CreateEntity();
