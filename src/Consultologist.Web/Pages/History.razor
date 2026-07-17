@@ -87,6 +87,90 @@
                                     }
                                     else
                                     {
+                                        <div class="provenance-chips">
+                                            <span class="provenance-chip @(IsFork(detail.WorkflowPackage) ? "provenance-chip--fork" : "")"
+                                                  title="Workflow package this job ran">
+                                                @(detail.WorkflowPackage ?? "—")
+                                            </span>
+                                            <span class="provenance-chip" title="Output-contract catalog version this job ran under">
+                                                @(detail.CatalogRef ?? "catalog —")
+                                            </span>
+                                            <span class="provenance-chip" title="Job record schema version">
+                                                schema v@(detail.SchemaVersion?.ToString() ?? "—")
+                                            </span>
+                                        </div>
+
+                                        <details class="job-detail-section">
+                                            <summary class="muted-text">Provenance</summary>
+                                            <dl class="provenance-list">
+                                                <dt>Input hash (v@(detail.EffectiveInputHashVersion?.ToString() ?? "—"))</dt>
+                                                <dd class="hash-text">@(detail.EffectiveInputHash ?? "—")</dd>
+                                                @if (detail.WorkflowOutputHash != null)
+                                                {
+                                                    <dt>Output hash (v@(detail.WorkflowOutputHashVersion?.ToString() ?? "—"))</dt>
+                                                    <dd class="hash-text">@detail.WorkflowOutputHash</dd>
+                                                }
+                                                @if (detail.AgentVersions is { Count: > 0 })
+                                                {
+                                                    <dt>Agents</dt>
+                                                    <dd>
+                                                        @string.Join(" · ", detail.AgentVersions.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key} → v{p.Value}"))
+                                                    </dd>
+                                                }
+                                            </dl>
+                                        </details>
+
+                                        @if (BuildNodeGroups(detail) is { Count: > 0 } nodeGroups)
+                                        {
+                                            <details class="job-detail-section">
+                                                <summary class="muted-text">Workflow (@nodeGroups.Count nodes)</summary>
+                                                <div class="node-grid">
+                                                    @foreach (var group in nodeGroups)
+                                                    {
+                                                        @if (group.Items.Count == 0)
+                                                        {
+                                                            <div class="node-row">
+                                                                <span class="node-row__status">@StatusGlyph(group.NodeLevel?.Status)</span>
+                                                                <span class="node-row__label">@group.Descriptor.Label</span>
+                                                                <span class="node-row__contract muted-text">@ContractLabel(group.Descriptor, detail)</span>
+                                                                <span class="node-row__hashes hash-text">
+                                                                    <span title="@group.NodeLevel?.InputHash">in @HashPrefix(group.NodeLevel?.InputHash)</span>
+                                                                    <span title="@group.NodeLevel?.OutputHash">out @HashPrefix(group.NodeLevel?.OutputHash)</span>
+                                                                </span>
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <details class="node-group">
+                                                                <summary class="node-row">
+                                                                    <span class="node-row__status">@StatusGlyph(group.NodeLevel?.Status)</span>
+                                                                    <span class="node-row__label">@group.Descriptor.Label</span>
+                                                                    <span class="node-row__contract muted-text">
+                                                                        @ContractLabel(group.Descriptor, detail) · per @group.Descriptor.ForEach item (@group.Items.Count)
+                                                                    </span>
+                                                                </summary>
+                                                                @foreach (var (itemId, entry) in group.Items)
+                                                                {
+                                                                    <div class="node-row node-row--item">
+                                                                        <span class="node-row__status">@StatusGlyph(entry.Status)</span>
+                                                                        <span class="node-row__label">@itemId</span>
+                                                                        <span class="node-row__hashes hash-text">
+                                                                            <span title="@entry.InputHash">in @HashPrefix(entry.InputHash)</span>
+                                                                            <span title="@entry.OutputHash">out @HashPrefix(entry.OutputHash)</span>
+                                                                            @if (entry.OutputHash != null && group.ConvergedOutputs.Contains(entry.OutputHash))
+                                                                            {
+                                                                                <span class="muted-text" title="Another item in this node produced the byte-identical output">= same output</span>
+                                                                            }
+                                                                        </span>
+                                                                    </div>
+                                                                }
+                                                            </details>
+                                                        }
+                                                    }
+                                                </div>
+                                            </details>
+                                        }
+
                                         <ol class="job-event-list">
                                             @foreach (var entry in GetTimeline(detail))
                                             {
@@ -246,6 +330,75 @@
             : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago"
             : ago.TotalDays < 7 ? $"{(int)ago.TotalDays}d ago"
             : date.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    private static bool IsFork(string? packageRef) =>
+        packageRef != null && packageRef.StartsWith("acct-", StringComparison.Ordinal);
+
+    private static string? HashPrefix(string? hash) =>
+        string.IsNullOrEmpty(hash) ? "—" : hash[..Math.Min(12, hash.Length)] + "…";
+
+    private static string StatusGlyph(string? status) => status switch
+    {
+        "Completed" => "✓",
+        "Failed" => "✗",
+        "Skipped" => "○",
+        null => "·",
+        _ => "●"
+    };
+
+    private static string ContractLabel(ConsultGenerationNodeDescriptor descriptor, ConsultGenerationJobResponse detail)
+    {
+        var contract = descriptor.OutputContract ?? "text";
+        return detail.AgentVersions != null && detail.AgentVersions.TryGetValue(contract, out var version)
+            ? $"{contract} · agent v{version}"
+            : contract;
+    }
+
+    private sealed record NodeGroup(
+        ConsultGenerationNodeDescriptor Descriptor,
+        ConsultGenerationNodeStatus? NodeLevel,
+        IReadOnlyList<(string ItemId, ConsultGenerationNodeStatus Entry)> Items,
+        IReadOnlySet<string> ConvergedOutputs);
+
+    // The chain map keys are "nodeId" (node level) and "nodeId:itemId" (per item);
+    // groups follow the Nodes descriptor order — manifest order. Identical
+    // OutputHashes within a node's items are the convergence signal.
+    private static IReadOnlyList<NodeGroup> BuildNodeGroups(ConsultGenerationJobResponse detail)
+    {
+        if (detail.Nodes is not { Count: > 0 } || detail.NodeOutputs is not { Count: > 0 })
+        {
+            return Array.Empty<NodeGroup>();
+        }
+
+        var groups = new List<NodeGroup>();
+
+        foreach (var descriptor in detail.Nodes)
+        {
+            detail.NodeOutputs.TryGetValue(descriptor.Id, out var nodeLevel);
+
+            var items = detail.NodeOutputs
+                .Where(pair => pair.Key.StartsWith(descriptor.Id + ":", StringComparison.Ordinal))
+                .Select(pair => (ItemId: pair.Key[(descriptor.Id.Length + 1)..], Entry: pair.Value))
+                .OrderBy(pair => pair.ItemId, StringComparer.Ordinal)
+                .ToList();
+
+            if (nodeLevel is null && items.Count == 0)
+            {
+                continue;
+            }
+
+            var converged = items
+                .Where(pair => pair.Entry.OutputHash != null)
+                .GroupBy(pair => pair.Entry.OutputHash!)
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToHashSet(StringComparer.Ordinal);
+
+            groups.Add(new NodeGroup(descriptor, nodeLevel, items, converged));
+        }
+
+        return groups;
     }
 
     private enum JobTimelineEntryKind { Success, Failure, Skipped }

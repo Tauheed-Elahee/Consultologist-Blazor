@@ -39,7 +39,9 @@ public record ConsultGenerationJobResponse(
     IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
     int? EffectiveInputHashVersion = null,
-    string? CatalogRef = null);
+    string? CatalogRef = null,
+    string? WorkflowOutputHash = null,
+    int? WorkflowOutputHashVersion = null);
 
 /// <summary>
 /// The identity and display label of one per-section prose step, snapshotted from the

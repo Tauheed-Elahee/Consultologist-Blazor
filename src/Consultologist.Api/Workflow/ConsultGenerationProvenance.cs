@@ -29,6 +29,25 @@ internal static class ConsultGenerationProvenance
     }
 
     /// <summary>
+    /// The workflow-output hash, definition version 1: SHA-256 of the canonical JSON
+    /// {sectionId: Sha256Hex(sectionText)} with ordinal-sorted keys — a Merkle-style
+    /// root over the deliverable. Derived at response time from GeneratedSections
+    /// (never stored): anyone holding the record can recompute it, and two completed
+    /// runs produced the byte-identical note iff their hashes match (#88;
+    /// docs/customizable-workflow/provenance.md).
+    /// </summary>
+    public const int WorkflowOutputHashVersion = 1;
+
+    public static string ComputeWorkflowOutputHash(IReadOnlyDictionary<string, string> generatedSections)
+    {
+        var canonical = generatedSections
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => Sha256Hex(pair.Value));
+
+        return Sha256Hex(JsonSerializer.Serialize(canonical, CanonicalJsonOptions));
+    }
+
+    /// <summary>
     /// Lowercase-hex SHA-256 of the UTF-8 text — the per-node provenance hash: a node's
     /// InputHash covers the exact rendered prompt the agent receives (template +
     /// prelude + variables), its OutputHash the raw assistant text, so two runs can be

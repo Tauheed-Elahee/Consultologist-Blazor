@@ -28,6 +28,7 @@ contain hyphens; derive a string key from the object when needed).
 | `workflow_package` | `name@version` of the pinned workflow package (CalVer `vYYYY.MM.N`, e.g. `general@v2026.07.1`) | Package registry |
 | `catalogRef` | `output-contracts@vYYYY.MM.N` — the concrete catalog version the job ran under, resolving every `agentVersions` entry to its contract→agent mapping (#93) | Public catalog registry (immutable versions); attested equal to git at startup |
 | `input_hash` | Hash of the **effective** input | Computed at job start |
+| `workflowOutputHash` (v1) | The deliverable hash of a **completed** job: SHA-256 of the canonical JSON `{sectionId: sha256(sectionText)}`, ordinal-sorted keys — a Merkle-style root over `generatedSections`. **Derived at response time, never stored**: anyone holding the record recomputes it, and two runs produced the byte-identical note iff their hashes match (#88) | Derived from the record itself |
 | `inference_stack` (optional) | Inference engine + version, for bit-exact re-run attempts | Deployment config |
 
 ## Attestation: git as source of truth for mutable deployments
