@@ -1,8 +1,10 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using Consultologist.Web.Services.AI
+@using Consultologist.Web.Services.Workflow
 @inject IAccountEndpointService AccountService
 @inject IAIEndpointService AIService
+@inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
 
 @page "/history"
@@ -114,7 +116,7 @@
                                                 {
                                                     <dt>Agents</dt>
                                                     <dd>
-                                                        @string.Join(" · ", detail.AgentVersions.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key} → v{p.Value}"))
+                                                        @string.Join(" · ", detail.AgentVersions.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => AgentLine(p.Key, p.Value)))
                                                     </dd>
                                                 }
                                             </dl>
@@ -244,10 +246,36 @@
     private Dictionary<string, ConsultGenerationJobResponse?> _jobDetails = new();
     private Dictionary<string, string?> _jobDetailErrors = new();
 
+    // Contract id → agent name, decorated from the anonymous Public/Chain view
+    // (the job record stores contract → version only; names are catalog metadata).
+    private Dictionary<string, string> _agentNames = new(StringComparer.Ordinal);
+
     protected override async Task OnInitializedAsync()
     {
         await LoadJobsAsync();
+        await LoadAgentNamesAsync();
     }
+
+    private async Task LoadAgentNamesAsync()
+    {
+        var chain = await WorkflowService.GetPublicChainAsync();
+        var contracts = chain?.OutputContracts?.Contracts;
+
+        if (contracts == null)
+        {
+            return;
+        }
+
+        _agentNames = contracts
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value.AgentName))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.AgentName!, StringComparer.Ordinal);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string AgentLine(string contract, string version) =>
+        _agentNames.TryGetValue(contract, out var name)
+            ? $"{contract} → {name} v{version}"
+            : $"{contract} → v{version}";
 
     private async Task LoadJobsAsync()
     {
@@ -362,12 +390,18 @@
         _ => "●"
     };
 
-    private static string ContractLabel(ConsultGenerationNodeDescriptor descriptor, ConsultGenerationJobResponse detail)
+    private string ContractLabel(ConsultGenerationNodeDescriptor descriptor, ConsultGenerationJobResponse detail)
     {
         var contract = descriptor.OutputContract ?? "text";
-        return detail.AgentVersions != null && detail.AgentVersions.TryGetValue(contract, out var version)
-            ? $"{contract} · agent v{version}"
-            : contract;
+
+        if (detail.AgentVersions == null || !detail.AgentVersions.TryGetValue(contract, out var version))
+        {
+            return contract;
+        }
+
+        return _agentNames.TryGetValue(contract, out var name)
+            ? $"{contract} · {name} v{version}"
+            : $"{contract} · agent v{version}";
     }
 
     private sealed record NodeGroup(
