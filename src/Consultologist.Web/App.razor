@@ -11,7 +11,24 @@
         <NotFound>
             <PageTitle>Not found</PageTitle>
             <LayoutView Layout="@typeof(MainLayout)">
-                <p role="alert">Sorry, there's nothing at this address.</p>
+                <section class="page-header">
+                    <div class="page-header__content">
+                        <span class="section-eyebrow">Not found</span>
+                        <h1 class="page-title">There's nothing at this address.</h1>
+                        <p class="page-description">
+                            The page may have moved, or the link may be out of date.
+                        </p>
+                    </div>
+                </section>
+                <section class="content-card">
+                    <div class="form-stack">
+                        <div class="action-row">
+                            <FluentAnchor Appearance="Appearance.Accent" Href="/">
+                                Back to the workspace
+                            </FluentAnchor>
+                        </div>
+                    </div>
+                </section>
             </LayoutView>
         </NotFound>
     </Router>
