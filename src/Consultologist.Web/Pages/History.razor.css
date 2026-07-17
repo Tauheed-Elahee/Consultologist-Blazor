@@ -230,3 +230,15 @@
 .node-status--muted {
 	color: var(--consultologist-text-muted);
 }
+
+.node-row__chevron {
+	flex: 0 0 0.9rem;
+	text-align: center;
+	color: var(--consultologist-text-muted);
+	display: inline-block;
+	transition: transform 0.15s ease;
+}
+
+.node-group[open] > summary .node-row__chevron {
+	transform: rotate(90deg);
+}
