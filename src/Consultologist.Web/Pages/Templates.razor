@@ -8,11 +8,11 @@
 
 @page "/templates"
 
-<PageTitle>Templates</PageTitle>
+<PageTitle>Workflow</PageTitle>
 
 <section class="page-header">
     <div class="page-header__content">
-        <span class="section-eyebrow">Templates</span>
+        <span class="section-eyebrow">Workflow</span>
         <h1 class="page-title">Your consult workflow, editable.</h1>
         <p class="page-description">
             Edit the active package's prompt and section-standard texts. Publishing creates a new
@@ -24,134 +24,159 @@
 
 <AuthorizeView>
     <Authorized>
-        <section class="content-card">
-            <div class="form-stack">
-                @if (isLoading)
-                {
-                    <div class="loading-state">
-                        <FluentProgressRing />
-                        <span>Loading workflow package...</span>
-                    </div>
-                }
-                else if (!string.IsNullOrWhiteSpace(loadError))
-                {
-                    <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@loadError</FluentMessageBar>
-                }
-                else if (content != null)
-                {
-                    <div class="result-header">
-                        <div>
-                            <h2 class="panel-title">Editing <code>@content.Ref</code></h2>
-                            @if (WorkflowManifestReader.ReadDerivedFrom(content.Manifest) is { } parentRef)
-                            {
-                                <p class="muted-text">derived from <code>@parentRef</code></p>
-                            }
-                            <p class="panel-description">
-                                Publishing creates a new immutable version of your account package
-                                (derived from <code>@content.Ref</code>) and switches your consults to it.
-                                "Revert to default" returns you to the standard package; published versions
-                                are never deleted.
-                            </p>
-                        </div>
-                    </div>
-
-                    @if (!string.IsNullOrWhiteSpace(publishSuccess))
+        @if (isLoading)
+        {
+            <section class="content-card">
+                <div class="loading-state">
+                    <FluentProgressRing />
+                    <span>Loading workflow package...</span>
+                </div>
+            </section>
+        }
+        else if (!string.IsNullOrWhiteSpace(loadError))
+        {
+            <section class="content-card">
+                <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@loadError</FluentMessageBar>
+            </section>
+        }
+        else if (content != null)
+        {
+            <div class="editor-bar">
+                <div class="editor-bar__info">
+                    <span>Editing <code>@content.Ref</code></span>
+                    @if (WorkflowManifestReader.ReadDerivedFrom(content.Manifest) is { } parentRef)
                     {
-                        <FluentMessageBar Intent="MessageIntent.Success" AllowDismiss="false">@publishSuccess</FluentMessageBar>
+                        <span class="muted-text">derived from <code>@parentRef</code></span>
                     }
+                </div>
+                <div class="editor-bar__actions">
+                    <FluentButton Appearance="Appearance.Accent"
+                                  Disabled="@(edits.Count == 0 || isPublishing)"
+                                  @onclick="PublishAsync">
+                        @if (isPublishing)
+                        {
+                            <FluentProgressRing style="width: 16px; height: 16px;" />
+                            <span>Publishing&hellip;</span>
+                        }
+                        else
+                        {
+                            <span>Publish@(edits.Count > 0 ? $" ({edits.Count} edited)" : "")</span>
+                        }
+                    </FluentButton>
+                    <FluentButton Appearance="Appearance.Outline"
+                                  Disabled="@(edits.Count == 0 || isPublishing)"
+                                  @onclick="DiscardAsync">
+                        Discard
+                    </FluentButton>
+                    <FluentButton Appearance="Appearance.Outline"
+                                  Disabled="@isPublishing"
+                                  @onclick="RevertToDefaultAsync">
+                        Revert to default
+                    </FluentButton>
+                </div>
+            </div>
 
-                    @if (publishErrors.Count > 0)
-                    {
-                        <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">
-                            <strong>Publish rejected — nothing was saved.</strong>
-                            <ul>
-                                @foreach (var error in publishErrors)
-                                {
-                                    <li>@error</li>
-                                }
-                            </ul>
-                        </FluentMessageBar>
-                    }
+            @if (!string.IsNullOrWhiteSpace(publishSuccess))
+            {
+                <FluentMessageBar Intent="MessageIntent.Success" AllowDismiss="false">@publishSuccess</FluentMessageBar>
+            }
 
-                    <div class="action-row">
-                        <FluentButton Appearance="Appearance.Accent"
-                                      Disabled="@(edits.Count == 0 || isPublishing)"
-                                      @onclick="PublishAsync">
-                            @if (isPublishing)
-                            {
-                                <FluentProgressRing style="width: 16px; height: 16px;" />
-                                <span>Publishing&hellip;</span>
-                            }
-                            else
-                            {
-                                <span>Publish@(edits.Count > 0 ? $" ({edits.Count} edited)" : "")</span>
-                            }
-                        </FluentButton>
-                        <FluentButton Appearance="Appearance.Outline"
-                                      Disabled="@(edits.Count == 0 || isPublishing)"
-                                      @onclick="DiscardAsync">
-                            Discard changes
-                        </FluentButton>
-                        <FluentButton Appearance="Appearance.Outline"
-                                      Disabled="@isPublishing"
-                                      @onclick="RevertToDefaultAsync">
-                            Revert to default
-                        </FluentButton>
-                    </div>
+            @if (publishErrors.Count > 0)
+            {
+                <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">
+                    <strong>Publish rejected — nothing was saved.</strong>
+                    <ul>
+                        @foreach (var error in publishErrors)
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                </FluentMessageBar>
+            }
 
-                    <h2 class="panel-title">Section standards</h2>
-                    <p class="panel-description">
-                        Standards guide organization and tone only. Patient facts still come from the draft consult.
-                    </p>
-
+            <div class="editor-layout">
+                <nav class="editor-nav" aria-label="Package contents">
+                    <span class="editor-nav__group">Standards</span>
                     @foreach (var collection in collections)
                     {
                         @foreach (var item in collection.Items)
                         {
-                            <WorkflowEditorCard Title="@item.Name"
-                                                Subtitle="@item.Id"
-                                                EditLabel="Standard"
-                                                Rows="8"
-                                                Text="@GetText(item.File)"
-                                                Modified="@edits.ContainsKey(item.File)"
-                                                TextChanged="@(value => OnTextChangedAsync(item.File, value))" />
+                            <button type="button"
+                                    class="editor-nav__item @(selectedKey == item.File ? "editor-nav__item--selected" : "")"
+                                    @onclick="() => Select(item.File)">
+                                <span class="editor-nav__dot">@(edits.ContainsKey(item.File) ? "●" : "")</span>
+                                <span>@item.Name</span>
+                            </button>
                         }
                     }
-
-                    <h2 class="panel-title">Prompts</h2>
-                    <p class="panel-description">
-                        The instructions each workflow step sends to the model. Variables are fixed —
-                        the highlighted <code>{{ placeholders }}</code> must all remain in the text.
-                    </p>
-
+                    <span class="editor-nav__group">Prompts</span>
                     @foreach (var prompt in prompts)
                     {
-                        <WorkflowEditorCard Title="@prompt.Id"
+                        <button type="button"
+                                class="editor-nav__item @(selectedKey == prompt.File ? "editor-nav__item--selected" : "")"
+                                @onclick="() => Select(prompt.File)">
+                            <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) ? "●" : "")</span>
+                            <span>@prompt.Id</span>
+                        </button>
+                    }
+                    <span class="editor-nav__group">Workflow</span>
+                    <button type="button"
+                            class="editor-nav__item @(selectedKey == GraphKey ? "editor-nav__item--selected" : "")"
+                            @onclick="() => Select(GraphKey)">
+                        <span class="editor-nav__dot"></span>
+                        <span>Graph (read-only)</span>
+                    </button>
+                </nav>
+
+                <section class="content-card editor-pane">
+                    @if (selectedKey == GraphKey)
+                    {
+                        <WorkflowNodeSummary Nodes="@nodes" />
+                    }
+                    else if (SelectedStandard() is { } standard)
+                    {
+                        <WorkflowEditorPane Title="@standard.Name"
+                                            Subtitle="@standard.File"
+                                            EditLabel="Standard"
+                                            Text="@GetText(standard.File)"
+                                            Modified="@edits.ContainsKey(standard.File)"
+                                            TextChanged="@(value => OnTextChangedAsync(standard.File, value))">
+                            <p class="muted-text">
+                                Standards guide organization and tone only. Patient facts still come from the draft consult.
+                            </p>
+                        </WorkflowEditorPane>
+                    }
+                    else if (SelectedPrompt() is { } prompt)
+                    {
+                        <WorkflowEditorPane Title="@prompt.Id"
                                             Subtitle="@prompt.File"
                                             EditLabel="Prompt text"
-                                            Rows="12"
                                             Text="@GetText(prompt.File)"
                                             Modified="@edits.ContainsKey(prompt.File)"
                                             TextChanged="@(value => OnTextChangedAsync(prompt.File, value))">
                             <p class="muted-text">
-                                Variables: @string.Join(", ", prompt.Variables.Select(v => $"{{{{ {v} }}}}"))
+                                Variables are fixed — the <code>{{ placeholders }}</code> must all remain:
+                                @string.Join(", ", prompt.Variables.Select(v => $"{{{{ {v} }}}}"))
                                 @if (prompt.Prelude != null)
                                 {
                                     <span> · shared prelude: @prompt.Prelude (read-only)</span>
                                 }
                             </p>
-                        </WorkflowEditorCard>
+                        </WorkflowEditorPane>
                     }
-
-                    <WorkflowNodeSummary Nodes="@nodes" />
-                }
+                    else
+                    {
+                        <p class="muted-text">Select a standard or prompt to edit.</p>
+                    }
+                </section>
             </div>
-        </section>
+        }
     </Authorized>
 </AuthorizeView>
 
 @code {
     private const string DraftKeyPrefix = "workflow-editor-draft:";
+    private const string GraphKey = "graph";
 
     private WorkflowPackageContentResponse? content;
     private IReadOnlyList<WorkflowManifestReader.PromptView> prompts = Array.Empty<WorkflowManifestReader.PromptView>();
@@ -168,12 +193,23 @@
     private string? publishSuccess;
     private List<string> publishErrors = new();
 
+    // Master–detail selection: a file path or GraphKey (#110).
+    private string? selectedKey;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
     }
 
     private string DraftKey => DraftKeyPrefix + content!.Ref;
+
+    private void Select(string key) => selectedKey = key;
+
+    private WorkflowManifestReader.DataItemView? SelectedStandard() =>
+        collections.SelectMany(c => c.Items).FirstOrDefault(item => item.File == selectedKey);
+
+    private WorkflowManifestReader.PromptView? SelectedPrompt() =>
+        prompts.FirstOrDefault(prompt => prompt.File == selectedKey);
 
     private string GetText(string path) =>
         edits.TryGetValue(path, out var edited) ? edited : content!.Files.GetValueOrDefault(path, string.Empty);
@@ -191,6 +227,15 @@
             nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
             collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
             await RestoreDraftAsync();
+
+            // Keep the selection when it still exists in the loaded version;
+            // otherwise land on the first standard.
+            if (selectedKey != GraphKey && (selectedKey == null || !content.Files.ContainsKey(selectedKey)))
+            {
+                selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault()?.File
+                    ?? prompts.FirstOrDefault()?.File
+                    ?? GraphKey;
+            }
         }
         catch (AccessTokenNotAvailableException exception)
         {
