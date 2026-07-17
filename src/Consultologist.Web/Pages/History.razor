@@ -112,11 +112,11 @@
                                                     <dt>Output hash (v@(detail.WorkflowOutputHashVersion?.ToString() ?? "—"))</dt>
                                                     <dd class="hash-text">@detail.WorkflowOutputHash</dd>
                                                 }
-                                                @if (detail.AgentVersions is { Count: > 0 })
+                                                @if (AgentContracts(detail).Any())
                                                 {
                                                     <dt>Agents</dt>
                                                     <dd>
-                                                        @string.Join(" · ", detail.AgentVersions.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => AgentLine(p.Key, p.Value)))
+                                                        @string.Join(" · ", AgentContracts(detail).Select(contract => AgentLine(contract, detail)))
                                                     </dd>
                                                 }
                                             </dl>
@@ -272,10 +272,67 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private string AgentLine(string contract, string version) =>
-        _agentNames.TryGetValue(contract, out var name)
-            ? $"{contract} → {name} v{version}"
-            : $"{contract} → v{version}";
+    // Per-version catalog documents, fetched from the public registry — the
+    // job's own catalogRef resolves to historically exact agent identities
+    // (#105: purified records carry no agentVersions map).
+    private readonly Dictionary<string, Dictionary<string, PublicCatalogEntry>?> _catalogCache = new(StringComparer.Ordinal);
+
+    private const string CatalogRefPrefix = "output-contracts@";
+
+    private async Task EnsureCatalogLoadedAsync(string? catalogRef)
+    {
+        if (catalogRef == null || !catalogRef.StartsWith(CatalogRefPrefix, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var version = catalogRef[CatalogRefPrefix.Length..];
+
+        if (_catalogCache.ContainsKey(version))
+        {
+            return;
+        }
+
+        _catalogCache[version] = await WorkflowService.GetCatalogAsync(version);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Dictionary<string, PublicCatalogEntry>? JobCatalog(ConsultGenerationJobResponse detail) =>
+        detail.CatalogRef != null
+            && detail.CatalogRef.StartsWith(CatalogRefPrefix, StringComparison.Ordinal)
+            && _catalogCache.TryGetValue(detail.CatalogRef[CatalogRefPrefix.Length..], out var doc)
+            ? doc
+            : null;
+
+    private IEnumerable<string> AgentContracts(ConsultGenerationJobResponse detail)
+    {
+        var contracts = JobCatalog(detail)?.Keys ?? detail.AgentVersions?.Keys as IEnumerable<string>;
+        return (contracts ?? Enumerable.Empty<string>()).OrderBy(c => c, StringComparer.Ordinal);
+    }
+
+    // Resolution order: the job's own catalog document (historically exact) →
+    // the legacy stored map decorated with current-chain names → nothing.
+    private (string? Name, string? Version) ResolveAgent(string contract, ConsultGenerationJobResponse detail)
+    {
+        if (JobCatalog(detail) is { } doc && doc.TryGetValue(contract, out var entry))
+        {
+            return (entry.AgentName, entry.AgentVersion);
+        }
+
+        if (detail.AgentVersions != null && detail.AgentVersions.TryGetValue(contract, out var version))
+        {
+            return (_agentNames.GetValueOrDefault(contract), version);
+        }
+
+        return (null, null);
+    }
+
+    private string AgentLine(string contract, ConsultGenerationJobResponse detail) => ResolveAgent(contract, detail) switch
+    {
+        (string name, string version) => $"{contract} → {name} v{version}",
+        (null, string version) => $"{contract} → v{version}",
+        _ => contract
+    };
 
     private async Task LoadJobsAsync()
     {
@@ -343,6 +400,7 @@
         {
             var detail = await AIService.GetConsultGenerationJobAsync(jobId);
             _jobDetails[jobId] = detail;
+            await EnsureCatalogLoadedAsync(detail?.CatalogRef);
         }
         catch (AccessTokenNotAvailableException exception)
         {
@@ -394,14 +452,12 @@
     {
         var contract = descriptor.OutputContract ?? "text";
 
-        if (detail.AgentVersions == null || !detail.AgentVersions.TryGetValue(contract, out var version))
+        return ResolveAgent(contract, detail) switch
         {
-            return contract;
-        }
-
-        return _agentNames.TryGetValue(contract, out var name)
-            ? $"{contract} · {name} v{version}"
-            : $"{contract} · agent v{version}";
+            (string name, string version) => $"{contract} · {name} v{version}",
+            (null, string version) => $"{contract} · agent v{version}",
+            _ => contract
+        };
     }
 
     private sealed record NodeGroup(

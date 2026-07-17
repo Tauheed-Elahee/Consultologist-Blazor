@@ -414,26 +414,36 @@ public class ConsultGenerationNodeEntityTests
     }
 
     [Fact]
-    public void Initialize_RecordsAgentVersionsWriteOnce_AndSurfacesThemOnTheResponse()
+    public void AgentVersions_LegacyRecords_StillDeserializeAndSurfaceTheirStoredMap()
     {
-        var (entity, state) = CreateEntity();
-        var items = new[] { Item("hpi", "History of Present Illness") };
+        // Records <= 2026-07-17 stored the contract -> agent-version map; since
+        // #105 new records carry catalogRef only. The field is legacy-read-only:
+        // old state blobs must keep serving their map on the response.
+        var legacyStateJson = """
+            {
+              "JobId": "legacy-1",
+              "AppUserId": "user-1",
+              "Status": "Completed",
+              "AgentVersions": { "text": "47", "concept-list": "1" },
+              "CatalogRef": null
+            }
+            """;
 
-        entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", items,
-            AgentVersions: new Dictionary<string, string> { ["text"] = "47", ["concept-list"] = "1" })).GetAwaiter().GetResult();
+        var state = System.Text.Json.JsonSerializer.Deserialize<ConsultGenerationJobState>(legacyStateJson)!;
 
-        // Write-once: a second Initialize (Durable replay) must not overwrite.
-        entity.Initialize(new ConsultGenerationJobInitialize(
-            "job-1", "user-1", items,
-            AgentVersions: new Dictionary<string, string> { ["text"] = "99" })).GetAwaiter().GetResult();
-
-        Assert.Equal("47", state().AgentVersions!["text"]);
-        Assert.Equal("1", state().AgentVersions!["concept-list"]);
-
-        var response = state().ToResponse();
+        var response = state.ToResponse();
         Assert.Equal("47", response.AgentVersions!["text"]);
         Assert.Equal("1", response.AgentVersions!["concept-list"]);
+
+        // And the purified path: a fresh Initialize stamps no map.
+        var (entity, freshState) = CreateEntity();
+        entity.Initialize(new ConsultGenerationJobInitialize(
+            "job-2", "user-1", new[] { Item("hpi", "History of Present Illness") },
+            CatalogRef: "output-contracts@v2026.07.1")).GetAwaiter().GetResult();
+
+        Assert.Null(freshState().AgentVersions);
+        Assert.Null(freshState().ToResponse().AgentVersions);
+        Assert.Equal("output-contracts@v2026.07.1", freshState().ToResponse().CatalogRef);
     }
 
     [Fact]
