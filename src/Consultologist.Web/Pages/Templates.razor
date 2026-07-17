@@ -96,19 +96,6 @@
 
             <div class="editor-layout">
                 <nav class="editor-nav" aria-label="Package contents">
-                    <span class="editor-nav__group">Standards</span>
-                    @foreach (var collection in collections)
-                    {
-                        @foreach (var item in collection.Items)
-                        {
-                            <button type="button"
-                                    class="editor-nav__item @(selectedKey == item.File ? "editor-nav__item--selected" : "")"
-                                    @onclick="() => Select(item.File)">
-                                <span class="editor-nav__dot">@(edits.ContainsKey(item.File) ? "●" : "")</span>
-                                <span>@item.Name</span>
-                            </button>
-                        }
-                    }
                     <span class="editor-nav__group">Prompts</span>
                     @foreach (var prompt in prompts)
                     {
@@ -118,6 +105,26 @@
                             <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) ? "●" : "")</span>
                             <span>@prompt.Id</span>
                         </button>
+                    }
+                    <span class="editor-nav__group">Data</span>
+                    @foreach (var collection in collections)
+                    {
+                        <details class="editor-nav__folder" open>
+                            <summary class="editor-nav__item editor-nav__folder-summary">
+                                <span class="editor-nav__chevron" aria-hidden="true">&#x203A;</span>
+                                <span class="editor-nav__dot">@(collection.Items.Any(item => edits.ContainsKey(item.File)) ? "●" : "")</span>
+                                <span>@collection.Id (@collection.Items.Count)</span>
+                            </summary>
+                            @foreach (var item in collection.Items)
+                            {
+                                <button type="button"
+                                        class="editor-nav__item editor-nav__item--nested @(selectedKey == item.File ? "editor-nav__item--selected" : "")"
+                                        @onclick="() => Select(item.File)">
+                                    <span class="editor-nav__dot">@(edits.ContainsKey(item.File) ? "●" : "")</span>
+                                    <span>@item.Name</span>
+                                </button>
+                            }
+                        </details>
                     }
                     <span class="editor-nav__group">Workflow</span>
                     <button type="button"

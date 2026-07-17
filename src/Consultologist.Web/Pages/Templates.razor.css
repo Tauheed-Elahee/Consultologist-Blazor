@@ -141,3 +141,33 @@
 		grid-template-columns: 1fr;
 	}
 }
+
+.editor-nav__folder {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+}
+
+.editor-nav__folder-summary {
+	list-style: none;
+	user-select: none;
+}
+
+.editor-nav__folder-summary::-webkit-details-marker {
+	display: none;
+}
+
+.editor-nav__chevron {
+	width: 0.7rem;
+	color: var(--consultologist-text-muted);
+	display: inline-block;
+	transition: transform 0.15s ease;
+}
+
+.editor-nav__folder[open] > .editor-nav__folder-summary .editor-nav__chevron {
+	transform: rotate(90deg);
+}
+
+.editor-nav__item--nested {
+	padding-left: 1.6rem;
+}
