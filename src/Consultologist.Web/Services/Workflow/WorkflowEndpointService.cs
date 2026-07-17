@@ -12,7 +12,20 @@ public interface IWorkflowEndpointService
     Task<WorkflowPackageResponse> GetCurrentPackageAsync();
     Task<WorkflowPackageContentResponse> GetCurrentPackageContentAsync();
     Task<WorkflowPublishOutcome> PublishPackageAsync(WorkflowPackagePublishRequest request);
+    Task<PublicChainView?> GetPublicChainAsync();
 }
+
+/// <summary>
+/// Minimal mirror of the anonymous Public/Chain document — currently just the
+/// catalog's contract → agent mapping, used to decorate the History provenance
+/// panel with agent names (the job record stores contract → version only; names
+/// are catalog metadata, served by the public chain view).
+/// </summary>
+public record PublicChainView(PublicCatalogView? OutputContracts);
+
+public record PublicCatalogView(Dictionary<string, PublicContractView>? Contracts);
+
+public record PublicContractView(string? AgentName);
 
 public record WorkflowPackageSectionResponse(string Id, string Name, string Content);
 
@@ -181,6 +194,28 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
             errorContent);
 
         throw new HttpRequestException($"Workflow package publish endpoint failed: {response.StatusCode}");
+    }
+
+    public async Task<PublicChainView?> GetPublicChainAsync()
+    {
+        var chainUrl = _configuration["AzureFunction:PublicChainUrl"];
+
+        if (string.IsNullOrWhiteSpace(chainUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Anonymous endpoint — no bearer token; a failure only costs the
+            // display decoration, never the page.
+            return await _httpClient.GetFromJsonAsync<PublicChainView>(chainUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Public chain view unavailable; agent names will not be decorated.");
+            return null;
+        }
     }
 
     private sealed record PublishErrorPayload(List<string>? Errors);
