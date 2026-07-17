@@ -180,3 +180,47 @@
 ::deep .dag-view__canvas svg {
 	max-width: none;
 }
+
+.editor-nav__item--removed {
+	cursor: default;
+}
+
+.editor-nav__strike {
+	text-decoration: line-through;
+	color: var(--consultologist-text-muted);
+}
+
+.editor-nav__restore {
+	border: none;
+	background: transparent;
+	color: var(--accent-fill-rest, #4f6bed);
+	font-size: 0.75rem;
+	cursor: pointer;
+	padding: 0;
+	margin-left: auto;
+}
+
+.editor-nav__add {
+	color: var(--consultologist-text-muted);
+	font-style: italic;
+}
+
+::deep .pane-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+}
+
+.new-item-fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1rem;
+	margin-bottom: 0.5rem;
+}
+
+@media (max-width: 900px) {
+	.new-item-fields {
+		grid-template-columns: 1fr;
+	}
+}

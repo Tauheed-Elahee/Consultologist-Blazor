@@ -12,6 +12,10 @@
             }
         </p>
     </div>
+    @if (HeaderActions != null)
+    {
+        <div class="pane-header__actions">@HeaderActions</div>
+    }
 </div>
 
 @ChildContent
@@ -38,5 +42,6 @@
     [Parameter] public string Text { get; set; } = string.Empty;
     [Parameter] public bool Modified { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? HeaderActions { get; set; }
     [Parameter] public EventCallback<string> TextChanged { get; set; }
 }
