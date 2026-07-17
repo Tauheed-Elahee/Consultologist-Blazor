@@ -105,71 +105,17 @@
 	padding-top: 0.875rem;
 }
 
-.job-event-list {
-	list-style: none;
-	margin: 0.875rem 0 0;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
 
-.job-event-item {
-	display: flex;
-	align-items: baseline;
-	gap: 0.5rem;
-	font-size: 0.875rem;
-	line-height: 1.4;
-}
 
-.job-event-icon {
-	flex: 0 0 1rem;
-	text-align: center;
-	font-size: 0.75rem;
-	font-weight: 700;
-}
 
-.job-event-item--success .job-event-icon {
-	color: #107c10;
-}
 
-.job-event-item--failure .job-event-icon {
-	color: #a4262c;
-}
 
-.job-event-content {
-	display: flex;
-	flex-direction: column;
-	gap: 0.1rem;
-	min-width: 0;
-}
 
-.job-event-label {
-	color: var(--consultologist-text);
-}
 
-.job-event-item--failure .job-event-label {
-	color: #a4262c;
-}
 
-.job-event-detail {
-	color: var(--consultologist-text-muted);
-	font-size: 0.8rem;
-	overflow-wrap: break-word;
-}
 
-.job-event-item--skipped {
-	padding-left: 1rem;
-}
 
-.job-event-item--skipped .job-event-icon {
-	color: var(--consultologist-text-muted);
-}
 
-.job-event-item--skipped .job-event-label {
-	color: var(--consultologist-text-muted);
-	font-style: italic;
-}
 
 .provenance-chips {
 	display: flex;
@@ -271,4 +217,16 @@
 
 .node-group > summary.node-row::-webkit-details-marker {
 	display: none;
+}
+
+.node-status--success {
+	color: #107c10;
+}
+
+.node-status--failure {
+	color: #a4262c;
+}
+
+.node-status--muted {
+	color: var(--consultologist-text-muted);
 }
