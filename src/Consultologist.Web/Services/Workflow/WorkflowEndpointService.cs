@@ -14,6 +14,7 @@ public interface IWorkflowEndpointService
     Task<WorkflowPublishOutcome> PublishPackageAsync(WorkflowPackagePublishRequest request);
     Task<PublicChainView?> GetPublicChainAsync();
     Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version);
+    Task<IReadOnlyList<string>?> GetLineageAsync(string packageRef);
 }
 
 /// <summary>One entry of a specific catalog version's document (public registry blob).</summary>
@@ -246,6 +247,42 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
             return null;
         }
     }
+
+    public async Task<IReadOnlyList<string>?> GetLineageAsync(string packageRef)
+    {
+        var lineageUrl = _configuration["AzureFunction:WorkflowPackageLineageUrl"];
+
+        if (string.IsNullOrWhiteSpace(lineageUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{lineageUrl}?ref={Uri.EscapeDataString(packageRef)}");
+            await AddAuthorizationAsync(request);
+            using var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<LineagePayload>();
+            return payload?.Chain;
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Lineage unavailable for {PackageRef}.", packageRef);
+            return null;
+        }
+    }
+
+    private sealed record LineagePayload(List<string>? Chain);
 
     private sealed record CatalogDocument(Dictionary<string, PublicCatalogEntry>? Contracts);
 

@@ -146,6 +146,9 @@ public static class WorkflowManifestReader
         return collections;
     }
 
+    /// <summary>The fork's parent ref, or null for root packages.</summary>
+    public static string? ReadDerivedFrom(JsonElement manifest) => ReadString(manifest, "derivedFrom");
+
     private static string? ReadResultNodeId(JsonElement manifest)
     {
         var result = ReadString(manifest, "result");
