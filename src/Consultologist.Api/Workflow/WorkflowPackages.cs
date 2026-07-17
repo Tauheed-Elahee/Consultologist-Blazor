@@ -17,6 +17,7 @@ public sealed class WorkflowPackages
     private readonly IWorkflowPackageStore _packageStore;
     private readonly IWorkflowPackagePinResolver _pinResolver;
     private readonly WorkflowPackagePublisher _publisher;
+    private readonly WorkflowPackageLineageResolver _lineage;
     private readonly IAccountAuthorizer _authorizer;
     private readonly ILogger<WorkflowPackages> _logger;
 
@@ -24,12 +25,14 @@ public sealed class WorkflowPackages
         IWorkflowPackageStore packageStore,
         IWorkflowPackagePinResolver pinResolver,
         WorkflowPackagePublisher publisher,
+        WorkflowPackageLineageResolver lineage,
         IAccountAuthorizer authorizer,
         ILogger<WorkflowPackages> logger)
     {
         _packageStore = packageStore;
         _pinResolver = pinResolver;
         _publisher = publisher;
+        _lineage = lineage;
         _authorizer = authorizer;
         _logger = logger;
     }
@@ -143,6 +146,68 @@ public sealed class WorkflowPackages
             cancellationToken);
 
         return response;
+    }
+
+    [Function("WorkflowPackageLineage")]
+    public async Task<HttpResponseData> GetLineageAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "WorkflowPackages/Lineage")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        var rawRef = System.Web.HttpUtility.ParseQueryString(req.Url.Query)["ref"];
+
+        if (!WorkflowPackageRef.TryParse(rawRef, out var packageRef) || packageRef!.IsLatest)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest,
+                new { error = "ref must be a concrete package reference (name@vYYYY.MM.N)." }, cancellationToken);
+        }
+
+        if (!WorkflowPackageNaming.CanAccess(packageRef.Name, account.AppUserId))
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.Forbidden,
+                new { error = "Workflow package is not accessible from this account." }, cancellationToken);
+        }
+
+        IReadOnlyList<string> chain;
+        try
+        {
+            chain = await _lineage.GetLineageAsync(packageRef, cancellationToken);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("was not found", StringComparison.Ordinal))
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.NotFound,
+                new { error = ex.Message }, cancellationToken);
+        }
+
+        // The acct-* rule on every hop — unreachable by construction (publish
+        // stamping validates sources), enforced anyway.
+        if (chain.Any(hop => WorkflowPackageRef.TryParse(hop, out var hopRef)
+            && !WorkflowPackageNaming.CanAccess(hopRef!.Name, account.AppUserId)))
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.Forbidden,
+                new { error = "Workflow package lineage crosses another account's package." }, cancellationToken);
+        }
+
+        return await CreateJsonResponseAsync(req, HttpStatusCode.OK, new WorkflowPackageLineageResponse(chain), cancellationToken);
     }
 
     [Function("WorkflowPackagePublish")]

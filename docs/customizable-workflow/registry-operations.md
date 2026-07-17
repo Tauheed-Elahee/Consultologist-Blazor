@@ -164,6 +164,13 @@ granted to the identity the app *actually authenticates as*: the
 setting, not the Function App's system-assigned identity (the first production
 publish 403'd on exactly this distinction).
 
+## Lineage (#89)
+
+`GET /api/WorkflowPackages/Lineage?ref=name@vYYYY.MM.N` (authorized; owner-only
+per hop) walks `derivedFrom` manifests to the root and returns the ordered
+chain — e.g. `["acct-…@v2026.07.1", "general@v2026.07.6"]`. Manifest-only
+reads: lineage displays even for versions the engine would not execute.
+
 ## Blob CORS (added 2026-07-17, #105)
 
 The public account allows cross-origin `GET` from any origin (blob service CORS

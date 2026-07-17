@@ -581,3 +581,103 @@ public class PublicChainAssembleTests
         Assert.Null(chain.OutputContracts!.Contracts);
     }
 }
+
+public class WorkflowPackageLineageTests
+{
+    private static WorkflowPackageRef Ref(string value)
+    {
+        Assert.True(WorkflowPackageRef.TryParse(value, out var parsed));
+        return parsed!;
+    }
+
+    private static Func<WorkflowPackageRef, Task<string?>> Reader(Dictionary<string, string?> derivedFrom) =>
+        reference => derivedFrom.TryGetValue(reference.ToString(), out var parent)
+            ? Task.FromResult(parent)
+            : throw new InvalidOperationException($"Workflow package '{reference}' was not found in the registry.");
+
+    [Fact]
+    public async Task Walk_RootPackage_SingleElementChain()
+    {
+        var chain = await WorkflowPackageLineageResolver.WalkAsync(
+            Ref("general@v2026.07.6"),
+            Reader(new Dictionary<string, string?> { ["general@v2026.07.6"] = null }));
+
+        Assert.Equal(new[] { "general@v2026.07.6" }, chain);
+    }
+
+    [Fact]
+    public async Task Walk_ForkToRoot_OrderedChain()
+    {
+        var chain = await WorkflowPackageLineageResolver.WalkAsync(
+            Ref("acct-0123456789ab@v2026.07.2"),
+            Reader(new Dictionary<string, string?>
+            {
+                ["acct-0123456789ab@v2026.07.2"] = "acct-0123456789ab@v2026.07.1",
+                ["acct-0123456789ab@v2026.07.1"] = "general@v2026.07.6",
+                ["general@v2026.07.6"] = null
+            }));
+
+        Assert.Equal(
+            new[] { "acct-0123456789ab@v2026.07.2", "acct-0123456789ab@v2026.07.1", "general@v2026.07.6" },
+            chain);
+    }
+
+    [Fact]
+    public async Task Walk_LatestStart_Rejected()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            WorkflowPackageLineageResolver.WalkAsync(Ref("general@latest"), Reader(new())));
+    }
+
+    [Fact]
+    public async Task Walk_Cycle_Trips()
+    {
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WorkflowPackageLineageResolver.WalkAsync(
+                Ref("a@v2026.07.1"),
+                Reader(new Dictionary<string, string?>
+                {
+                    ["a@v2026.07.1"] = "b@v2026.07.1",
+                    ["b@v2026.07.1"] = "a@v2026.07.1"
+                })));
+
+        Assert.Contains("cycle", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Walk_DepthCap_Trips()
+    {
+        var derivedFrom = new Dictionary<string, string?>();
+        for (var i = 1; i <= WorkflowPackageLineageResolver.MaxDepth + 2; i++)
+        {
+            derivedFrom[$"p@v2026.07.{i}"] = $"p@v2026.07.{i + 1}";
+        }
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WorkflowPackageLineageResolver.WalkAsync(Ref("p@v2026.07.1"), Reader(derivedFrom)));
+
+        Assert.Contains("depth cap", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Walk_InvalidDerivedFrom_FailsLoud()
+    {
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WorkflowPackageLineageResolver.WalkAsync(
+                Ref("a@v2026.07.1"),
+                Reader(new Dictionary<string, string?> { ["a@v2026.07.1"] = "general@latest" })));
+
+        Assert.Contains("invalid derivedFrom", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Walk_MissingPackage_SurfacesTheRef()
+    {
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WorkflowPackageLineageResolver.WalkAsync(
+                Ref("a@v2026.07.1"),
+                Reader(new Dictionary<string, string?> { ["a@v2026.07.1"] = "gone@v2026.07.1" })));
+
+        Assert.Contains("gone@v2026.07.1", ex.Message, StringComparison.Ordinal);
+    }
+}
