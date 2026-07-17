@@ -138,7 +138,17 @@
                 <section class="content-card editor-pane">
                     @if (selectedKey == GraphKey)
                     {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">Workflow graph (read-only)</h3>
+                                <p class="muted-text">
+                                    Node structure, bindings, and output contracts are fixed in this editor —
+                                    edits here are prompt and standards texts only.
+                                </p>
+                            </div>
+                        </div>
                         <WorkflowDagView Diagram="@diagramText" />
+                        <h2 class="panel-title">Node details</h2>
                         <WorkflowNodeSummary Nodes="@nodes" />
                     }
                     else if (SelectedStandard() is { } standard)

@@ -1,17 +1,7 @@
 @* Read-only view of the workflow graph: v1 edits texts only, so nodes,
-   bindings, and the deliverable are shown but never editable here. Rendered
-   expanded as the master–detail editor's Graph pane (#110). *@
+   bindings, and the deliverable are shown but never editable here — the text
+   half of the Graph pane, beneath the rendered diagram (#114). *@
 @using Consultologist.Web.Services.Workflow
-
-<div class="pane-header">
-    <div>
-        <h3 class="panel-title">Workflow graph (read-only)</h3>
-        <p class="muted-text">
-            Node structure, bindings, and output contracts are fixed in this editor —
-            edits here are prompt and standards texts only.
-        </p>
-    </div>
-</div>
 
 @foreach (var node in Nodes)
 {
