@@ -13,7 +13,11 @@ public interface IWorkflowEndpointService
     Task<WorkflowPackageContentResponse> GetCurrentPackageContentAsync();
     Task<WorkflowPublishOutcome> PublishPackageAsync(WorkflowPackagePublishRequest request);
     Task<PublicChainView?> GetPublicChainAsync();
+    Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version);
 }
+
+/// <summary>One entry of a specific catalog version's document (public registry blob).</summary>
+public record PublicCatalogEntry(string? AgentName, string? AgentVersion);
 
 /// <summary>
 /// Minimal mirror of the anonymous Public/Chain document — currently just the
@@ -217,6 +221,33 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
             return null;
         }
     }
+
+    public async Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version)
+    {
+        var baseUrl = _configuration["AzureFunction:PublicRegistryBaseUrl"];
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Anonymous, immutable, CORS-open registry blob: the exact catalog
+            // document a job's catalogRef names — historically exact agent
+            // identities, one cacheable fetch per version.
+            var document = await _httpClient.GetFromJsonAsync<CatalogDocument>(
+                $"{baseUrl.TrimEnd('/')}/output-contracts/{Uri.EscapeDataString(version)}/output-contracts.json");
+            return document?.Contracts;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Catalog document {Version} unavailable; agent display falls back.", version);
+            return null;
+        }
+    }
+
+    private sealed record CatalogDocument(Dictionary<string, PublicCatalogEntry>? Contracts);
 
     private sealed record PublishErrorPayload(List<string>? Errors);
 
