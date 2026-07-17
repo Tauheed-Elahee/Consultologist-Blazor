@@ -164,6 +164,13 @@ granted to the identity the app *actually authenticates as*: the
 setting, not the Function App's system-assigned identity (the first production
 publish 403'd on exactly this distinction).
 
+## Blob CORS (added 2026-07-17, #105)
+
+The public account allows cross-origin `GET` from any origin (blob service CORS
+rule) so browsers fetch registry documents directly — the History page resolves
+each job's `catalogRef` document this way, and the marketing site will read the
+same blobs.
+
 ## The anonymous chain view — implemented 2026-07-16 (#95)
 
 `GET /api/Public/Chain` (no auth, open CORS, 60s cache): one JSON document

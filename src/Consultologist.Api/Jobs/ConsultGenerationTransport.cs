@@ -212,15 +212,11 @@ public sealed class ConsultGenerationJobs
             var nodes = package.Nodes.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
             // Provenance: identify the artifacts and input that produce this consult.
-            // Every catalog contract's agent version is recorded, keyed by contract id.
             // The hash covers the draft only (definition version 2); sections are
-            // package content, covered by the workflowPackage ref.
+            // package content, covered by the workflowPackage ref; agent identities
+            // are covered by catalogRef — the record stores refs, not copies (#105).
             // See docs/customizable-workflow/provenance.md.
             var effectiveInputHash = ConsultGenerationProvenance.ComputeDraftOnlyHash(request);
-            var agentVersions = _catalog.Entries.Values.ToDictionary(
-                entry => entry.ContractId,
-                entry => entry.AgentVersion,
-                StringComparer.Ordinal);
 
             _logger.LogInformation(
                 "StartConsultGenerationJob signaling job entity. InvocationId={InvocationId}, JobId={JobId}",
@@ -237,8 +233,7 @@ public sealed class ConsultGenerationJobs
                     resolvedPackageRef,
                     effectiveInputHash,
                     sectionSteps,
-                    nodes,
-                    agentVersions));
+                    nodes));
 
             _logger.LogInformation(
                 "StartConsultGenerationJob scheduling orchestration. InvocationId={InvocationId}, JobId={JobId}",
@@ -254,7 +249,6 @@ public sealed class ConsultGenerationJobs
                     effectiveInputHash,
                     sectionSteps,
                     nodes,
-                    agentVersions,
                     package.ResultNodeId,
                     items,
                     dataScalars,

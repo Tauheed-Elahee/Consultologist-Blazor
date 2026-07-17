@@ -58,7 +58,6 @@ public sealed class ConsultGenerationOrchestrator
                 input.EffectiveInputHash,
                 input.SectionSteps,
                 nodes,
-                input.AgentVersions,
                 input.EffectiveInputHashVersion,
                 input.CatalogRef));
 

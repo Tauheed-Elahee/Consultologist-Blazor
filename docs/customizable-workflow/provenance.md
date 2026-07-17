@@ -22,7 +22,7 @@ contain hyphens; derive a string key from the object when needed).
 | `model_weights_version` | Exact checkpoint identity of the model (DeepSeek V4 Pro at a pinned revision, e.g. HF repo + revision hash), not just the family name | Published weights registry |
 | `model_parameters` | Sampling params and the reasoning toggle (see below) | Git-tracked agent config / per-step package params |
 | `backend_fingerprint` | Serving-stack fingerprint per run, if the API exposes one | Response metadata |
-| `agent_version` | Foundry agent version (currently `test-json@45`) | Foundry + git attestation (below) |
+| `agent_version` | **Historical** (records ≤ 2026-07-17): contract → Foundry agent version map (`agentVersions`). Purified by #105 — later records store `catalogRef` only, and the catalog version document holds contract → {agentName, agentVersion}. The record stores refs, not copies: refs (`workflowPackage`, `catalogRef`) / operational snapshots (nodes, items — Durable replay determinism) / derived projections (`workflowOutputHash`) are the record's three living species | The job's `catalogRef` → catalog registry |
 | `snomed_version` | Terminology edition + version + import date | MCP `get_terminology_info` (returns exactly this) |
 | `mcp_version` | Release (git tag) of the Apache-2.0 `snomed-snowstorm-mcp` repo | Git tag; deployed app should attest its build (e.g. info endpoint returning the commit) |
 | `workflow_package` | `name@version` of the pinned workflow package (CalVer `vYYYY.MM.N`, e.g. `general@v2026.07.1`) | Package registry |

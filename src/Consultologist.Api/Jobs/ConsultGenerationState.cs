@@ -59,7 +59,6 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.EffectiveInputHash ??= input.EffectiveInputHash;
         State.SectionSteps ??= input.SectionSteps?.ToList();
         State.Nodes ??= input.Nodes?.ToList();
-        State.AgentVersions ??= input.AgentVersions?.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
         State.CatalogRef ??= input.CatalogRef;
 
@@ -256,7 +255,6 @@ public sealed record ConsultGenerationOrchestrationInput(
     string? EffectiveInputHash = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
-    IReadOnlyDictionary<string, string>? AgentVersions = null,
     string? ResultNodeId = null,
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
     IReadOnlyDictionary<string, string>? DataScalars = null,
@@ -271,7 +269,6 @@ public sealed record ConsultGenerationJobInitialize(
     string? EffectiveInputHash = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
-    IReadOnlyDictionary<string, string>? AgentVersions = null,
     int EffectiveInputHashVersion = 2,
     string? CatalogRef = null);
 
@@ -331,9 +328,9 @@ public sealed class ConsultGenerationJobState
     // (v2-v4 packages), 2 = draft only (v5 packages, package-format-v5.md).
     public int? EffectiveInputHashVersion { get; set; }
 
-    // Contract id → agent version for every catalog entry the deployment would use;
-    // the two scalar fields above mirror the text/concept-list entries until the next
-    // response SchemaVersion bump retires them.
+    // LEGACY, read-only since #105: records ≤ 2026-07-17 stored the contract →
+    // agent-version map; later records carry catalogRef only (the catalog version
+    // document holds the mapping). Kept so old records keep serving their map.
     public Dictionary<string, string>? AgentVersions { get; set; }
 
     // The concrete output-contract catalog version this job ran under
