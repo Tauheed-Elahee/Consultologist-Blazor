@@ -138,6 +138,7 @@
                 <section class="content-card editor-pane">
                     @if (selectedKey == GraphKey)
                     {
+                        <WorkflowDagView Diagram="@diagramText" />
                         <WorkflowNodeSummary Nodes="@nodes" />
                     }
                     else if (SelectedStandard() is { } standard)
@@ -210,7 +211,23 @@
 
     private string DraftKey => DraftKeyPrefix + content!.Ref;
 
-    private void Select(string key) => selectedKey = key;
+    private string? diagramText;
+
+    private void Select(string key)
+    {
+        selectedKey = key;
+
+        if (key == GraphKey && diagramText == null)
+        {
+            _ = LoadDiagramAsync();
+        }
+    }
+
+    private async Task LoadDiagramAsync()
+    {
+        diagramText = await WorkflowService.GetCurrentDiagramAsync();
+        await InvokeAsync(StateHasChanged);
+    }
 
     private WorkflowManifestReader.DataItemView? SelectedStandard() =>
         collections.SelectMany(c => c.Items).FirstOrDefault(item => item.File == selectedKey);

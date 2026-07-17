@@ -1,0 +1,55 @@
+@* The rendered workflow DAG (#114): the server's Mermaid text drawn client-side.
+   Render failures degrade to a muted line — the details list below the view
+   always remains the fallback. *@
+@inject IJSRuntime JS
+
+<div class="dag-view">
+    @if (_svg != null)
+    {
+        <div class="dag-view__canvas">
+            @((MarkupString)_svg)
+        </div>
+    }
+    else if (_renderError != null)
+    {
+        <p class="muted-text">The diagram could not be rendered: @_renderError</p>
+    }
+    else if (Diagram != null)
+    {
+        <div class="loading-state">
+            <FluentProgressRing />
+            <span>Rendering diagram&hellip;</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Diagram { get; set; }
+
+    private string? _svg;
+    private string? _renderError;
+    private string? _renderedFor;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Diagram == null || _renderedFor == Diagram)
+        {
+            return;
+        }
+
+        _renderedFor = Diagram;
+
+        try
+        {
+            _svg = await JS.InvokeAsync<string>("consultologistMermaid.render", Diagram);
+            _renderError = null;
+        }
+        catch (Exception ex)
+        {
+            _svg = null;
+            _renderError = ex.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+}
