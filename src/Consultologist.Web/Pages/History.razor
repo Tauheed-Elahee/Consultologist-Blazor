@@ -120,17 +120,35 @@
                                             </dl>
                                         </details>
 
-                                        @if (BuildNodeGroups(detail) is { Count: > 0 } nodeGroups)
-                                        {
-                                            <details class="job-detail-section">
-                                                <summary class="muted-text">Workflow (@nodeGroups.Count nodes)</summary>
-                                                <div class="node-grid">
-                                                    @foreach (var group in nodeGroups)
-                                                    {
+                                        var nodeGroups = BuildNodeGroups(detail);
+                                            var setupBadge = detail.StartedAtUtc != null
+                                                ? ("✓", "node-status--success")
+                                                : ("·", "node-status--muted");
+                                            var doneBadge = detail.Status switch
+                                            {
+                                                "Completed" => ("✓", "Done", "node-status--success"),
+                                                "Failed" => ("✗", "Failed", "node-status--failure"),
+                                                _ => ("●", detail.Status, "node-status--muted")
+                                            };
+                                        <details class="job-detail-section" open>
+                                            <summary class="muted-text">Workflow (@nodeGroups.Count nodes)</summary>
+                                            <div class="node-grid">
+                                                <div class="node-row">
+                                                    <span class="node-row__status @setupBadge.Item2">@setupBadge.Item1</span>
+                                                    <span class="node-row__label">Setup</span>
+                                                    <span class="node-row__contract muted-text">
+                                                        created @FormatDate(detail.CreatedAtUtc ?? default)@(detail.StartedAtUtc != null ? $" · started {FormatDate(detail.StartedAtUtc.Value)}" : "")
+                                                    </span>
+                                                    <span class="node-row__hashes hash-text">
+                                                        <span title="@detail.EffectiveInputHash">in @HashPrefix(detail.EffectiveInputHash)</span>
+                                                    </span>
+                                                </div>
+                                                @foreach (var group in nodeGroups)
+                                                {
                                                         @if (group.Items.Count == 0)
                                                         {
                                                             <div class="node-row">
-                                                                <span class="node-row__status">@StatusGlyph(group.NodeLevel?.Status)</span>
+                                                                <span class="node-row__status @StatusCss(group.NodeLevel?.Status)">@StatusGlyph(group.NodeLevel?.Status)</span>
                                                                 <span class="node-row__label">@group.Descriptor.Label</span>
                                                                 <span class="node-row__contract muted-text">@ContractLabel(group.Descriptor, detail)</span>
                                                                 <span class="node-row__hashes hash-text">
@@ -143,7 +161,7 @@
                                                         {
                                                             <details class="node-group">
                                                                 <summary class="node-row">
-                                                                    <span class="node-row__status">@StatusGlyph(group.NodeLevel?.Status)</span>
+                                                                    <span class="node-row__status @StatusCss(group.NodeLevel?.Status)">@StatusGlyph(group.NodeLevel?.Status)</span>
                                                                     <span class="node-row__label">@group.Descriptor.Label</span>
                                                                     <span class="node-row__contract muted-text">
                                                                         @ContractLabel(group.Descriptor, detail) · per @group.Descriptor.ForEach item (@group.Items.Count)
@@ -152,7 +170,7 @@
                                                                 @foreach (var (itemId, entry) in group.Items)
                                                                 {
                                                                     <div class="node-row node-row--item">
-                                                                        <span class="node-row__status">@StatusGlyph(entry.Status)</span>
+                                                                        <span class="node-row__status @StatusCss(entry.Status)">@StatusGlyph(entry.Status)</span>
                                                                         <span class="node-row__label">@itemId</span>
                                                                         <span class="node-row__hashes hash-text">
                                                                             <span title="@entry.InputHash">in @HashPrefix(entry.InputHash)</span>
@@ -166,26 +184,23 @@
                                                                 }
                                                             </details>
                                                         }
+                                                }
+                                                <div class="node-row">
+                                                    <span class="node-row__status @doneBadge.Item3">@doneBadge.Item1</span>
+                                                    <span class="node-row__label">@doneBadge.Item2</span>
+                                                    <span class="node-row__contract muted-text">
+                                                        @(detail.CompletedAtUtc != null ? FormatDate(detail.CompletedAtUtc.Value) : "")
+                                                        @(detail.RuntimeFailureError != null ? $" · {detail.RuntimeFailureError}" : "")
+                                                    </span>
+                                                    @if (detail.WorkflowOutputHash != null)
+                                                    {
+                                                        <span class="node-row__hashes hash-text">
+                                                            <span title="@detail.WorkflowOutputHash">out @HashPrefix(detail.WorkflowOutputHash)</span>
+                                                        </span>
                                                     }
                                                 </div>
-                                            </details>
-                                        }
-
-                                        <ol class="job-event-list">
-                                            @foreach (var entry in GetTimeline(detail))
-                                            {
-                                                <li class="job-event-item job-event-item--@EntryKindClass(entry.Kind)">
-                                                    <span class="job-event-icon">@EntryIcon(entry.Kind)</span>
-                                                    <div class="job-event-content">
-                                                        <span class="job-event-label">@entry.Label</span>
-                                                        @if (!string.IsNullOrWhiteSpace(entry.Detail))
-                                                        {
-                                                            <span class="job-event-detail">@entry.Detail</span>
-                                                        }
-                                                    </div>
-                                                </li>
-                                            }
-                                        </ol>
+                                            </div>
+                                        </details>
                                     }
                                 </div>
                             </details>
@@ -308,18 +323,6 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private static IReadOnlyList<JobTimelineEntry> GetTimeline(ConsultGenerationJobResponse response) =>
-        (response.History ?? [])
-            .Select(e => new JobTimelineEntry(
-                e.Kind switch
-                {
-                    "success" => JobTimelineEntryKind.Success,
-                    "failure" => JobTimelineEntryKind.Failure,
-                    _ => JobTimelineEntryKind.Skipped
-                },
-                e.Label,
-                e.Detail))
-            .ToList();
 
     private static string FormatDate(DateTimeOffset date)
     {
@@ -337,6 +340,13 @@
 
     private static string? HashPrefix(string? hash) =>
         string.IsNullOrEmpty(hash) ? "—" : hash[..Math.Min(12, hash.Length)] + "…";
+
+    private static string StatusCss(string? status) => status switch
+    {
+        "Completed" => "node-status--success",
+        "Failed" => "node-status--failure",
+        _ => "node-status--muted"
+    };
 
     private static string StatusGlyph(string? status) => status switch
     {
@@ -401,21 +411,7 @@
         return groups;
     }
 
-    private enum JobTimelineEntryKind { Success, Failure, Skipped }
 
-    private sealed record JobTimelineEntry(JobTimelineEntryKind Kind, string Label, string? Detail);
 
-    private static string EntryKindClass(JobTimelineEntryKind kind) => kind switch
-    {
-        JobTimelineEntryKind.Success => "success",
-        JobTimelineEntryKind.Failure => "failure",
-        _ => "skipped"
-    };
 
-    private static string EntryIcon(JobTimelineEntryKind kind) => kind switch
-    {
-        JobTimelineEntryKind.Success => "✓",
-        JobTimelineEntryKind.Failure => "✗",
-        _ => "○"
-    };
 }
