@@ -171,3 +171,12 @@
 .editor-nav__item--nested {
 	padding-left: 1.6rem;
 }
+
+::deep .dag-view__canvas {
+	overflow-x: auto;
+	padding: 0.5rem 0 1rem;
+}
+
+::deep .dag-view__canvas svg {
+	max-width: none;
+}

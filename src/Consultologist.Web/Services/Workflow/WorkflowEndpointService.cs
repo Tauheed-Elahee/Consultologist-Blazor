@@ -15,6 +15,7 @@ public interface IWorkflowEndpointService
     Task<PublicChainView?> GetPublicChainAsync();
     Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version);
     Task<IReadOnlyList<string>?> GetLineageAsync(string packageRef);
+    Task<string?> GetCurrentDiagramAsync();
 }
 
 /// <summary>One entry of a specific catalog version's document (public registry blob).</summary>
@@ -281,6 +282,42 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
             return null;
         }
     }
+
+    public async Task<string?> GetCurrentDiagramAsync()
+    {
+        var diagramUrl = _configuration["AzureFunction:WorkflowPackageDiagramUrl"];
+
+        if (string.IsNullOrWhiteSpace(diagramUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, diagramUrl);
+            await AddAuthorizationAsync(request);
+            using var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<DiagramPayload>();
+            return payload?.Diagram;
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Workflow diagram unavailable.");
+            return null;
+        }
+    }
+
+    private sealed record DiagramPayload(string? Diagram);
 
     private sealed record LineagePayload(List<string>? Chain);
 
