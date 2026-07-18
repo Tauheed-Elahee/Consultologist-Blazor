@@ -309,6 +309,7 @@
   private string consultDraft = string.Empty;
   private bool editingDraft;
   private bool runEventSeen;
+  private string? runTerminalStatus;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
@@ -392,6 +393,7 @@
   {
     editingDraft = false;
     runEventSeen = false;
+    runTerminalStatus = null;
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
@@ -654,6 +656,7 @@
 
         if (response.Status is "Completed" or "Failed")
         {
+          runTerminalStatus = response.Status;
           aiProgressNotice = null;
           MarkPollingFallbackCompleted();
           return;
@@ -671,10 +674,6 @@
 
   private async Task<ConsultGenerationEventHandlingResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
   {
-    // Any event means the stream is live and the job was accepted — the
-    // rail's Setup row is done.
-    runEventSeen = true;
-
     try
     {
       switch (eventName)
@@ -764,6 +763,7 @@
             ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
           }
 
+          runTerminalStatus = final?.Status ?? "Completed";
           await InvokeAsync(StateHasChanged);
           return new ConsultGenerationEventHandlingResult(
             ConsultGenerationEventResult.Completed,
@@ -775,6 +775,7 @@
           {
             aiProgressNotice = null;
             aiRequestError = error.Error;
+            runTerminalStatus = "Failed";
             isAiRequestLoading = false;
             await InvokeAsync(StateHasChanged);
             return new ConsultGenerationEventHandlingResult(
@@ -812,6 +813,9 @@
     ConsultGenerationJobResponse response,
     IReadOnlyList<SectionStandard> sectionSnapshots)
   {
+    // Every payload applied here is snapshot-shaped (the snapshot event, a
+    // done payload, or a polled response) — the rail's Setup row completes
+    // on it.
     runEventSeen = true;
     generatedSections = response.GeneratedSections;
     failedSectionErrors = response.FailedSections;
@@ -881,8 +885,8 @@
   private static bool IsForkRef(string? packageRef) =>
     packageRef != null && packageRef.StartsWith("acct-", StringComparison.Ordinal);
 
-  // Setup covers standards resolution and job submission; the stream's first
-  // event marks it done — symmetric with the done event closing the run.
+  // Setup covers standards resolution and job submission; the snapshot event
+  // marks it done — symmetric with done/error resolving the Done row.
   private string? SetupRowStatus()
   {
     return runEventSeen || !isAiRequestLoading ? "Completed" : "Running";
@@ -917,14 +921,25 @@
     return null;
   }
 
+  // The Done row resolves only on a terminal signal: the done event, an error
+  // event, or a terminal polled status. Failed sections downgrade a Completed
+  // status, matching the error bars.
   private string? DoneRowStatus()
   {
-    if (isAiRequestLoading)
+    if (runTerminalStatus != null)
     {
-      return null;
+      return runTerminalStatus == "Failed" || !string.IsNullOrEmpty(aiRequestError)
+        ? "Failed"
+        : "Completed";
     }
 
-    return string.IsNullOrEmpty(aiRequestError) ? "Completed" : "Failed";
+    // The run stopped without a terminal event (e.g., the submit call threw).
+    if (!isAiRequestLoading && !string.IsNullOrEmpty(aiRequestError))
+    {
+      return "Failed";
+    }
+
+    return null;
   }
 
   private static string RunStatusGlyph(string? status) => status switch
