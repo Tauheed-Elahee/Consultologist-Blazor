@@ -316,7 +316,15 @@
             return;
         }
 
-        _catalogCache[version] = await WorkflowService.GetCatalogAsync(version);
+        // Only cache success: a failed fetch (transient, or blocked before #122's
+        // CSP fix) retries on the next expansion instead of poisoning the session.
+        var document = await WorkflowService.GetCatalogAsync(version);
+
+        if (document != null)
+        {
+            _catalogCache[version] = document;
+        }
+
         await InvokeAsync(StateHasChanged);
     }
 
