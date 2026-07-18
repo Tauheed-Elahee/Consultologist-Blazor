@@ -13,9 +13,46 @@ through `IConfiguration` accept either form; settings read directly via
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
-| `Auth__Authority` | Entra authority URL, e.g. `https://login.microsoftonline.com/<tenant-id>/v2.0` | — | yes (startup throws without it) |
+| `Auth__Authority` | Entra authority URL. Production uses the multi-tenant `https://login.microsoftonline.com/organizations/v2.0` (since 2026-07-18); a tenanted `https://login.microsoftonline.com/<tenant-id>/v2.0` locks sign-in to one tenant. Issuer validation adapts automatically: the validator accepts whatever the authority's OIDC metadata declares, including the `{tenantid}` template the `organizations` endpoint publishes | — | yes (startup throws without it) |
 | `Auth__Audience` | Expected token audience, e.g. `api://<client-id>` | — | yes |
 | `Auth__RequiredScope` | Scope name callers must carry, e.g. `access_as_user` | none (scope check skipped) | no |
+
+### Multi-tenant sign-in (2026-07-18)
+
+Sign-in accepts any Microsoft Entra organizational tenant. Three settings make
+that true, and only one of them lives in this repo's deployment surface:
+
+1. **`signInAudience` = `AzureADMultipleOrgs`** on **both** app registrations
+   (the SPA and the API). Portal: App registrations → *Authentication* →
+   "Supported account types" (also visible in the registration's Manifest).
+   The API being single-tenant is the classic failure: a foreign tenant has
+   no service principal for it and sign-in dies with **AADSTS500011**
+   ("resource principal not found") — a consent/provisioning problem, never a
+   credential one.
+2. **`api.knownClientApplications` = `[<spa-client-id>]`** on the **API**
+   registration, so a foreign tenant consents to the SPA and the API in one
+   combined prompt. Manifest-only — there is no portal blade for it. Do not
+   confuse it with the *Expose an API* blade's "Authorized client
+   applications" (`preAuthorizedApplications`), which *skips* consent rather
+   than bundling it.
+3. **`Auth__Authority`** on the Function App set to the `organizations`
+   authority (table above). Locally this comes from `local.settings.json`
+   (gitignored).
+
+What a foreign tenant still needs: consent. Where user consent is allowed,
+the first sign-in shows the combined prompt and provisions both service
+principals; tenants that gate consent need their admin to visit
+`https://login.microsoftonline.com/<their-tenant-id>/adminconsent?client_id=<spa-client-id>`.
+
+Credential posture is unchanged by any of this: the SPA is a public client
+(authorization code + PKCE — client secrets/certificates are never used and
+none exist), and the API only validates incoming tokens, reaching storage via
+the user-assigned managed identity. Neither registration carries a
+credential, so there is nothing to expire or rotate.
+
+A first sign-in from a foreign tenant creates an app account like any other,
+and it lands **inactive** — the activation gate is the admission control for
+cross-tenant users (see `docs/ACCOUNTS.md`).
 
 ## Azure AI Foundry agent (`Agents/AgentSectionGenerator.cs`)
 

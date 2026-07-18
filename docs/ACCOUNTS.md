@@ -29,25 +29,38 @@ Scope: access_as_user
 requestedAccessTokenVersion: 2
 ```
 
-The SPA app registration must have delegated permission to the API scope. The API registration may also pre-authorize the SPA client application for `access_as_user`.
+The SPA app registration must have delegated permission to the API scope.
+
+Since 2026-07-18 sign-in is **multi-tenant**: both registrations use
+`signInAudience: AzureADMultipleOrgs`, and the API registration lists the SPA
+client id in `api.knownClientApplications` so a foreign tenant grants one
+combined consent covering both apps (see the "Multi-tenant sign-in" section
+in `CONFIGURATION.md` for where each setting lives and what a foreign tenant
+still needs).
 
 The Function App settings should be:
 
 ```text
-Auth__Authority=https://login.microsoftonline.com/4258958f-9334-4a8c-af82-d7cddc47ae50/v2.0
+Auth__Authority=https://login.microsoftonline.com/organizations/v2.0
 Auth__Audience=b3866040-8bae-4c01-88ba-ecff646df451
 Auth__RequiredScope=access_as_user
 AccountStorage__ConnectionStringName=AzureWebJobsStorage
 ```
 
-Expected access-token claims:
+Expected access-token claims (the issuer varies per signing tenant; the
+validator accepts any tenant's issuer under the `organizations` authority):
 
 ```text
 ver=2.0
-iss=https://login.microsoftonline.com/4258958f-9334-4a8c-af82-d7cddc47ae50/v2.0
+iss=https://login.microsoftonline.com/<tenant-id>/v2.0
 aud=b3866040-8bae-4c01-88ba-ecff646df451
 scp=access_as_user
 ```
+
+Accounts are tenant-agnostic: a first sign-in from any organizational tenant
+resolves-or-creates an app account exactly like a home-tenant sign-in, and
+new accounts land **inactive**. The activation flip in the accounts table is
+the sole admission control for cross-tenant users.
 
 Bearer tokens must not be pasted into logs, issues, or chat. Use decoded claim summaries when debugging.
 
