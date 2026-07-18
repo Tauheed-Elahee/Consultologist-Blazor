@@ -1,22 +1,103 @@
-.consult-builder {
+/* Setup phase: one centered panel, the draft front and center. */
+.consult-setup {
+	max-width: 52rem;
+	margin: 0 auto;
+	width: 100%;
+}
+
+.consult-setup .action-row {
+	justify-content: flex-end;
+}
+
+.setup-context {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	font-size: 0.85rem;
+}
+
+.setup-context__line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.provenance-chip {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.75rem;
+	padding: 0.2rem 0.6rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: 999px;
+	background: var(--consultologist-surface);
+}
+
+.provenance-chip--fork {
+	border-style: dashed;
+	font-weight: 600;
+}
+
+.setup-sections > summary {
+	cursor: pointer;
+	user-select: none;
+	color: var(--consultologist-text-muted);
+}
+
+.setup-sections ul {
+	margin: 0.4rem 0 0;
+	padding-left: 1.25rem;
+	columns: 2;
+	column-gap: 2rem;
+}
+
+.setup-sections li {
+	padding: 0.1rem 0;
+	break-inside: avoid;
+}
+
+/* Run phase: collapsed draft bar over a note | run-rail grid. */
+.consult-run {
+	display: flex;
+	flex-direction: column;
+	gap: var(--section-gap);
+	min-width: 0;
+}
+
+.draft-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.5rem 0.75rem 0.5rem 1rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm);
+	background: var(--consultologist-surface);
+}
+
+.draft-bar__label {
+	flex: 0 0 auto;
+	font-size: 0.75rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--consultologist-text-muted);
+}
+
+.draft-bar__snippet {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 0.85rem;
+}
+
+.consult-run__grid {
 	display: grid;
-	grid-template-columns: minmax(280px, 1fr) minmax(0, 1.6fr) minmax(220px, 1fr);
+	grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr);
 	gap: var(--section-gap);
 	align-items: start;
 	min-width: 0;
 }
-
-.consult-builder__input {
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-	min-width: 0;
-}
-
-.consult-builder__result {
-	min-width: 0;
-}
-
 
 .result-header {
 	display: flex;
@@ -25,15 +106,6 @@
 	justify-content: space-between;
 	gap: 0.75rem;
 	margin-bottom: 1rem;
-}
-
-details.raw-response {
-	margin-top: 1rem;
-}
-
-details.raw-response summary {
-	cursor: pointer;
-	color: var(--consultologist-text-muted);
 }
 
 .empty-note-state {
@@ -48,115 +120,99 @@ details.raw-response summary {
 	padding: clamp(1rem, 2vw, 1.5rem);
 }
 
-.job-progress {
+/* The live run grid shares History's node-row visual language (scoped CSS
+   cannot be reused across pages, so the rules are mirrored here). */
+.node-grid {
 	display: flex;
 	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.node-row {
+	display: flex;
+	align-items: baseline;
 	gap: 0.75rem;
-}
-
-.job-progress__stages {
+	padding: 0.2rem 0.25rem;
+	font-size: 0.8rem;
 	list-style: none;
-	margin: 0;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 0.3rem;
 }
 
-.job-progress__stage {
-	display: flex;
-	align-items: flex-start;
-	gap: 0.5rem;
-	font-size: 0.85rem;
+.node-row__status {
+	width: 1rem;
+	text-align: center;
 }
 
-.job-progress__stage-text {
-	display: flex;
-	flex-direction: column;
-	gap: 0.1rem;
-}
-
-.job-progress__stage-caption {
-	font-size: 0.75rem;
-	color: var(--consultologist-text-muted);
-}
-
-.job-progress__stage--completed .job-progress__stage-icon,
-.job-progress__stage--completed .job-progress__stage-label {
-	color: var(--consultologist-text-muted);
-}
-
-.job-progress__stage--current .job-progress__stage-icon {
-	color: var(--accent-fill-rest);
-}
-
-.job-progress__stage--current .job-progress__stage-label {
+.node-row__label {
 	font-weight: 600;
 }
 
-.job-progress__stage--pending .job-progress__stage-icon,
-.job-progress__stage--pending .job-progress__stage-label {
+.node-row--item {
+	padding-left: 1.75rem;
+}
+
+.node-row--item .node-row__label {
+	font-weight: 400;
+}
+
+.node-row__count {
+	margin-left: auto;
+	white-space: nowrap;
+	font-size: 0.75rem;
+}
+
+.node-row__caption {
+	padding-left: 3.4rem;
+	font-size: 0.75rem;
+}
+
+.node-group > summary.node-row {
+	cursor: pointer;
+	user-select: none;
+}
+
+.node-group > summary.node-row::-webkit-details-marker {
+	display: none;
+}
+
+.node-status--success {
+	color: #107c10;
+}
+
+.node-status--failure {
+	color: #a4262c;
+}
+
+.node-status--muted {
 	color: var(--consultologist-text-muted);
-	opacity: 0.5;
+	opacity: 0.6;
 }
 
-.job-progress__sections {
-	display: flex;
-	flex-direction: column;
-	gap: 0.35rem;
+.node-status--current {
+	color: var(--consultologist-accent);
 }
 
-.job-progress__section-bar {
-	height: 4px;
-	background: var(--consultologist-border);
-	border-radius: 2px;
-	overflow: hidden;
-}
-
-.job-progress__section-fill {
-	height: 100%;
-	background: var(--accent-fill-rest);
-	border-radius: 2px;
-	transition: width 0.3s ease;
-}
-
-.job-completion {
-	font-size: 0.85rem;
+.node-row__chevron {
+	flex: 0 0 0.9rem;
+	text-align: center;
 	color: var(--consultologist-text-muted);
+	display: inline-block;
+	transition: transform 0.15s ease;
 }
 
-.job-completion--success {
-	color: var(--success-foreground, var(--consultologist-text-muted));
-}
-
-.job-completion--failed {
-	color: var(--error-foreground, var(--consultologist-text-muted));
-}
-
-.job-progress__sub-stages {
-	list-style: none;
-	margin: 0.4rem 0 0 0;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-}
-
-.job-progress__sub-stages .job-progress__stage {
-	font-size: 0.78rem;
-}
-
-.job-progress__stage--failed .job-progress__stage-icon,
-.job-progress__stage--failed .job-progress__stage-label {
-	color: var(--error-foreground, var(--consultologist-text-muted));
+.node-group[open] > summary .node-row__chevron {
+	transform: rotate(90deg);
 }
 
 @media (max-width: 1024px) {
-	.consult-builder {
+	.consult-run__grid {
 		grid-template-columns: 1fr;
 	}
 
 	.empty-note-state {
 		min-height: 12rem;
+	}
+
+	.setup-sections ul {
+		columns: 1;
 	}
 }
