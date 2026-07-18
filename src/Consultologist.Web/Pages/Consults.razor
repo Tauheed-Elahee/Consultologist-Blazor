@@ -308,6 +308,7 @@
 
   private string consultDraft = string.Empty;
   private bool editingDraft;
+  private bool runEventSeen;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
@@ -390,6 +391,7 @@
   private async Task CreateConsultAsync()
   {
     editingDraft = false;
+    runEventSeen = false;
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
@@ -669,6 +671,10 @@
 
   private async Task<ConsultGenerationEventHandlingResult> HandleConsultGenerationJobEventAsync(string eventName, string json)
   {
+    // Any event means the stream is live and the job was accepted — the
+    // rail's Setup row is done.
+    runEventSeen = true;
+
     try
     {
       switch (eventName)
@@ -806,6 +812,7 @@
     ConsultGenerationJobResponse response,
     IReadOnlyList<SectionStandard> sectionSnapshots)
   {
+    runEventSeen = true;
     generatedSections = response.GeneratedSections;
     failedSectionErrors = response.FailedSections;
     totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
@@ -874,16 +881,11 @@
   private static bool IsForkRef(string? packageRef) =>
     packageRef != null && packageRef.StartsWith("acct-", StringComparison.Ordinal);
 
-  // Setup covers standards resolution and job submission; the first node data
-  // arriving (snapshot or node-completed) marks it done.
+  // Setup covers standards resolution and job submission; the stream's first
+  // event marks it done — symmetric with the done event closing the run.
   private string? SetupRowStatus()
   {
-    if (nodeLabels != null || totalAnalysisStageCount > 0 || !isAiRequestLoading)
-    {
-      return "Completed";
-    }
-
-    return "Running";
+    return runEventSeen || !isAiRequestLoading ? "Completed" : "Running";
   }
 
   // Per-item status under one forEach node. Pair ticks come from the
