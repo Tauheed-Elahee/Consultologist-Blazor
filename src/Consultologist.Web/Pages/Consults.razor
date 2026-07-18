@@ -6,6 +6,7 @@
 @using Consultologist.Web.Services.AI
 @using Consultologist.Web.Services.Diagnostics
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 @inject IAIEndpointService AIService
 @inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
@@ -125,9 +126,17 @@
                             <div>
                                 <div class="result-header">
                                     <h2 class="panel-title">Consultation note</h2>
-                                    <FluentBadge Appearance="Appearance.Accent">
-                                        @generatedSections.Count sections
-                                    </FluentBadge>
+                                    <div class="result-header__actions">
+                                        <FluentBadge Appearance="Appearance.Accent">
+                                            @generatedSections.Count sections
+                                        </FluentBadge>
+                                        @if (!isAiRequestLoading || runTerminalStatus != null)
+                                        {
+                                            <FluentButton Appearance="Appearance.Stealth" @onclick="CopyNoteAsync">
+                                                @CopyButtonLabel
+                                            </FluentButton>
+                                        }
+                                    </div>
                                 </div>
 
                                 <article class="note-preview generated-note">
@@ -310,6 +319,8 @@
   private bool editingDraft;
   private bool runEventSeen;
   private string? runTerminalStatus;
+  private string? copyFeedback;
+  private int copyFeedbackToken;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
@@ -880,6 +891,37 @@
   private void BackToRun()
   {
     editingDraft = false;
+  }
+
+  private string CopyButtonLabel => copyFeedback ?? "Copy note";
+
+  // Copies the finished note as plain text in note order: section name on its
+  // own line, prose below, blank line between sections.
+  private async Task CopyNoteAsync()
+  {
+    var sections = sectionStandards
+      .Where(standard => generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+      .Select(standard => $"{standard.Name}\n{generatedSections[standard.Id].Trim()}");
+    var text = string.Join("\n\n", sections);
+
+    try
+    {
+      await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+      copyFeedback = "Copied ✓";
+    }
+    catch (Exception)
+    {
+      copyFeedback = "Copy failed";
+    }
+
+    var token = ++copyFeedbackToken;
+    await Task.Delay(TimeSpan.FromSeconds(2));
+
+    if (token == copyFeedbackToken)
+    {
+      copyFeedback = null;
+      await InvokeAsync(StateHasChanged);
+    }
   }
 
   private static bool IsForkRef(string? packageRef) =>
