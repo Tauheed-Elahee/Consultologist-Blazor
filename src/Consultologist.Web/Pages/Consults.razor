@@ -29,8 +29,9 @@
 
 <AuthorizeView>
     <Authorized>
-        <div class="consult-builder">
-            <div class="consult-builder__input">
+        @if (!IsRunPhase)
+        {
+            <div class="consult-setup">
                 <section class="workflow-panel">
                     <div class="form-stack">
                         <h2 class="panel-title">Consult details</h2>
@@ -45,6 +46,42 @@
                                             Rows="16" />
                         </label>
 
+                        @if (isStandardsLoading)
+                        {
+                            <div class="loading-state">
+                                <FluentProgressRing />
+                                <span>Loading section standards...</span>
+                            </div>
+                        }
+                        else if (!string.IsNullOrEmpty(standardsLoadError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                        }
+                        else if (sectionStandards.Count > 0)
+                        {
+                            <div class="setup-context">
+                                <span class="setup-context__line">
+                                    Runs
+                                    <span class="provenance-chip @(IsForkRef(workflowPackageRef) ? "provenance-chip--fork" : null)">@workflowPackageRef</span>
+                                    <span class="muted-text">· @sectionStandards.Count sections</span>
+                                </span>
+                                <details class="setup-sections">
+                                    <summary>Sections it will generate</summary>
+                                    <ul>
+                                        @foreach (var standard in sectionStandards)
+                                        {
+                                            <li>@standard.Name</li>
+                                        }
+                                    </ul>
+                                </details>
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(aiRequestError))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
+                        }
+
                         <div class="action-row">
                             <FluentButton Appearance="Appearance.Accent"
                                           @onclick="CreateConsultAsync"
@@ -55,140 +92,144 @@
                     </div>
                 </section>
             </div>
+        }
+        else
+        {
+            <div class="consult-run">
+                <div class="draft-bar">
+                    <span class="draft-bar__label">Draft</span>
+                    <span class="draft-bar__snippet" title="@consultDraft">@DraftSnippet</span>
+                    <FluentButton Appearance="Appearance.Stealth"
+                                  @onclick="EditDraft"
+                                  Disabled="@isAiRequestLoading">
+                        Edit draft
+                    </FluentButton>
+                </div>
 
-                <section class="result-panel consult-builder__result">
-                    @if (generatedSections.Count > 0)
-                    {
-                        <div>
-                            <div class="result-header">
-                                <h2 class="panel-title">Consultation note</h2>
-                                <FluentBadge Appearance="Appearance.Accent">
-                                    @generatedSections.Count sections
-                                </FluentBadge>
-                            </div>
-
-                            <article class="note-preview generated-note">
-                                @foreach (var standard in sectionStandards)
-                                {
-                                    if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
-                                    {
-                                        <section class="note-section">
-                                            <h3>@standard.Name</h3>
-                                            <p>@prose</p>
-                                        </section>
-                                    }
-                                }
-                            </article>
-                        </div>
-                    }
-                    else if (!isStandardsLoading && !isAiRequestLoading)
-                    {
-                        <div class="empty-note-state">
-                            <h2 class="panel-title">Consultation note</h2>
-                            <p class="panel-description">
-                                Generated consult sections will appear here after you enter a draft and create the consult.
-                            </p>
-                        </div>
-                    }
-                </section>
-
-                <section class="workflow-panel">
-                    <div class="form-stack">
-                        <h2 class="panel-title">Progress</h2>
-
-                        @if (isStandardsLoading)
+                <div class="consult-run__grid">
+                    <section class="result-panel">
+                        @if (generatedSections.Count > 0)
                         {
-                            <div class="loading-state">
-                                <FluentProgressRing />
-                                <span>Loading section standards...</span>
+                            <div>
+                                <div class="result-header">
+                                    <h2 class="panel-title">Consultation note</h2>
+                                    <FluentBadge Appearance="Appearance.Accent">
+                                        @generatedSections.Count sections
+                                    </FluentBadge>
+                                </div>
+
+                                <article class="note-preview generated-note">
+                                    @foreach (var standard in sectionStandards)
+                                    {
+                                        if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                        {
+                                            <section class="note-section">
+                                                <h3>@standard.Name</h3>
+                                                <p>@prose</p>
+                                            </section>
+                                        }
+                                    }
+                                </article>
                             </div>
                         }
-
-                        @{
-                            var stageTotal = totalAnalysisStageCount > 0 ? totalAnalysisStageCount : 6;
-                            var stdsDone = !isStandardsLoading && string.IsNullOrEmpty(standardsLoadError);
-                            var submitDone = totalSectionCount > 0;
+                        else
+                        {
+                            <div class="empty-note-state">
+                                <h2 class="panel-title">Consultation note</h2>
+                                <p class="panel-description">
+                                    Sections appear here as they are generated.
+                                </p>
+                                @if (isAiRequestLoading)
+                                {
+                                    <div class="loading-state">
+                                        <FluentProgressRing />
+                                        <span>Generating&hellip;</span>
+                                    </div>
+                                }
+                            </div>
                         }
-                        <div class="job-progress">
-                            <ol class="job-progress__stages">
-                                <li class="job-progress__stage @(stdsDone ? "job-progress__stage--completed" : isStandardsLoading ? "job-progress__stage--current" : "job-progress__stage--pending")">
-                                    <span class="job-progress__stage-icon" aria-hidden="true">@(stdsDone ? "✓" : "○")</span>
-                                    <span class="job-progress__stage-text">
-                                        <span class="job-progress__stage-label">Section standards</span>
-                                    </span>
-                                </li>
-                                <li class="job-progress__stage @(submitDone ? "job-progress__stage--completed" : "job-progress__stage--pending")">
-                                    <span class="job-progress__stage-icon" aria-hidden="true">@(submitDone ? "✓" : "○")</span>
-                                    <span class="job-progress__stage-text">
-                                        <span class="job-progress__stage-label">Sending consult</span>
-                                    </span>
-                                </li>
+                    </section>
+
+                    <section class="workflow-panel run-rail">
+                        <div class="form-stack">
+                            <h2 class="panel-title">Run</h2>
+
+                            @{
+                                var stageTotal = totalAnalysisStageCount > 0 ? totalAnalysisStageCount : 6;
+                                var setupStatus = SetupRowStatus();
+                            }
+                            <div class="node-grid">
+                                <div class="node-row">
+                                    <span class="node-row__chevron" aria-hidden="true"></span>
+                                    <span class="node-row__status @RunStatusCss(setupStatus)">@RunStatusGlyph(setupStatus)</span>
+                                    <span class="node-row__label">Setup</span>
+                                </div>
+
                                 @for (var i = 1; i <= stageTotal; i++)
                                 {
                                     var stepNum = i;
                                     var done = completedAnalysisStageCount >= stepNum;
                                     var current = !done && completedAnalysisStageCount == stepNum - 1 && isAiRequestLoading;
-                                    var showSubStages = stepNum == stageTotal && (done || current);
-                                    <li class="job-progress__stage @(done ? "job-progress__stage--completed" : current ? "job-progress__stage--current" : "job-progress__stage--pending")">
-                                        <span class="job-progress__stage-icon" aria-hidden="true">@(done ? "✓" : "○")</span>
-                                        <span class="job-progress__stage-text">
-                                            <span class="job-progress__stage-label">@GetStageChecklistLabel(stepNum)</span>
-                                            @if (current && !string.IsNullOrEmpty(aiProgressNotice))
+                                    var stageStatus = done ? "Completed" : current ? "Running" : null;
+                                    var isSectionStage = stepNum == stageTotal;
+
+                                    if (isSectionStage && (done || current))
+                                    {
+                                        <details class="node-group" open>
+                                            <summary class="node-row">
+                                                <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
+                                                <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
+                                                <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
+                                                <span class="node-row__count muted-text">@completedSectionCount/@totalSectionCount</span>
+                                            </summary>
+                                            @foreach (var sec in sectionStandards)
                                             {
-                                                <span class="job-progress__stage-caption">@aiProgressNotice</span>
+                                                var sectionStatus = SectionRowStatus(sec.Id);
+                                                <div class="node-row node-row--item">
+                                                    <span class="node-row__chevron" aria-hidden="true"></span>
+                                                    <span class="node-row__status @RunStatusCss(sectionStatus)">@RunStatusGlyph(sectionStatus)</span>
+                                                    <span class="node-row__label">@sec.Name</span>
+                                                </div>
                                             }
-                                            @if (showSubStages)
-                                            {
-                                                <ol class="job-progress__sub-stages">
-                                                    @foreach (var sec in sectionStandards)
-                                                    {
-                                                        var secDone = generatedSections.ContainsKey(sec.Id);
-                                                        var secFailed = failedSectionErrors.ContainsKey(sec.Id);
-                                                        <li class="job-progress__stage @(secDone ? "job-progress__stage--completed" : secFailed ? "job-progress__stage--failed" : "job-progress__stage--pending")">
-                                                            <span class="job-progress__stage-icon" aria-hidden="true">@(secDone ? "✓" : secFailed ? "✗" : "○")</span>
-                                                            <span class="job-progress__stage-text">
-                                                                <span class="job-progress__stage-label">@sec.Name</span>
-                                                            </span>
-                                                        </li>
-                                                    }
-                                                </ol>
-                                            }
-                                        </span>
-                                    </li>
+                                        </details>
+                                    }
+                                    else
+                                    {
+                                        <div class="node-row">
+                                            <span class="node-row__chevron" aria-hidden="true"></span>
+                                            <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
+                                            <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
+                                        </div>
+                                        @if (current && !string.IsNullOrEmpty(aiProgressNotice))
+                                        {
+                                            <div class="node-row__caption muted-text">@aiProgressNotice</div>
+                                        }
+                                    }
                                 }
-                            </ol>
-                            @if (completedAnalysisStageCount >= stageTotal && totalSectionCount > 0)
-                            {
-                                var pct = completedSectionCount * 100 / totalSectionCount;
-                                <div class="job-progress__sections">
-                                    <div class="job-progress__section-bar" role="progressbar" aria-valuenow="@completedSectionCount" aria-valuemax="@totalSectionCount">
-                                        <div class="job-progress__section-fill" style="width: @(pct)%"></div>
-                                    </div>
-                                    <span class="muted-text">@completedSectionCount / @totalSectionCount sections</span>
+
+                                @{
+                                    var doneStatus = DoneRowStatus();
+                                }
+                                <div class="node-row">
+                                    <span class="node-row__chevron" aria-hidden="true"></span>
+                                    <span class="node-row__status @RunStatusCss(doneStatus)">@RunStatusGlyph(doneStatus)</span>
+                                    <span class="node-row__label">@(doneStatus == "Failed" ? "Failed" : "Done")</span>
+                                    @if (doneStatus != null)
+                                    {
+                                        <span class="node-row__count muted-text">@generatedSections.Count/@totalSectionCount sections</span>
+                                    }
                                 </div>
+                            </div>
+
+                            @if (!string.IsNullOrEmpty(aiRequestError))
+                            {
+                                <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
                             }
                         </div>
-
-                        @if (!string.IsNullOrEmpty(standardsLoadError))
-                        {
-                            <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
-                        }
-
-                        @if (!string.IsNullOrEmpty(aiRequestError))
-                        {
-                            <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
-                        }
-
-                        @if (!isAiRequestLoading && totalSectionCount > 0)
-                        {
-                            var jobSucceeded = string.IsNullOrEmpty(aiRequestError);
-                            <p class="job-completion @(jobSucceeded ? "job-completion--success" : "job-completion--failed")">
-                                @(jobSucceeded ? "Completed" : "Failed") · @generatedSections.Count/@totalSectionCount sections
-                            </p>
-                        }
-                    </div>
-                </section>
-        </div>
+                    </section>
+                </div>
+            </div>
+        }
     </Authorized>
 </AuthorizeView>
 
@@ -200,6 +241,8 @@
   };
 
   private string consultDraft = string.Empty;
+  private bool editingDraft;
+  private string? currentSectionId;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private Dictionary<string, string> generatedSections = new();
@@ -259,6 +302,8 @@
 
   private async Task CreateConsultAsync()
   {
+    editingDraft = false;
+    currentSectionId = null;
     aiRequestError = null;
     aiProgressNotice = null;
     generatedSections = new();
@@ -569,6 +614,11 @@
             nextFailedSections.Remove(completed.SectionId);
             failedSectionErrors = nextFailedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+
+            if (currentSectionId == completed.SectionId)
+            {
+              currentSectionId = null;
+            }
           }
           break;
 
@@ -585,6 +635,11 @@
             generatedSections = nextGeneratedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
             UpdateFailedSectionError(GetActiveSectionSnapshots());
+
+            if (currentSectionId == failed.SectionId)
+            {
+              currentSectionId = null;
+            }
           }
           break;
 
@@ -605,6 +660,7 @@
           {
             var stepLabel = string.IsNullOrWhiteSpace(sectionStep.Label) ? "Generating section" : sectionStep.Label;
             aiProgressNotice = $"{stepLabel}: {sectionStep.SectionName}";
+            currentSectionId = sectionStep.SectionId;
           }
           break;
 
@@ -714,6 +770,83 @@
     return !string.IsNullOrWhiteSpace(stage)
       && stage.EndsWith("-failed", StringComparison.Ordinal);
   }
+
+  private bool IsRunPhase => !editingDraft && (isAiRequestLoading || totalSectionCount > 0);
+
+  private string DraftSnippet
+  {
+    get
+    {
+      var flattened = consultDraft.ReplaceLineEndings(" ").Trim();
+      return flattened.Length <= 80 ? flattened : flattened[..80] + "…";
+    }
+  }
+
+  private void EditDraft()
+  {
+    editingDraft = true;
+  }
+
+  private static bool IsForkRef(string? packageRef) =>
+    packageRef != null && packageRef.StartsWith("acct-", StringComparison.Ordinal);
+
+  // Setup covers standards resolution and job submission; the first node data
+  // arriving (snapshot or node-completed) marks it done.
+  private string? SetupRowStatus()
+  {
+    if (nodeLabels != null || totalAnalysisStageCount > 0 || !isAiRequestLoading)
+    {
+      return "Completed";
+    }
+
+    return "Running";
+  }
+
+  private string? SectionRowStatus(string sectionId)
+  {
+    if (generatedSections.ContainsKey(sectionId))
+    {
+      return "Completed";
+    }
+
+    if (failedSectionErrors.ContainsKey(sectionId))
+    {
+      return "Failed";
+    }
+
+    if (currentSectionId == sectionId && isAiRequestLoading)
+    {
+      return "Running";
+    }
+
+    return null;
+  }
+
+  private string? DoneRowStatus()
+  {
+    if (isAiRequestLoading)
+    {
+      return null;
+    }
+
+    return string.IsNullOrEmpty(aiRequestError) ? "Completed" : "Failed";
+  }
+
+  private static string RunStatusGlyph(string? status) => status switch
+  {
+    "Completed" => "✓",
+    "Failed" => "✗",
+    "Running" => "●",
+    _ => "○"
+  };
+
+  private static string RunStatusCss(string? status) => status switch
+  {
+    "Completed" => "node-status--success",
+    "Failed" => "node-status--failure",
+    "Running" => "node-status--current",
+    _ => "node-status--muted"
+  };
 
   private string GetStageChecklistLabel(int stepNum)
   {
