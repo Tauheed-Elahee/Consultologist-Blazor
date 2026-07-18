@@ -165,44 +165,98 @@
                                     <span class="node-row__label">Setup</span>
                                 </div>
 
-                                @for (var i = 1; i <= stageTotal; i++)
+                                @if (workflowNodes is { Count: > 0 })
                                 {
-                                    var stepNum = i;
-                                    var done = completedAnalysisStageCount >= stepNum;
-                                    var current = !done && completedAnalysisStageCount == stepNum - 1 && isAiRequestLoading;
-                                    var stageStatus = done ? "Completed" : current ? "Running" : null;
-                                    var isSectionStage = stepNum == stageTotal;
+                                    @* The manifest node map, loaded at page init: every node named and every
+                                       forEach group's sections listed before the first event arrives. *@
+                                    for (var i = 0; i < workflowNodes.Count; i++)
+                                    {
+                                        var node = workflowNodes[i];
+                                        var done = completedAnalysisStageCount > i;
+                                        var current = !done && completedAnalysisStageCount == i && isAiRequestLoading;
+                                        var stageStatus = done ? "Completed" : current ? "Running" : null;
 
-                                    if (isSectionStage && (done || current))
-                                    {
-                                        <details class="node-group" open>
-                                            <summary class="node-row">
-                                                <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
+                                        if (node.ForEach != null)
+                                        {
+                                            var doneItems = sectionStandards.Count(sec => NodeItemStatus(node, done, current, sec.Id) == "Completed");
+                                            <details class="node-group" open>
+                                                <summary class="node-row">
+                                                    <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
+                                                    <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
+                                                    <span class="node-row__label">@node.Label</span>
+                                                    <span class="node-row__count muted-text">@doneItems/@sectionStandards.Count</span>
+                                                </summary>
+                                                @foreach (var sec in sectionStandards)
+                                                {
+                                                    var itemStatus = NodeItemStatus(node, done, current, sec.Id);
+                                                    <div class="node-row node-row--item">
+                                                        <span class="node-row__chevron" aria-hidden="true"></span>
+                                                        <span class="node-row__status @RunStatusCss(itemStatus)">@RunStatusGlyph(itemStatus)</span>
+                                                        <span class="node-row__label">@sec.Name</span>
+                                                    </div>
+                                                }
+                                            </details>
+                                        }
+                                        else
+                                        {
+                                            <div class="node-row">
+                                                <span class="node-row__chevron" aria-hidden="true"></span>
                                                 <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
-                                                <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
-                                                <span class="node-row__count muted-text">@completedSectionCount/@totalSectionCount</span>
-                                            </summary>
-                                            @foreach (var sec in sectionStandards)
-                                            {
-                                                var sectionStatus = SectionRowStatus(sec.Id);
-                                                <div class="node-row node-row--item">
-                                                    <span class="node-row__chevron" aria-hidden="true"></span>
-                                                    <span class="node-row__status @RunStatusCss(sectionStatus)">@RunStatusGlyph(sectionStatus)</span>
-                                                    <span class="node-row__label">@sec.Name</span>
-                                                </div>
-                                            }
-                                        </details>
-                                    }
-                                    else
-                                    {
-                                        <div class="node-row">
-                                            <span class="node-row__chevron" aria-hidden="true"></span>
-                                            <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
-                                            <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
-                                        </div>
-                                        @if (current && !string.IsNullOrEmpty(aiProgressNotice))
+                                                <span class="node-row__label">@node.Label</span>
+                                            </div>
+                                        }
+
+                                        if (current && !string.IsNullOrEmpty(aiProgressNotice))
                                         {
                                             <div class="node-row__caption muted-text">@aiProgressNotice</div>
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    @* Fallback when the manifest could not be fetched: event-fed labels,
+                                       sections grouped under the final stage only. *@
+                                    for (var i = 1; i <= stageTotal; i++)
+                                    {
+                                        var stepNum = i;
+                                        var done = completedAnalysisStageCount >= stepNum;
+                                        var current = !done && completedAnalysisStageCount == stepNum - 1 && isAiRequestLoading;
+                                        var stageStatus = done ? "Completed" : current ? "Running" : null;
+                                        var isSectionStage = stepNum == stageTotal;
+
+                                        if (isSectionStage && (done || current))
+                                        {
+                                            <details class="node-group" open>
+                                                <summary class="node-row">
+                                                    <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
+                                                    <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
+                                                    <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
+                                                    <span class="node-row__count muted-text">@completedSectionCount/@totalSectionCount</span>
+                                                </summary>
+                                                @foreach (var sec in sectionStandards)
+                                                {
+                                                    var sectionStatus = generatedSections.ContainsKey(sec.Id) ? "Completed"
+                                                        : failedSectionErrors.ContainsKey(sec.Id) ? "Failed"
+                                                        : current ? "Running" : null;
+                                                    <div class="node-row node-row--item">
+                                                        <span class="node-row__chevron" aria-hidden="true"></span>
+                                                        <span class="node-row__status @RunStatusCss(sectionStatus)">@RunStatusGlyph(sectionStatus)</span>
+                                                        <span class="node-row__label">@sec.Name</span>
+                                                    </div>
+                                                }
+                                            </details>
+                                        }
+                                        else
+                                        {
+                                            <div class="node-row">
+                                                <span class="node-row__chevron" aria-hidden="true"></span>
+                                                <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
+                                                <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
+                                            </div>
+                                            @if (current && !string.IsNullOrEmpty(aiProgressNotice))
+                                            {
+                                                <div class="node-row__caption muted-text">@aiProgressNotice</div>
+                                            }
                                         }
                                     }
                                 }
@@ -242,9 +296,10 @@
 
   private string consultDraft = string.Empty;
   private bool editingDraft;
-  private string? currentSectionId;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
+  private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
+  private HashSet<string> completedNodeItems = new();
   private Dictionary<string, string> generatedSections = new();
   private Dictionary<string, string> failedSectionErrors = new();
   private bool isStandardsLoading;
@@ -266,6 +321,26 @@
   {
     Navigation.LocationChanged += HandleLocationChanged;
     await LoadSectionStandardsAsync();
+    await LoadWorkflowNodesAsync();
+  }
+
+  // The full node map is display enrichment for the run rail; failures fall
+  // back to the event-fed labels.
+  private async Task LoadWorkflowNodesAsync()
+  {
+    try
+    {
+      var content = await WorkflowService.GetCurrentPackageContentAsync();
+      workflowNodes = WorkflowManifestReader.ReadNodes(content.Manifest);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
+    }
+    catch
+    {
+      workflowNodes = null;
+    }
   }
 
   private async Task LoadSectionStandardsAsync()
@@ -303,7 +378,7 @@
   private async Task CreateConsultAsync()
   {
     editingDraft = false;
-    currentSectionId = null;
+    completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
     generatedSections = new();
@@ -614,11 +689,6 @@
             nextFailedSections.Remove(completed.SectionId);
             failedSectionErrors = nextFailedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
-
-            if (currentSectionId == completed.SectionId)
-            {
-              currentSectionId = null;
-            }
           }
           break;
 
@@ -635,11 +705,6 @@
             generatedSections = nextGeneratedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
             UpdateFailedSectionError(GetActiveSectionSnapshots());
-
-            if (currentSectionId == failed.SectionId)
-            {
-              currentSectionId = null;
-            }
           }
           break;
 
@@ -660,7 +725,9 @@
           {
             var stepLabel = string.IsNullOrWhiteSpace(sectionStep.Label) ? "Generating section" : sectionStep.Label;
             aiProgressNotice = $"{stepLabel}: {sectionStep.SectionName}";
-            currentSectionId = sectionStep.SectionId;
+            // Step is the forEach node id that just completed for this section
+            // (one event per node/section pair) — the run rail's per-group ticks.
+            completedNodeItems.Add($"{sectionStep.Step}:{sectionStep.SectionId}");
           }
           break;
 
@@ -802,9 +869,13 @@
     return "Running";
   }
 
-  private string? SectionRowStatus(string sectionId)
+  // Per-item status under one forEach node. Pair ticks come from the
+  // section-prose-step events; a done node covers items whose events were
+  // missed (polling fallback), and failed sections skip their remaining steps.
+  private string? NodeItemStatus(WorkflowManifestReader.NodeView node, bool nodeDone, bool nodeCurrent, string sectionId)
   {
-    if (generatedSections.ContainsKey(sectionId))
+    if (completedNodeItems.Contains($"{node.Id}:{sectionId}")
+        || (node.IsResult && generatedSections.ContainsKey(sectionId)))
     {
       return "Completed";
     }
@@ -814,7 +885,12 @@
       return "Failed";
     }
 
-    if (currentSectionId == sectionId && isAiRequestLoading)
+    if (nodeDone)
+    {
+      return "Completed";
+    }
+
+    if (nodeCurrent)
     {
       return "Running";
     }
