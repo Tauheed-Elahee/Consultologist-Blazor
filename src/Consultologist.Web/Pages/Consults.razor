@@ -83,6 +83,12 @@
                         }
 
                         <div class="action-row">
+                            @if (totalSectionCount > 0)
+                            {
+                                <FluentButton Appearance="Appearance.Neutral" @onclick="BackToRun">
+                                    Back to consult
+                                </FluentButton>
+                            }
                             <FluentButton Appearance="Appearance.Accent"
                                           @onclick="CreateConsultAsync"
                                           Disabled="@(isStandardsLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || sectionStandards.Count == 0)">
@@ -96,15 +102,21 @@
         else
         {
             <div class="consult-run">
-                <div class="draft-bar">
-                    <span class="draft-bar__label">Draft</span>
-                    <span class="draft-bar__snippet" title="@consultDraft">@DraftSnippet</span>
-                    <FluentButton Appearance="Appearance.Stealth"
-                                  @onclick="EditDraft"
-                                  Disabled="@isAiRequestLoading">
-                        Edit draft
-                    </FluentButton>
-                </div>
+                <details class="draft-bar">
+                    <summary class="draft-bar__summary">
+                        <span class="draft-bar__chevron" aria-hidden="true">&#x203A;</span>
+                        <span class="draft-bar__label">Draft</span>
+                        <span class="draft-bar__snippet">@DraftSnippet</span>
+                        <span @onclick:stopPropagation="true">
+                            <FluentButton Appearance="Appearance.Stealth"
+                                          @onclick="EditDraft"
+                                          Disabled="@isAiRequestLoading">
+                                Edit draft
+                            </FluentButton>
+                        </span>
+                    </summary>
+                    <div class="draft-bar__full">@consultDraft</div>
+                </details>
 
                 <div class="consult-run__grid">
                     <section class="result-panel">
@@ -852,6 +864,11 @@
   private void EditDraft()
   {
     editingDraft = true;
+  }
+
+  private void BackToRun()
+  {
+    editingDraft = false;
   }
 
   private static bool IsForkRef(string? packageRef) =>
