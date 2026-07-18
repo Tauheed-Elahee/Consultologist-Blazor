@@ -64,13 +64,54 @@
 }
 
 .draft-bar {
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm);
+	background: var(--consultologist-surface);
+}
+
+.draft-bar__summary {
 	display: flex;
 	align-items: center;
 	gap: 0.75rem;
 	padding: 0.5rem 0.75rem 0.5rem 1rem;
-	border: 1px solid var(--consultologist-border);
-	border-radius: var(--consultologist-radius-sm);
-	background: var(--consultologist-surface);
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+}
+
+.draft-bar__summary::-webkit-details-marker {
+	display: none;
+}
+
+.draft-bar__summary:hover {
+	background: var(--consultologist-surface-muted);
+}
+
+.draft-bar__chevron {
+	flex: 0 0 auto;
+	color: var(--consultologist-text-muted);
+	font-size: 1.1em;
+	line-height: 1;
+	display: inline-block;
+	transition: transform 0.15s ease;
+}
+
+.draft-bar[open] .draft-bar__chevron {
+	transform: rotate(90deg);
+}
+
+/* When open, the full text below replaces the snippet. */
+.draft-bar[open] .draft-bar__snippet {
+	visibility: hidden;
+}
+
+.draft-bar__full {
+	padding: 0.25rem 1rem 0.875rem 2.85rem;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 40vh;
+	overflow-y: auto;
+	font-size: 0.85rem;
 }
 
 .draft-bar__label {
