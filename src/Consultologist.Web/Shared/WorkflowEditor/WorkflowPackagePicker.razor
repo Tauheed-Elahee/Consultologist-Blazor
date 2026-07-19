@@ -1,0 +1,147 @@
+@* The package pin selector (#134): one grouped dropdown over the repo-owned
+   public packages and the caller's fork versions. Selecting pins immediately
+   (the generic account-settings PUT); the pin resolver validates shape and
+   access on every read, so a stale or bad option can never take effect. *@
+@using Consultologist.Web.Services.Accounts
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@inject IWorkflowEndpointService WorkflowService
+@inject IAccountEndpointService AccountService
+
+<span class="package-picker">
+    <select value="@selectedRef"
+            @onchange="OnSelectionChangedAsync"
+            disabled="@(Disabled || isPinning || groups.Count == 0)"
+            aria-label="Workflow package">
+        @if (groups.Count == 0)
+        {
+            <option value="@selectedRef">@selectedRef</option>
+        }
+        @foreach (var group in groups)
+        {
+            <optgroup label="@group.Label">
+                @foreach (var option in group.Options)
+                {
+                    <option value="@option.Value">@option.Label</option>
+                }
+            </optgroup>
+        }
+    </select>
+    @if (pinError != null)
+    {
+        <span class="package-picker__error">@pinError</span>
+    }
+</span>
+
+@code {
+    private const string PinSettingKey = "consult.workflowPackage";
+    private const string DefaultRef = "general@latest";
+
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback OnPinned { get; set; }
+
+    private sealed record PickerOption(string Value, string Label);
+    private sealed record PickerGroup(string Label, List<PickerOption> Options);
+
+    private List<PickerGroup> groups = new();
+    private string selectedRef = DefaultRef;
+    private bool isPinning;
+    private string? pinError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Selection = the raw pin setting, not Current's resolved ref — a
+        // floating @latest pin must display as @latest. No/unreadable setting
+        // means the default pin.
+        try
+        {
+            var setting = await AccountService.GetSettingAsync(PinSettingKey);
+            if (!string.IsNullOrWhiteSpace(setting?.Value))
+            {
+                selectedRef = setting!.Value.Trim();
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+            return;
+        }
+        catch
+        {
+            // The default stands; the options below still render.
+        }
+
+        var built = new List<PickerGroup>();
+
+        var chain = await WorkflowService.GetPublicChainAsync();
+        foreach (var package in chain?.Packages ?? Enumerable.Empty<PublicPackageView>())
+        {
+            if (!string.IsNullOrWhiteSpace(package.Name))
+            {
+                built.Add(BuildGroup(package.Name!, package));
+            }
+        }
+
+        var mine = await WorkflowService.GetMyPackagesAsync();
+        if (mine is { Versions.Count: > 0 } && !string.IsNullOrWhiteSpace(mine.Name))
+        {
+            built.Add(BuildGroup($"My fork ({mine.Name})", mine));
+        }
+
+        // A pin outside the listings (pruned version, listing outage) still
+        // has to render as what it is.
+        if (built.SelectMany(group => group.Options).All(option => option.Value != selectedRef))
+        {
+            built.Insert(0, new PickerGroup("Current pin", new List<PickerOption> { new(selectedRef, selectedRef) }));
+        }
+
+        groups = built;
+    }
+
+    private static PickerGroup BuildGroup(string label, PublicPackageView package)
+    {
+        var options = new List<PickerOption>
+        {
+            new($"{package.Name}@latest", "latest — follows updates")
+        };
+
+        // Registry listings are CalVer-ascending; the dropdown reads newest first.
+        foreach (var version in (package.Versions ?? new List<string>()).AsEnumerable().Reverse())
+        {
+            options.Add(new($"{package.Name}@{version}", version));
+        }
+
+        return new PickerGroup(label, options);
+    }
+
+    private async Task OnSelectionChangedAsync(ChangeEventArgs args)
+    {
+        var newRef = args.Value?.ToString();
+
+        if (string.IsNullOrWhiteSpace(newRef) || newRef == selectedRef)
+        {
+            return;
+        }
+
+        isPinning = true;
+        pinError = null;
+
+        try
+        {
+            await AccountService.SaveSettingAsync(PinSettingKey, newRef, "text/plain");
+            selectedRef = newRef;
+            await OnPinned.InvokeAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            pinError = $"Could not switch package: {ex.Message}";
+        }
+        finally
+        {
+            isPinning = false;
+        }
+    }
+}
