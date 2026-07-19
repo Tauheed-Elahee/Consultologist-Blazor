@@ -12,13 +12,17 @@ public static class WorkflowManifestReader
 {
     public sealed record PromptView(string Id, string File, IReadOnlyList<string> Variables, string? Prelude);
 
+    /// <summary>One binding: a prompt variable, its source, and the optional concept renderer.</summary>
+    public sealed record BindingView(string Variable, string From, string? As);
+
     public sealed record NodeView(
         string Id,
         string Label,
         string? Prompt,
         string? ForEach,
-        IReadOnlyList<KeyValuePair<string, string>> Bindings,
-        bool IsResult);
+        IReadOnlyList<BindingView> Bindings,
+        bool IsResult,
+        bool HasOutput);
 
     public sealed record DataItemView(string Id, string Name, string File);
 
@@ -64,13 +68,13 @@ public static class WorkflowManifestReader
 
         foreach (var node in array.EnumerateArray())
         {
-            var bindings = new List<KeyValuePair<string, string>>();
+            var bindings = new List<BindingView>();
 
             if (TryGetProperty(node, "bindings", out var bindingsElement) && bindingsElement.ValueKind == JsonValueKind.Object)
             {
                 foreach (var binding in bindingsElement.EnumerateObject())
                 {
-                    bindings.Add(new KeyValuePair<string, string>(binding.Name, DescribeBinding(binding.Value)));
+                    bindings.Add(ReadBinding(binding.Name, binding.Value));
                 }
             }
 
@@ -81,10 +85,32 @@ public static class WorkflowManifestReader
                 ReadString(node, "prompt"),
                 ReadString(node, "forEach"),
                 bindings,
-                string.Equals(id, resultNodeId, StringComparison.Ordinal)));
+                string.Equals(id, resultNodeId, StringComparison.Ordinal),
+                TryGetProperty(node, "output", out var output) && output.ValueKind == JsonValueKind.Object));
         }
 
         return nodes;
+    }
+
+    /// <summary>Scalar data entries: values of the data map that are not directories.</summary>
+    public static IReadOnlyList<string> ReadScalars(JsonElement manifest)
+    {
+        var scalars = new List<string>();
+
+        if (!TryGetProperty(manifest, "data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            return scalars;
+        }
+
+        foreach (var entry in data.EnumerateObject())
+        {
+            if (entry.Value.ValueKind == JsonValueKind.String && entry.Value.GetString() is { } value && !value.EndsWith('/'))
+            {
+                scalars.Add(entry.Name);
+            }
+        }
+
+        return scalars;
     }
 
     /// <summary>
@@ -155,11 +181,11 @@ public static class WorkflowManifestReader
         return result != null && result.StartsWith("node:", StringComparison.Ordinal) ? result["node:".Length..] : result;
     }
 
-    private static string DescribeBinding(JsonElement value) => value.ValueKind switch
+    private static BindingView ReadBinding(string variable, JsonElement value) => value.ValueKind switch
     {
-        JsonValueKind.String => value.GetString() ?? string.Empty,
-        JsonValueKind.Object => $"{ReadString(value, "from")} (as {ReadString(value, "as")})",
-        _ => value.ToString()
+        JsonValueKind.String => new BindingView(variable, value.GetString() ?? string.Empty, null),
+        JsonValueKind.Object => new BindingView(variable, ReadString(value, "from") ?? string.Empty, ReadString(value, "as")),
+        _ => new BindingView(variable, value.ToString(), null)
     };
 
     /// <summary>

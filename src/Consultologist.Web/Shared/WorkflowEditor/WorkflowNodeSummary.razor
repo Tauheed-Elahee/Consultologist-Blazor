@@ -1,6 +1,7 @@
-@* Read-only view of the workflow graph: v1 edits texts only, so nodes,
-   bindings, and the deliverable are shown but never editable here — the text
-   half of the Graph pane, beneath the rendered diagram (#114). *@
+@* The Graph pane's node cards. Read-only by default; with Editable set, each
+   binding row becomes a source dropdown (+ renderer for node sources) over
+   the valid v5 source space (#138) — the server validator remains the
+   authority on publish. *@
 @using Consultologist.Web.Services.Workflow
 
 @foreach (var node in Nodes)
@@ -28,15 +29,124 @@
                 </p>
             </div>
         </div>
-        <ul>
+        <ul class="binding-list">
             @foreach (var binding in node.Bindings)
             {
-                <li class="muted-text"><code>@binding.Key</code> ← <code>@binding.Value</code></li>
+                var effective = Effective(node.Id, binding);
+                var modified = effective.From != binding.From || effective.As != binding.As;
+
+                <li class="binding-row @(Editable ? null : "muted-text")">
+                    <code class="binding-row__variable">@binding.Variable</code>
+                    <span aria-hidden="true">←</span>
+                    @if (Editable)
+                    {
+                        <select class="binding-row__select"
+                                value="@effective.From"
+                                @onchange="args => OnSourceChangedAsync(node, binding, args)"
+                                aria-label="@($"Source for {binding.Variable}")">
+                            @foreach (var option in SourceOptions(node, effective.From))
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                        @if (effective.From.StartsWith("node:", StringComparison.Ordinal))
+                        {
+                            var targetHasOutput = TargetHasOutput(effective.From);
+                            <span class="muted-text">render as</span>
+                            <select class="binding-row__select"
+                                    value="@(effective.As ?? NoRenderer)"
+                                    @onchange="args => OnRendererChangedAsync(node, binding, args)"
+                                    aria-label="@($"Renderer for {binding.Variable}")">
+                                <option value="@NoRenderer">plain</option>
+                                <option value="concept-bullets" disabled="@(!targetHasOutput && effective.As != "concept-bullets")">concept-bullets</option>
+                                <option value="concept-context" disabled="@(!targetHasOutput && effective.As != "concept-context")">concept-context</option>
+                            </select>
+                        }
+                        @if (modified)
+                        {
+                            <span class="binding-row__pending" title="Pending rebind">●</span>
+                        }
+                    }
+                    else
+                    {
+                        <code>@(binding.As is null ? binding.From : $"{binding.From} (as {binding.As})")</code>
+                    }
+                </li>
             }
         </ul>
     </article>
 }
 
 @code {
+    private const string NoRenderer = "__plain__";
+
+    public sealed record BindingChange(string NodeId, string Variable, string From, string? As);
+
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
+    [Parameter] public Func<string, string, (string From, string? As)?>? EffectiveBinding { get; set; }
+    [Parameter] public EventCallback<BindingChange> OnBindingChanged { get; set; }
+
+    private (string From, string? As) Effective(string nodeId, WorkflowManifestReader.BindingView binding) =>
+        EffectiveBinding?.Invoke(nodeId, binding.Variable) ?? (binding.From, binding.As);
+
+    // The valid v5 source space for one node; the current value is always
+    // included so an unrecognized source still displays truthfully.
+    private IEnumerable<string> SourceOptions(WorkflowManifestReader.NodeView node, string current)
+    {
+        var options = new List<string> { "input:consult_draft" };
+
+        options.AddRange(Nodes.Where(other => other.Id != node.Id).Select(other => $"node:{other.Id}"));
+
+        if (node.ForEach != null)
+        {
+            options.Add("item:name");
+            options.Add("item:content");
+        }
+
+        options.AddRange(Scalars.Select(scalar => $"data:{scalar}"));
+
+        if (!options.Contains(current))
+        {
+            options.Insert(0, current);
+        }
+
+        return options;
+    }
+
+    private bool TargetHasOutput(string from) =>
+        Nodes.FirstOrDefault(node => $"node:{node.Id}" == from)?.HasOutput == true;
+
+    private async Task OnSourceChangedAsync(
+        WorkflowManifestReader.NodeView node,
+        WorkflowManifestReader.BindingView binding,
+        ChangeEventArgs args)
+    {
+        var from = args.Value?.ToString();
+
+        if (string.IsNullOrWhiteSpace(from))
+        {
+            return;
+        }
+
+        // A renderer only makes sense on a node source; keep it when the new
+        // source is one, otherwise drop it.
+        var effective = Effective(node.Id, binding);
+        var renderer = from.StartsWith("node:", StringComparison.Ordinal) ? effective.As : null;
+
+        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, binding.Variable, from, renderer));
+    }
+
+    private async Task OnRendererChangedAsync(
+        WorkflowManifestReader.NodeView node,
+        WorkflowManifestReader.BindingView binding,
+        ChangeEventArgs args)
+    {
+        var value = args.Value?.ToString();
+        var renderer = string.IsNullOrWhiteSpace(value) || value == NoRenderer ? null : value;
+        var effective = Effective(node.Id, binding);
+
+        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, binding.Variable, effective.From, renderer));
+    }
 }
