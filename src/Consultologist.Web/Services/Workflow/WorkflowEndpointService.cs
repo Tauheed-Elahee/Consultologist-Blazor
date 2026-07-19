@@ -33,7 +33,11 @@ public record PublicChainView(
     PublicCatalogView? OutputContracts);
 
 /// <summary>One package's registry listing (public repo package or the caller's fork).</summary>
-public record PublicPackageView(string? Name, string? Latest, List<string>? Versions);
+public record PublicPackageView(
+    string? Name,
+    string? Latest,
+    List<string>? Versions,
+    Dictionary<string, int>? SpecVersions = null);
 
 public record PublicCatalogView(Dictionary<string, PublicContractView>? Contracts);
 

@@ -37,6 +37,12 @@
         {
             <section class="content-card">
                 <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@loadError</FluentMessageBar>
+                @* Escape hatch: a pin to an unloadable package must stay
+                   correctable from here — the picker loads independently. *@
+                <p class="editor-load-error__switch">
+                    Switch to another package:
+                    <WorkflowPackagePicker OnPinned="OnPackagePinnedAsync" />
+                </p>
             </section>
         }
         else if (content != null)
