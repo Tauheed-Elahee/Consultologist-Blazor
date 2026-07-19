@@ -247,7 +247,7 @@
                         </div>
                         @if (diagramIncludesPending)
                         {
-                            <p class="muted-text">Showing pending edits (highlighted nodes).</p>
+                            <p class="muted-text">Showing pending edits — blue new or changed, dashed red removed.</p>
                         }
                         else if (HasManifestEdits && diagramText != null)
                         {
@@ -834,7 +834,8 @@
 
                 if (diagram != null)
                 {
-                    diagramText = diagram + PendingHighlightLines();
+                    var (changed, removedEdges, pendingNodes) = CollectDiagramChanges();
+                    diagramText = DecoratePendingDiagram(diagram, changed, removedEdges, pendingNodes);
                     diagramIncludesPending = true;
                 }
             }
@@ -854,23 +855,156 @@
         }
     }
 
-    // Pending-ness is editor presentation, not manifest semantics: the changed
-    // nodes are highlighted by appending mermaid class lines, ids sanitized
-    // the same way the server generator does.
-    private string PendingHighlightLines()
+    // The pending diff over the effective diagram: changed pairs draw their
+    // edges blue, removed/old edges are re-appended dashed red (they are
+    // absent from the effective manifest by definition), and changed nodes
+    // keep the blue outline. All presentation, all client-side.
+    private (List<(string NodeId, string Variable)> Changed,
+             List<(string From, string NodeId, string Variable, bool Rebound)> Removed,
+             List<string> PendingNodeIds) CollectDiagramChanges()
     {
-        var pendingIds = nodes
-            .Where(node => RowsFor(node).Any(RowModified))
-            .Select(node => SanitizeMermaidId(node.Id))
-            .ToList();
+        var changed = new List<(string, string)>();
+        var removed = new List<(string, string, string, bool)>();
+        var pendingNodes = new List<string>();
 
-        if (pendingIds.Count == 0)
+        foreach (var node in nodes)
         {
-            return string.Empty;
+            var rows = RowsFor(node);
+
+            if (rows.Any(RowModified))
+            {
+                pendingNodes.Add(node.Id);
+            }
+
+            foreach (var row in rows.Where(RowModified))
+            {
+                changed.Add((node.Id, row.Variable));
+
+                // A rebound row's old source is an edge that goes away.
+                if (!row.IsNew && row.OriginalFrom is { } oldFrom && oldFrom != row.From && IsEdgeSource(oldFrom))
+                {
+                    removed.Add((oldFrom, node.Id, row.Variable, true));
+                }
+            }
+
+            // Removed variables' original edges.
+            if (node.Prompt != null && variableRemovals.TryGetValue(node.Prompt, out var removedVars))
+            {
+                foreach (var variable in removedVars)
+                {
+                    var original = node.Bindings.FirstOrDefault(b => b.Variable == variable);
+
+                    if (original != null && IsEdgeSource(original.From))
+                    {
+                        removed.Add((original.From, node.Id, variable, false));
+                    }
+                }
+            }
         }
 
-        return "\n    classDef pending stroke:#0067b8,stroke-width:2.5px\n"
-            + $"    class {string.Join(",", pendingIds)} pending\n";
+        return (changed, removed, pendingNodes);
+    }
+
+    // item:* sources render inside node labels, not as edges.
+    private static bool IsEdgeSource(string from) =>
+        from.StartsWith("node:", StringComparison.Ordinal)
+        || from.StartsWith("input:", StringComparison.Ordinal)
+        || from.StartsWith("data:", StringComparison.Ordinal);
+
+    private static string DecoratePendingDiagram(
+        string diagram,
+        IReadOnlyList<(string NodeId, string Variable)> changed,
+        IReadOnlyList<(string From, string NodeId, string Variable, bool Rebound)> removed,
+        IReadOnlyList<string> pendingNodeIds)
+    {
+        var sb = new System.Text.StringBuilder(diagram);
+
+        if (!diagram.EndsWith('\n'))
+        {
+            sb.Append('\n');
+        }
+
+        // Mermaid styles edges by document-order index: walk the generator's
+        // link lines ({source} -->|"{label}"| {target}), matching changed
+        // pairs; a parse miss just skips the edge (node outline still shows).
+        var blueIndices = new List<int>();
+        var linkIndex = 0;
+
+        foreach (var line in diagram.Split('\n'))
+        {
+            if (!line.Contains("-->", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var labelStart = line.IndexOf("|\"", StringComparison.Ordinal);
+            var labelEnd = labelStart < 0 ? -1 : line.IndexOf("\"|", labelStart + 2, StringComparison.Ordinal);
+
+            if (labelEnd > labelStart)
+            {
+                var label = line[(labelStart + 2)..labelEnd];
+                var target = line[(labelEnd + 2)..].Trim();
+
+                foreach (var (nodeId, variable) in changed)
+                {
+                    if (target == SanitizeMermaidId(nodeId)
+                        && (label == variable || label.StartsWith(variable + " (as ", StringComparison.Ordinal)))
+                    {
+                        blueIndices.Add(linkIndex);
+                        break;
+                    }
+                }
+            }
+
+            linkIndex++;
+        }
+
+        // Removed/old edges are appended dashed; their indices continue the
+        // link count. A source only those edges reference is absent from the
+        // effective text — the appended edge re-creates it, marked red.
+        var redIndices = new List<int>();
+        var redNodeIds = new List<string>();
+
+        foreach (var (from, nodeId, variable, rebound) in removed)
+        {
+            var sourceRaw = from.StartsWith("node:", StringComparison.Ordinal) ? from["node:".Length..] : from;
+            var sourceId = SanitizeMermaidId(sourceRaw);
+            var suffix = rebound ? "(was)" : "(removed)";
+
+            sb.Append($"    {sourceId} -. \"{variable} {suffix}\" .-> {SanitizeMermaidId(nodeId)}\n");
+            redIndices.Add(linkIndex++);
+
+            if (!diagram.Contains(sourceId + "(", StringComparison.Ordinal)
+                && !diagram.Contains(sourceId + "[", StringComparison.Ordinal)
+                && !redNodeIds.Contains(sourceId))
+            {
+                redNodeIds.Add(sourceId);
+            }
+        }
+
+        if (pendingNodeIds.Count > 0)
+        {
+            sb.Append("    classDef pending stroke:#0067b8,stroke-width:2.5px\n");
+            sb.Append($"    class {string.Join(",", pendingNodeIds.Select(SanitizeMermaidId))} pending\n");
+        }
+
+        if (redNodeIds.Count > 0)
+        {
+            sb.Append("    classDef removed stroke:#a4262c,color:#a4262c\n");
+            sb.Append($"    class {string.Join(",", redNodeIds)} removed\n");
+        }
+
+        foreach (var index in blueIndices)
+        {
+            sb.Append($"    linkStyle {index} stroke:#0067b8,stroke-width:2px\n");
+        }
+
+        foreach (var index in redIndices)
+        {
+            sb.Append($"    linkStyle {index} stroke:#a4262c,stroke-width:2px\n");
+        }
+
+        return sb.ToString();
     }
 
     private static string SanitizeMermaidId(string raw)
