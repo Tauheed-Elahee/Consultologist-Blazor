@@ -63,7 +63,9 @@
                             <div class="setup-context">
                                 <span class="setup-context__line">
                                     Runs
-                                    <span class="provenance-chip @(IsForkRef(workflowPackageRef) ? "provenance-chip--fork" : null)">@workflowPackageRef</span>
+                                    <WorkflowPackagePicker @key="workflowPackageRef"
+                                                           Disabled="@isAiRequestLoading"
+                                                           OnPinned="OnPackagePinnedAsync" />
                                     <span class="muted-text">· @sectionStandards.Count sections</span>
                                 </span>
                                 <details class="setup-sections">
@@ -924,8 +926,13 @@
     }
   }
 
-  private static bool IsForkRef(string? packageRef) =>
-    packageRef != null && packageRef.StartsWith("acct-", StringComparison.Ordinal);
+  // A new pin resolves to a different package: reload the sections and the
+  // node map from it.
+  private async Task OnPackagePinnedAsync()
+  {
+    await LoadSectionStandardsAsync();
+    await LoadWorkflowNodesAsync();
+  }
 
   // Setup covers standards resolution and job submission; the snapshot event
   // marks it done — symmetric with done/error resolving the Done row.

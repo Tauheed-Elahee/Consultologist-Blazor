@@ -13,6 +13,7 @@ public interface IWorkflowEndpointService
     Task<WorkflowPackageContentResponse> GetCurrentPackageContentAsync();
     Task<WorkflowPublishOutcome> PublishPackageAsync(WorkflowPackagePublishRequest request);
     Task<PublicChainView?> GetPublicChainAsync();
+    Task<PublicPackageView?> GetMyPackagesAsync();
     Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version);
     Task<IReadOnlyList<string>?> GetLineageAsync(string packageRef);
     Task<string?> GetCurrentDiagramAsync();
@@ -22,12 +23,17 @@ public interface IWorkflowEndpointService
 public record PublicCatalogEntry(string? AgentName, string? AgentVersion);
 
 /// <summary>
-/// Minimal mirror of the anonymous Public/Chain document — currently just the
-/// catalog's contract → agent mapping, used to decorate the History provenance
-/// panel with agent names (the job record stores contract → version only; names
-/// are catalog metadata, served by the public chain view).
+/// Minimal mirror of the anonymous Public/Chain document: the repo-owned
+/// package listings (the selector's public half, #134) and the catalog's
+/// contract → agent mapping (History's agent-name decoration — the job record
+/// stores contract → version only; names are catalog metadata).
 /// </summary>
-public record PublicChainView(PublicCatalogView? OutputContracts);
+public record PublicChainView(
+    IReadOnlyList<PublicPackageView>? Packages,
+    PublicCatalogView? OutputContracts);
+
+/// <summary>One package's registry listing (public repo package or the caller's fork).</summary>
+public record PublicPackageView(string? Name, string? Latest, List<string>? Versions);
 
 public record PublicCatalogView(Dictionary<string, PublicContractView>? Contracts);
 
@@ -220,6 +226,41 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Public chain view unavailable; agent names will not be decorated.");
+            return null;
+        }
+    }
+
+    public async Task<PublicPackageView?> GetMyPackagesAsync()
+    {
+        var mineUrl = _configuration["AzureFunction:WorkflowPackageMineUrl"];
+
+        if (string.IsNullOrWhiteSpace(mineUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, mineUrl);
+            await AddAuthorizationAsync(request);
+
+            using var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Account package listing failed with status {StatusCode}.", response.StatusCode);
+                return null;
+            }
+
+            return await response.Content.ReadFromJsonAsync<PublicPackageView>();
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Account package listing unavailable; the selector shows public packages only.");
             return null;
         }
     }

@@ -139,7 +139,8 @@ via `appsettings.Development.json`), not by environment variables:
 - `AzureFunction:*Url` — endpoint URLs: `AccountMeUrl`, `ConsultGenerationJobsUrl`,
   `DiagnosticsSseExitUrl`, `WorkflowPackageCurrentUrl`, and the editor pair
   `WorkflowPackageContentUrl` / `WorkflowPackagePublishUrl` (#57),
-  `WorkflowPackageLineageUrl` (#89), and `WorkflowPackageDiagramUrl` (#114). (`AgentProxyUrl`
+  `WorkflowPackageLineageUrl` (#89), `WorkflowPackageDiagramUrl` (#114), and
+  `WorkflowPackageMineUrl` (#134 — the package selector's fork listing). (`AgentProxyUrl`
   and `ConsultGenerationUrl` were removed with their legacy endpoints in milestone 3.)
 - `AzureFunction:TimeoutSeconds` — HTTP client timeout for AI calls (default 240 when
   absent; shipped value 300).

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Azure;
 using Consultologist.Api.Auth;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -18,6 +19,7 @@ public sealed class WorkflowPackages
     private readonly IWorkflowPackagePinResolver _pinResolver;
     private readonly WorkflowPackagePublisher _publisher;
     private readonly WorkflowPackageLineageResolver _lineage;
+    private readonly WorkflowPackageBlobContainerFactory _containerFactory;
     private readonly IAccountAuthorizer _authorizer;
     private readonly ILogger<WorkflowPackages> _logger;
 
@@ -26,6 +28,7 @@ public sealed class WorkflowPackages
         IWorkflowPackagePinResolver pinResolver,
         WorkflowPackagePublisher publisher,
         WorkflowPackageLineageResolver lineage,
+        WorkflowPackageBlobContainerFactory containerFactory,
         IAccountAuthorizer authorizer,
         ILogger<WorkflowPackages> logger)
     {
@@ -33,6 +36,7 @@ public sealed class WorkflowPackages
         _pinResolver = pinResolver;
         _publisher = publisher;
         _lineage = lineage;
+        _containerFactory = containerFactory;
         _authorizer = authorizer;
         _logger = logger;
     }
@@ -90,6 +94,72 @@ public sealed class WorkflowPackages
                     .ToList()),
             cancellationToken);
 
+        return response;
+    }
+
+    [Function("WorkflowPackageMine")]
+    public async Task<HttpResponseData> GetMineAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "WorkflowPackages/Mine")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        // The selector's "My fork" group: the account package's versions from
+        // the private registry (#134). No forks published yet is a normal,
+        // empty answer — including a registry whose container does not exist.
+        var name = WorkflowPackageNaming.ForAccount(account.AppUserId);
+        var container = _containerFactory.GetContainer();
+        var blobNames = new List<string>();
+        string? latestPointerJson = null;
+
+        try
+        {
+            await foreach (var blob in container.GetBlobsAsync(prefix: $"{name}/", cancellationToken: cancellationToken))
+            {
+                blobNames.Add(blob.Name);
+            }
+
+            var latestPath = $"{name}/latest.json";
+            if (blobNames.Contains(latestPath))
+            {
+                var download = await container.GetBlobClient(latestPath).DownloadContentAsync(cancellationToken);
+                latestPointerJson = download.Value.Content.ToString();
+            }
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            blobNames.Clear();
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogError(ex, "Account package listing failed. Package={Package}", name);
+            var errorResponse = req.CreateResponse(HttpStatusCode.ServiceUnavailable);
+            FunctionCors.Apply(req, errorResponse);
+            await errorResponse.WriteAsJsonAsync(new { error = "Workflow package registry is unavailable." }, cancellationToken);
+            return errorResponse;
+        }
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(AccountPackageListing.Build(name, blobNames, latestPointerJson), cancellationToken);
         return response;
     }
 
