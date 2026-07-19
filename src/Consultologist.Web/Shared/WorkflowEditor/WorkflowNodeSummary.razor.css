@@ -1,0 +1,35 @@
+.binding-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.binding-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.85rem;
+}
+
+.binding-row__variable {
+	min-width: 12rem;
+}
+
+.binding-row__select {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.78rem;
+	padding: 0.15rem 0.4rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm, 4px);
+	background: var(--consultologist-surface);
+	color: inherit;
+}
+
+.binding-row__pending {
+	color: var(--consultologist-accent);
+	font-size: 0.7rem;
+}

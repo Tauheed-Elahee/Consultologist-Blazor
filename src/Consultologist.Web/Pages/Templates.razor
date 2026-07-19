@@ -165,8 +165,8 @@
                     <button type="button"
                             class="editor-nav__item @(selectedKey == GraphKey ? "editor-nav__item--selected" : "")"
                             @onclick="() => Select(GraphKey)">
-                        <span class="editor-nav__dot"></span>
-                        <span>Graph (read-only)</span>
+                        <span class="editor-nav__dot">@(bindingEdits.Count > 0 ? "●" : "")</span>
+                        <span>Graph</span>
                     </button>
                 </nav>
 
@@ -234,16 +234,21 @@
                     {
                         <div class="pane-header">
                             <div>
-                                <h3 class="panel-title">Workflow graph (read-only)</h3>
+                                <h3 class="panel-title">Workflow graph</h3>
                                 <p class="muted-text">
-                                    Node structure, bindings, and output contracts are fixed in this editor —
-                                    edits here are prompt and standards texts only.
+                                    Node structure and output contracts are fixed in this editor; prompt
+                                    bindings are editable per node below (#138). The diagram reflects the
+                                    published version — pending rebinds show as dots until you publish.
                                 </p>
                             </div>
                         </div>
                         <WorkflowDagView Diagram="@diagramText" />
                         <h2 class="panel-title">Node details</h2>
-                        <WorkflowNodeSummary Nodes="@nodes" />
+                        <WorkflowNodeSummary Nodes="@nodes"
+                                             Editable="true"
+                                             Scalars="@scalars"
+                                             EffectiveBinding="@GetEffectiveBinding"
+                                             OnBindingChanged="OnBindingChangedAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
                     {
@@ -319,7 +324,7 @@
     private static readonly System.Text.RegularExpressions.Regex ItemIdPattern =
         new("^[a-z0-9][a-z0-9_-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private int PendingCount => edits.Count + addedItems.Count + removedFiles.Count;
+    private int PendingCount => edits.Count + addedItems.Count + removedFiles.Count + bindingEdits.Count;
 
     private string PendingSummary()
     {
@@ -332,6 +337,7 @@
         if (edits.Count > 0) parts.Add($"{edits.Count} edited");
         if (addedItems.Count > 0) parts.Add($"+{addedItems.Count}");
         if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
+        if (bindingEdits.Count > 0) parts.Add($"{bindingEdits.Count} rebound");
         return $" ({string.Join(" · ", parts)})";
     }
 
@@ -434,6 +440,36 @@
     // mirrored to localStorage so drafts survive refresh on this browser.
     private readonly Dictionary<string, string> edits = new(StringComparer.Ordinal);
 
+    // Pending rebinds (#138), keyed nodeId + '\n' + variable. An edit equal to
+    // the loaded manifest's value removes itself.
+    private readonly Dictionary<string, (string From, string? As)> bindingEdits = new(StringComparer.Ordinal);
+    private IReadOnlyList<string> scalars = Array.Empty<string>();
+
+    private static string BindingKey(string nodeId, string variable) => nodeId + "\n" + variable;
+
+    private (string From, string? As)? GetEffectiveBinding(string nodeId, string variable) =>
+        bindingEdits.TryGetValue(BindingKey(nodeId, variable), out var edit) ? edit : null;
+
+    private async Task OnBindingChangedAsync(WorkflowNodeSummary.BindingChange change)
+    {
+        publishSuccess = null;
+
+        var original = nodes.FirstOrDefault(n => n.Id == change.NodeId)?
+            .Bindings.FirstOrDefault(b => b.Variable == change.Variable);
+        var key = BindingKey(change.NodeId, change.Variable);
+
+        if (original != null && original.From == change.From && original.As == change.As)
+        {
+            bindingEdits.Remove(key);
+        }
+        else
+        {
+            bindingEdits[key] = (change.From, change.As);
+        }
+
+        await PersistDraftAsync();
+    }
+
     private bool isLoading;
     private bool isPublishing;
     private string? loadError;
@@ -484,6 +520,7 @@
         edits.Clear();
         addedItems.Clear();
         removedFiles.Clear();
+        bindingEdits.Clear();
         newItemError = null;
 
         try
@@ -492,6 +529,7 @@
             prompts = WorkflowManifestReader.ReadPrompts(content.Manifest);
             nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
             collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
+            scalars = WorkflowManifestReader.ReadScalars(content.Manifest);
             await RestoreDraftAsync();
 
             // Keep the selection when it still exists in the loaded version;
@@ -520,7 +558,14 @@
 
     private sealed record DraftAdded(string Collection, string Id, string Name, string Content);
 
-    private sealed record DraftPayload(int Version, Dictionary<string, string>? Edits, List<DraftAdded>? Added, List<string>? Removed);
+    private sealed record DraftBinding(string NodeId, string Variable, string From, string? As);
+
+    private sealed record DraftPayload(
+        int Version,
+        Dictionary<string, string>? Edits,
+        List<DraftAdded>? Added,
+        List<string>? Removed,
+        List<DraftBinding>? Bindings = null);
 
     private async Task RestoreDraftAsync()
     {
@@ -534,6 +579,7 @@
         Dictionary<string, string>? textEdits = null;
         List<DraftAdded>? added = null;
         List<string>? removed = null;
+        List<DraftBinding>? bindings = null;
 
         try
         {
@@ -544,6 +590,7 @@
                 textEdits = payload?.Edits;
                 added = payload?.Added;
                 removed = payload?.Removed;
+                bindings = payload?.Bindings;
             }
             else
             {
@@ -582,6 +629,19 @@
                 removedFiles.Add(path);
             }
         }
+
+        foreach (var draftBinding in bindings ?? new List<DraftBinding>())
+        {
+            // Keep only rebinds whose node/variable still exists in the loaded
+            // version and which still differ from it.
+            var original = nodes.FirstOrDefault(n => n.Id == draftBinding.NodeId)?
+                .Bindings.FirstOrDefault(b => b.Variable == draftBinding.Variable);
+
+            if (original != null && (original.From != draftBinding.From || original.As != draftBinding.As))
+            {
+                bindingEdits[BindingKey(draftBinding.NodeId, draftBinding.Variable)] = (draftBinding.From, draftBinding.As);
+            }
+        }
     }
 
     private async Task PersistDraftAsync()
@@ -593,10 +653,15 @@
         }
 
         var payload = new DraftPayload(
-            2,
+            3,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
-            removedFiles.ToList());
+            removedFiles.ToList(),
+            bindingEdits.Select(pair =>
+            {
+                var parts = pair.Key.Split('\n', 2);
+                return new DraftBinding(parts[0], parts[1], pair.Value.From, pair.Value.As);
+            }).ToList());
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
@@ -688,7 +753,7 @@
             }
 
             var outcome = await WorkflowService.PublishPackageAsync(
-                new WorkflowPackagePublishRequest(content.Ref, content.Manifest, files));
+                new WorkflowPackagePublishRequest(content.Ref, ComposeManifest(), files));
 
             if (!outcome.Succeeded)
             {
@@ -725,11 +790,56 @@
         edits.Clear();
         addedItems.Clear();
         removedFiles.Clear();
+        bindingEdits.Clear();
         newItemId = newItemName = newItemContent = null;
         newItemError = null;
         publishErrors = new List<string>();
         publishSuccess = null;
         await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+    }
+
+    // The manifest rides opaque except for this one surgical write: pending
+    // rebinds land in nodes[].bindings, everything else passes through. Casing
+    // is tolerant like the reader's — the worker serializer may have written
+    // PascalCase, and the server parses either. Binding dictionary keys
+    // (variable names) are never re-cased by the serializer.
+    private JsonElement ComposeManifest()
+    {
+        if (bindingEdits.Count == 0)
+        {
+            return content!.Manifest;
+        }
+
+        var root = System.Text.Json.Nodes.JsonNode.Parse(content!.Manifest.GetRawText())!;
+
+        if ((root["nodes"] ?? root["Nodes"]) is not System.Text.Json.Nodes.JsonArray nodesArray)
+        {
+            return content.Manifest;
+        }
+
+        foreach (var pair in bindingEdits)
+        {
+            var parts = pair.Key.Split('\n', 2);
+            var nodeObject = nodesArray
+                .OfType<System.Text.Json.Nodes.JsonObject>()
+                .FirstOrDefault(n => (n["id"] ?? n["Id"])?.GetValue<string>() == parts[0]);
+
+            if (nodeObject == null
+                || (nodeObject["bindings"] ?? nodeObject["Bindings"]) is not System.Text.Json.Nodes.JsonObject bindingsObject)
+            {
+                continue;
+            }
+
+            bindingsObject[parts[1]] = pair.Value.As is null
+                ? System.Text.Json.Nodes.JsonValue.Create(pair.Value.From)
+                : new System.Text.Json.Nodes.JsonObject
+                {
+                    ["from"] = pair.Value.From,
+                    ["as"] = pair.Value.As
+                };
+        }
+
+        return JsonSerializer.SerializeToElement(root);
     }
 
     // A new pin resolves to a different package; drafts are keyed per ref, so
