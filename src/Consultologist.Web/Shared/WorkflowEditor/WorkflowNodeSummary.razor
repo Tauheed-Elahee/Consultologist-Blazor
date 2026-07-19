@@ -40,32 +40,11 @@
                     <span aria-hidden="true">←</span>
                     @if (Editable)
                     {
-                        <select class="binding-row__select"
-                                value="@row.From"
-                                @onchange="args => OnSourceChangedAsync(node, row, args)"
-                                aria-label="@($"Source for {row.Variable}")">
-                            @if (row.From.Length == 0)
-                            {
-                                <option value="">choose source…</option>
-                            }
-                            @foreach (var option in SourceOptions(node, row.From))
-                            {
-                                <option value="@option">@option</option>
-                            }
-                        </select>
-                        @if (row.From.StartsWith("node:", StringComparison.Ordinal))
-                        {
-                            var targetHasOutput = TargetHasOutput(row.From);
-                            <span class="muted-text">render as</span>
-                            <select class="binding-row__select"
-                                    value="@(row.As ?? NoRenderer)"
-                                    @onchange="args => OnRendererChangedAsync(node, row, args)"
-                                    aria-label="@($"Renderer for {row.Variable}")">
-                                <option value="@NoRenderer">plain</option>
-                                <option value="concept-bullets" disabled="@(!targetHasOutput && row.As != "concept-bullets")">concept-bullets</option>
-                                <option value="concept-context" disabled="@(!targetHasOutput && row.As != "concept-context")">concept-context</option>
-                            </select>
-                        }
+                        <BindingSourceEditor Node="@node"
+                                             Row="@row"
+                                             Nodes="@Nodes"
+                                             Scalars="@Scalars"
+                                             OnChanged="@OnBindingChanged" />
                         @if (modified)
                         {
                             <span class="binding-row__pending" title="Pending change">●</span>
@@ -98,7 +77,7 @@
                             @onchange="args => SetFormSource(node.Id, args)"
                             aria-label="New variable source">
                         <option value="">choose source…</option>
-                        @foreach (var option in SourceOptions(node, string.Empty))
+                        @foreach (var option in BindingSourceEditor.SourceOptions(Nodes, Scalars, node, string.Empty))
                         {
                             <option value="@option">@option</option>
                         }
@@ -115,8 +94,6 @@
 }
 
 @code {
-    private const string NoRenderer = "__plain__";
-
     /// <summary>One effective binding row: current values plus the manifest's originals (null for pending-added variables).</summary>
     public sealed record BindingRow(string Variable, string From, string? As, string? OriginalFrom, string? OriginalAs, bool IsNew);
 
@@ -154,63 +131,6 @@
     private IReadOnlyList<BindingRow> Rows(WorkflowManifestReader.NodeView node) =>
         RowsFor?.Invoke(node)
             ?? node.Bindings.Select(b => new BindingRow(b.Variable, b.From, b.As, b.From, b.As, false)).ToList();
-
-    // The valid v5 source space for one node; a nonempty current value is
-    // always included so an unrecognized source still displays truthfully.
-    private IEnumerable<string> SourceOptions(WorkflowManifestReader.NodeView node, string current)
-    {
-        var options = new List<string> { "input:consult_draft" };
-
-        options.AddRange(Nodes.Where(other => other.Id != node.Id).Select(other => $"node:{other.Id}"));
-
-        if (node.ForEach != null)
-        {
-            options.Add("item:name");
-            options.Add("item:content");
-        }
-
-        options.AddRange(Scalars.Select(scalar => $"data:{scalar}"));
-
-        if (current.Length > 0 && !options.Contains(current))
-        {
-            options.Insert(0, current);
-        }
-
-        return options;
-    }
-
-    private bool TargetHasOutput(string from) =>
-        Nodes.FirstOrDefault(node => $"node:{node.Id}" == from)?.HasOutput == true;
-
-    private async Task OnSourceChangedAsync(
-        WorkflowManifestReader.NodeView node,
-        BindingRow row,
-        ChangeEventArgs args)
-    {
-        var from = args.Value?.ToString();
-
-        if (string.IsNullOrWhiteSpace(from))
-        {
-            return;
-        }
-
-        // A renderer only makes sense on a node source; keep it when the new
-        // source is one, otherwise drop it.
-        var renderer = from.StartsWith("node:", StringComparison.Ordinal) ? row.As : null;
-
-        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, row.Variable, from, renderer));
-    }
-
-    private async Task OnRendererChangedAsync(
-        WorkflowManifestReader.NodeView node,
-        BindingRow row,
-        ChangeEventArgs args)
-    {
-        var value = args.Value?.ToString();
-        var renderer = string.IsNullOrWhiteSpace(value) || value == NoRenderer ? null : value;
-
-        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, row.Variable, row.From, renderer));
-    }
 
     private void SetFormName(string nodeId, ChangeEventArgs args) =>
         FormFor(nodeId).Name = args.Value?.ToString();
