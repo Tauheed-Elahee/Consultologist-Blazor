@@ -43,7 +43,10 @@
         {
             <div class="editor-bar">
                 <div class="editor-bar__info">
-                    <span>Editing <code>@content.Ref</code></span>
+                    <span>Editing</span>
+                    <WorkflowPackagePicker @key="content.Ref"
+                                           Disabled="@isPublishing"
+                                           OnPinned="OnPackagePinnedAsync" />
                     @if (WorkflowManifestReader.ReadDerivedFrom(content.Manifest) is { } parentRef)
                     {
                         <span class="muted-text">derived from <code>@parentRef</code></span>
@@ -721,6 +724,13 @@
         publishErrors = new List<string>();
         publishSuccess = null;
         await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
+    }
+
+    // A new pin resolves to a different package; drafts are keyed per ref, so
+    // pending edits stay with their package and reappear on switching back.
+    private async Task OnPackagePinnedAsync()
+    {
+        await LoadAsync();
     }
 
     private async Task RevertToDefaultAsync()

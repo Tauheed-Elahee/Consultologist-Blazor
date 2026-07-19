@@ -23,20 +23,6 @@
 	gap: 0.5rem;
 }
 
-.provenance-chip {
-	font-family: var(--consultologist-font-mono, monospace);
-	font-size: 0.75rem;
-	padding: 0.2rem 0.6rem;
-	border: 1px solid var(--consultologist-border);
-	border-radius: 999px;
-	background: var(--consultologist-surface);
-}
-
-.provenance-chip--fork {
-	border-style: dashed;
-	font-weight: 600;
-}
-
 .setup-sections > summary {
 	cursor: pointer;
 	user-select: none;
