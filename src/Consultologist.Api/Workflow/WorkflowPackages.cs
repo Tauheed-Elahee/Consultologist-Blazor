@@ -15,6 +15,10 @@ public sealed class WorkflowPackages
         PropertyNameCaseInsensitive = true
     };
 
+    // Fork manifests are immutable; spec versions read once hold for the
+    // process lifetime (the Mine endpoint's per-version reads).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int?> SpecVersionCache = new(StringComparer.Ordinal);
+
     private readonly IWorkflowPackageStore _packageStore;
     private readonly IWorkflowPackagePinResolver _pinResolver;
     private readonly WorkflowPackagePublisher _publisher;
@@ -129,6 +133,7 @@ public sealed class WorkflowPackages
         var container = _containerFactory.GetContainer();
         var blobNames = new List<string>();
         string? latestPointerJson = null;
+        var specVersions = new Dictionary<string, int>(StringComparer.Ordinal);
 
         try
         {
@@ -142,6 +147,22 @@ public sealed class WorkflowPackages
             {
                 var download = await container.GetBlobClient(latestPath).DownloadContentAsync(cancellationToken);
                 latestPointerJson = download.Value.Content.ToString();
+            }
+
+            // Per-version spec, so the selector can mark unsupported history.
+            foreach (var manifestPath in blobNames.Where(n => n.Split('/') is { Length: 3 } parts && parts[2] == "manifest.json"))
+            {
+                if (!SpecVersionCache.TryGetValue(manifestPath, out var spec))
+                {
+                    var manifest = await container.GetBlobClient(manifestPath).DownloadContentAsync(cancellationToken);
+                    spec = AccountPackageListing.ReadSpecVersion(manifest.Value.Content.ToString());
+                    SpecVersionCache[manifestPath] = spec;
+                }
+
+                if (spec is int value)
+                {
+                    specVersions[manifestPath.Split('/')[1]] = value;
+                }
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -159,7 +180,9 @@ public sealed class WorkflowPackages
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         FunctionCors.Apply(req, response);
-        await response.WriteAsJsonAsync(AccountPackageListing.Build(name, blobNames, latestPointerJson), cancellationToken);
+        await response.WriteAsJsonAsync(
+            AccountPackageListing.Build(name, blobNames, latestPointerJson, specVersions.Count > 0 ? specVersions : null),
+            cancellationToken);
         return response;
     }
 

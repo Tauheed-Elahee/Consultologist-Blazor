@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
+using Azure;
 using Azure.Storage.Blobs;
 using Consultologist.Api.Agents;
 using Microsoft.Extensions.Configuration;
@@ -11,7 +13,11 @@ public sealed record PublicChainResponse(
     IReadOnlyList<PublicAgentSummary> AgentDefinitions,
     DateTimeOffset GeneratedAtUtc);
 
-public sealed record PublicPackageSummary(string Name, string? Latest, IReadOnlyList<string> Versions);
+public sealed record PublicPackageSummary(
+    string Name,
+    string? Latest,
+    IReadOnlyList<string> Versions,
+    IReadOnlyDictionary<string, int>? SpecVersions = null);
 
 public sealed record PublicCatalogSummary(
     string? Latest,
@@ -33,6 +39,10 @@ public sealed class PublicRegistryReader
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private readonly BlobServiceClient? _service;
+
+    // Version manifests are immutable: a spec version read once holds forever
+    // (singleton service, so this outlives requests).
+    private readonly ConcurrentDictionary<string, int?> _specVersionCache = new(StringComparer.Ordinal);
 
     public PublicRegistryReader(IConfiguration configuration)
     {
@@ -81,7 +91,44 @@ public sealed class PublicRegistryReader
                 await ReadTextAsync(OutputContractCatalogContainer, $"{catalogLatest}/{OutputContractCatalog.CatalogFileName}", cancellationToken);
         }
 
-        return Assemble(packageNames, contractNames, agentNames, smallFiles, DateTimeOffset.UtcNow);
+        // Per-version spec versions, so the selector can mark pre-v5 history
+        // unselectable (#134).
+        var specVersions = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var manifestPath in packageNames.Where(n => n.Split('/') is { Length: 3 } parts && parts[2] == "manifest.json"))
+        {
+            if (await GetSpecVersionAsync(WorkflowPackageBlobContainerFactory.ContainerName, manifestPath, cancellationToken) is int spec)
+            {
+                specVersions[manifestPath[..^"/manifest.json".Length]] = spec;
+            }
+        }
+
+        return Assemble(packageNames, contractNames, agentNames, smallFiles, DateTimeOffset.UtcNow, specVersions);
+    }
+
+    private async Task<int?> GetSpecVersionAsync(string containerName, string blobPath, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{containerName}/{blobPath}";
+
+        if (_specVersionCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        int? spec;
+
+        try
+        {
+            spec = AccountPackageListing.ReadSpecVersion(await ReadTextAsync(containerName, blobPath, cancellationToken));
+        }
+        catch (RequestFailedException)
+        {
+            // Transient read failure: report unknown, cache nothing.
+            return null;
+        }
+
+        _specVersionCache[cacheKey] = spec;
+        return spec;
     }
 
     public const string OutputContractCatalogContainer = OutputContractCatalog.RegistryName;
@@ -93,7 +140,8 @@ public sealed class PublicRegistryReader
         IReadOnlyList<string> contractBlobs,
         IReadOnlyList<string> agentBlobs,
         IReadOnlyDictionary<string, string> smallFiles,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        IReadOnlyDictionary<string, int>? specVersions = null)
     {
         // Packages: {name}/{version}/manifest.json + {name}/latest.json.
         var packages = packageBlobs
@@ -104,7 +152,8 @@ public sealed class PublicRegistryReader
             .Select(g => new PublicPackageSummary(
                 g.Key,
                 ReadPointer(smallFiles.GetValueOrDefault($"{WorkflowPackageBlobContainerFactory.ContainerName}/{g.Key}/latest.json")),
-                SortVersions(g.Select(parts => parts[1]))))
+                SortVersions(g.Select(parts => parts[1])),
+                BuildSpecMap(g.Key, g.Select(parts => parts[1]), specVersions)))
             .ToList();
 
         // Catalog: {version}/output-contracts.json + latest.json.
@@ -157,6 +206,29 @@ public sealed class PublicRegistryReader
             .ToList();
 
         return new PublicChainResponse(packages, catalog, agents, nowUtc);
+    }
+
+    private static IReadOnlyDictionary<string, int>? BuildSpecMap(
+        string name,
+        IEnumerable<string> versions,
+        IReadOnlyDictionary<string, int>? specVersions)
+    {
+        if (specVersions is null)
+        {
+            return null;
+        }
+
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var version in versions.Distinct(StringComparer.Ordinal))
+        {
+            if (specVersions.TryGetValue($"{name}/{version}", out var spec))
+            {
+                map[version] = spec;
+            }
+        }
+
+        return map.Count > 0 ? map : null;
     }
 
     internal static List<string> SortVersions(IEnumerable<string> versions) =>

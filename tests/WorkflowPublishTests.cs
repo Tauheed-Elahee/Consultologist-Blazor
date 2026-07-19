@@ -740,3 +740,67 @@ public class AccountPackageListingTests
         Assert.Equal(new[] { "v2026.07.1" }, summary.Versions);
     }
 }
+
+public class AccountPackageListingSpecTests
+{
+    [Fact]
+    public void Build_CarriesSpecVersions()
+    {
+        var summary = AccountPackageListing.Build(
+            "acct-7bca2dcc1ed4",
+            new[] { "acct-7bca2dcc1ed4/v2026.07.1/manifest.json" },
+            null,
+            new Dictionary<string, int> { ["v2026.07.1"] = 5 });
+
+        Assert.NotNull(summary.SpecVersions);
+        Assert.Equal(5, summary.SpecVersions!["v2026.07.1"]);
+    }
+
+    [Theory]
+    [InlineData("""{"specVersion":5}""", 5)]
+    [InlineData("""{"specVersion":2,"prompts":[]}""", 2)]
+    [InlineData("""{"name":"x"}""", null)]
+    [InlineData("""{"specVersion":"five"}""", null)]
+    [InlineData("{not json", null)]
+    public void ReadSpecVersion_ParsesOrDegrades(string manifestJson, int? expected)
+    {
+        Assert.Equal(expected, AccountPackageListing.ReadSpecVersion(manifestJson));
+    }
+
+    [Fact]
+    public void Assemble_MapsSpecVersionsPerPackage()
+    {
+        var chain = PublicRegistryReader.Assemble(
+            new[]
+            {
+                "general/v2026.07.3/manifest.json",
+                "general/v2026.07.6/manifest.json"
+            },
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            new Dictionary<string, string>(),
+            DateTimeOffset.UtcNow,
+            new Dictionary<string, int>
+            {
+                ["general/v2026.07.3"] = 2,
+                ["general/v2026.07.6"] = 5
+            });
+
+        var package = Assert.Single(chain.Packages);
+        Assert.Equal(2, package.SpecVersions!["v2026.07.3"]);
+        Assert.Equal(5, package.SpecVersions!["v2026.07.6"]);
+    }
+
+    [Fact]
+    public void Assemble_WithoutSpecVersions_LeavesSummariesNull()
+    {
+        var chain = PublicRegistryReader.Assemble(
+            new[] { "general/v2026.07.6/manifest.json" },
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            new Dictionary<string, string>(),
+            DateTimeOffset.UtcNow);
+
+        Assert.Null(Assert.Single(chain.Packages).SpecVersions);
+    }
+}

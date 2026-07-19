@@ -21,7 +21,7 @@
             <optgroup label="@group.Label">
                 @foreach (var option in group.Options)
                 {
-                    <option value="@option.Value">@option.Label</option>
+                    <option value="@option.Value" disabled="@option.Disabled">@option.Label</option>
                 }
             </optgroup>
         }
@@ -36,10 +36,15 @@
     private const string PinSettingKey = "consult.workflowPackage";
     private const string DefaultRef = "general@latest";
 
+    // The engine's sole package format (package-format-v5.md); older registry
+    // history stays listed but unselectable. Unknown spec = selectable — the
+    // pin resolver remains the runtime authority.
+    private const int MinSupportedSpecVersion = 5;
+
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public EventCallback OnPinned { get; set; }
 
-    private sealed record PickerOption(string Value, string Label);
+    private sealed record PickerOption(string Value, string Label, bool Disabled = false);
     private sealed record PickerGroup(string Label, List<PickerOption> Options);
 
     private List<PickerGroup> groups = new();
@@ -107,7 +112,13 @@
         // Registry listings are CalVer-ascending; the dropdown reads newest first.
         foreach (var version in (package.Versions ?? new List<string>()).AsEnumerable().Reverse())
         {
-            options.Add(new($"{package.Name}@{version}", version));
+            var spec = package.SpecVersions?.GetValueOrDefault(version);
+            var unsupported = spec is int value && value < MinSupportedSpecVersion;
+
+            options.Add(new(
+                $"{package.Name}@{version}",
+                unsupported ? $"{version} — unsupported (spec {spec})" : version,
+                unsupported));
         }
 
         return new PickerGroup(label, options);

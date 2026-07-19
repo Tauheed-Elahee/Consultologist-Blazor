@@ -57,6 +57,14 @@
                         else if (!string.IsNullOrEmpty(standardsLoadError))
                         {
                             <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                            @* Escape hatch: a pin to an unloadable package must stay
+                               correctable from here — the picker loads independently. *@
+                            <div class="setup-context">
+                                <span class="setup-context__line">
+                                    Switch to another package:
+                                    <WorkflowPackagePicker OnPinned="OnPackagePinnedAsync" />
+                                </span>
+                            </div>
                         }
                         else if (sectionStandards.Count > 0)
                         {

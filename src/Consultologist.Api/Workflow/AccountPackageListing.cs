@@ -12,7 +12,11 @@ public static class AccountPackageListing
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public static PublicPackageSummary Build(string name, IReadOnlyList<string> blobNames, string? latestPointerJson)
+    public static PublicPackageSummary Build(
+        string name,
+        IReadOnlyList<string> blobNames,
+        string? latestPointerJson,
+        IReadOnlyDictionary<string, int>? specVersions = null)
     {
         var versions = PublicRegistryReader.SortVersions(blobNames
             .Select(blobName => blobName.Split('/'))
@@ -35,7 +39,30 @@ public static class AccountPackageListing
             }
         }
 
-        return new PublicPackageSummary(name, latest, versions);
+        return new PublicPackageSummary(name, latest, versions, specVersions);
+    }
+
+    /// <summary>
+    /// Reads just the specVersion out of a manifest document; null when the
+    /// document is unreadable (callers treat unknown as selectable — the
+    /// resolver stays the runtime authority).
+    /// </summary>
+    public static int? ReadSpecVersion(string manifestJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(manifestJson);
+
+            return document.RootElement.TryGetProperty("specVersion", out var spec)
+                && spec.ValueKind == JsonValueKind.Number
+                && spec.TryGetInt32(out var value)
+                    ? value
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private sealed record LatestPointer(string? Version);
