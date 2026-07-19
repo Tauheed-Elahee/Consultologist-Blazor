@@ -111,7 +111,7 @@
                         <button type="button"
                                 class="editor-nav__item @(selectedKey == prompt.File ? "editor-nav__item--selected" : "")"
                                 @onclick="() => Select(prompt.File)">
-                            <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) ? "●" : "")</span>
+                            <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) || HasVariableEdits(prompt.Id) ? "●" : "")</span>
                             <span>@prompt.Id</span>
                         </button>
                     }
@@ -247,8 +247,10 @@
                         <WorkflowNodeSummary Nodes="@nodes"
                                              Editable="true"
                                              Scalars="@scalars"
-                                             EffectiveBinding="@GetEffectiveBinding"
-                                             OnBindingChanged="OnBindingChangedAsync" />
+                                             RowsFor="@RowsFor"
+                                             ValidateVariableName="@ValidateVariableNameForNode"
+                                             OnBindingChanged="OnBindingChangedAsync"
+                                             OnVariableAdded="OnVariableAddedAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
                     {
@@ -278,9 +280,49 @@
                                             Text="@GetText(prompt.File)"
                                             Modified="@edits.ContainsKey(prompt.File)"
                                             TextChanged="@(value => OnTextChangedAsync(prompt.File, value))">
+                            <div class="variable-chips">
+                                <span class="muted-text">Variables:</span>
+                                @foreach (var variable in prompt.Variables)
+                                {
+                                    var isRemoved = IsRemovedVariable(prompt.Id, variable);
+                                    var usedInText = !isRemoved && VariableUsedInText(prompt, variable);
+                                    <span class="variable-chip @(isRemoved ? "variable-chip--removed" : null)">
+                                        <code>@($"{{{{ {variable} }}}}")</code>
+                                        @if (isRemoved)
+                                        {
+                                            <button type="button" class="variable-chip__action" title="Restore variable"
+                                                    @onclick="() => RestoreVariableAsync(prompt, variable)">↺</button>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="variable-chip__action"
+                                                    title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
+                                                    disabled="@usedInText"
+                                                    @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
+                                        }
+                                    </span>
+                                }
+                                @foreach (var variable in AddedVariables(prompt.Id))
+                                {
+                                    var usedInText = VariableUsedInText(prompt, variable);
+                                    <span class="variable-chip variable-chip--new">
+                                        <code>@($"{{{{ {variable} }}}}")</code>
+                                        <button type="button" class="variable-chip__action"
+                                                title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
+                                                disabled="@usedInText"
+                                                @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
+                                    </span>
+                                }
+                                <input class="variable-chips__input" placeholder="new_variable" @bind="newVariableName" />
+                                <button type="button" class="variable-chips__add" @onclick="() => AddVariableFromPromptAsync(prompt)">Add</button>
+                            </div>
+                            @if (newVariableError != null)
+                            {
+                                <p class="variable-chips__error">@newVariableError</p>
+                            }
                             <p class="muted-text">
-                                Variables are fixed — the <code>{{ placeholders }}</code> must all remain:
-                                @string.Join(", ", prompt.Variables.Select(v => $"{{{{ {v} }}}}"))
+                                Declared placeholders are usable in the text; new variables need a source on
+                                each node using this prompt — set it in Graph.
                                 @if (prompt.Prelude != null)
                                 {
                                     <span> · shared prelude: @prompt.Prelude (read-only)</span>
@@ -324,7 +366,8 @@
     private static readonly System.Text.RegularExpressions.Regex ItemIdPattern =
         new("^[a-z0-9][a-z0-9_-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private int PendingCount => edits.Count + addedItems.Count + removedFiles.Count + bindingEdits.Count;
+    private int PendingCount => edits.Count + addedItems.Count + removedFiles.Count + bindingEdits.Count
+        + VariableAddCount + VariableRemovalCount;
 
     private string PendingSummary()
     {
@@ -338,6 +381,8 @@
         if (addedItems.Count > 0) parts.Add($"+{addedItems.Count}");
         if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
         if (bindingEdits.Count > 0) parts.Add($"{bindingEdits.Count} rebound");
+        if (VariableAddCount > 0) parts.Add($"+{VariableAddCount} var");
+        if (VariableRemovalCount > 0) parts.Add($"−{VariableRemovalCount} var");
         return $" ({string.Join(" · ", parts)})";
     }
 
@@ -445,10 +490,206 @@
     private readonly Dictionary<string, (string From, string? As)> bindingEdits = new(StringComparer.Ordinal);
     private IReadOnlyList<string> scalars = Array.Empty<string>();
 
+    // Pending prompt-variable declarations and removals (#140), keyed by
+    // prompt id. New variables start unbound on every using node; publish is
+    // blocked per variable until a real source is chosen.
+    private readonly Dictionary<string, List<string>> variableAdds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<string>> variableRemovals = new(StringComparer.Ordinal);
+    private string? newVariableName;
+    private string? newVariableError;
+
+    private static readonly System.Text.RegularExpressions.Regex VariableNameRegex =
+        new("^[a-z][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private int VariableAddCount => variableAdds.Values.Sum(list => list.Count);
+
+    private int VariableRemovalCount => variableRemovals.Values.Sum(set => set.Count);
+
+    private IReadOnlyList<string> AddedVariables(string? promptId) =>
+        promptId != null && variableAdds.TryGetValue(promptId, out var adds) ? adds : Array.Empty<string>();
+
+    private bool IsRemovedVariable(string promptId, string variable) =>
+        variableRemovals.TryGetValue(promptId, out var removed) && removed.Contains(variable);
+
+    private bool HasVariableEdits(string promptId) =>
+        AddedVariables(promptId).Count > 0
+        || (variableRemovals.TryGetValue(promptId, out var removed) && removed.Count > 0);
+
+    private IReadOnlyList<string> EffectiveVariables(WorkflowManifestReader.PromptView prompt)
+    {
+        var result = prompt.Variables.Where(v => !IsRemovedVariable(prompt.Id, v)).ToList();
+        result.AddRange(AddedVariables(prompt.Id));
+        return result;
+    }
+
+    private bool VariableUsedInText(WorkflowManifestReader.PromptView prompt, string variable) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            GetText(prompt.File),
+            @"\{\{\s*" + System.Text.RegularExpressions.Regex.Escape(variable) + @"\s*\}\}");
+
+    private IEnumerable<WorkflowManifestReader.NodeView> NodesUsingPrompt(string promptId) =>
+        nodes.Where(n => string.Equals(n.Prompt, promptId, StringComparison.Ordinal));
+
+    private string? TryDeclareVariable(string promptId, string rawName, out string name)
+    {
+        name = rawName.Trim();
+
+        if (!VariableNameRegex.IsMatch(name))
+        {
+            return "Variable names are lowercase: letters, digits, underscores, starting with a letter.";
+        }
+
+        var prompt = prompts.FirstOrDefault(p => p.Id == promptId);
+
+        if (prompt == null)
+        {
+            return "Unknown prompt.";
+        }
+
+        if (EffectiveVariables(prompt).Contains(name, StringComparer.Ordinal))
+        {
+            return $"'{name}' already exists on this prompt.";
+        }
+
+        if (!variableAdds.TryGetValue(promptId, out var adds))
+        {
+            variableAdds[promptId] = adds = new List<string>();
+        }
+
+        adds.Add(name);
+        return null;
+    }
+
+    private async Task AddVariableFromPromptAsync(WorkflowManifestReader.PromptView prompt)
+    {
+        publishSuccess = null;
+        newVariableError = TryDeclareVariable(prompt.Id, newVariableName ?? string.Empty, out _);
+
+        if (newVariableError == null)
+        {
+            newVariableName = null;
+            await PersistDraftAsync();
+        }
+    }
+
+    private async Task RemoveVariableAsync(WorkflowManifestReader.PromptView prompt, string variable)
+    {
+        publishSuccess = null;
+
+        if (variableAdds.TryGetValue(prompt.Id, out var adds) && adds.Remove(variable))
+        {
+            if (adds.Count == 0)
+            {
+                variableAdds.Remove(prompt.Id);
+            }
+        }
+        else
+        {
+            if (!variableRemovals.TryGetValue(prompt.Id, out var removed))
+            {
+                variableRemovals[prompt.Id] = removed = new HashSet<string>(StringComparer.Ordinal);
+            }
+
+            removed.Add(variable);
+        }
+
+        foreach (var node in NodesUsingPrompt(prompt.Id))
+        {
+            bindingEdits.Remove(BindingKey(node.Id, variable));
+        }
+
+        await PersistDraftAsync();
+    }
+
+    private async Task RestoreVariableAsync(WorkflowManifestReader.PromptView prompt, string variable)
+    {
+        publishSuccess = null;
+
+        if (variableRemovals.TryGetValue(prompt.Id, out var removed))
+        {
+            removed.Remove(variable);
+
+            if (removed.Count == 0)
+            {
+                variableRemovals.Remove(prompt.Id);
+            }
+        }
+
+        await PersistDraftAsync();
+    }
+
     private static string BindingKey(string nodeId, string variable) => nodeId + "\n" + variable;
 
     private (string From, string? As)? GetEffectiveBinding(string nodeId, string variable) =>
         bindingEdits.TryGetValue(BindingKey(nodeId, variable), out var edit) ? edit : null;
+
+    // The Graph cards' effective row model: declared bindings (minus pending
+    // removals, with rebinds applied) plus pending-added variables (unbound
+    // until a source is chosen).
+    private IReadOnlyList<WorkflowNodeSummary.BindingRow> RowsFor(WorkflowManifestReader.NodeView node)
+    {
+        var rows = new List<WorkflowNodeSummary.BindingRow>();
+
+        foreach (var binding in node.Bindings)
+        {
+            if (node.Prompt != null && IsRemovedVariable(node.Prompt, binding.Variable))
+            {
+                continue;
+            }
+
+            var effective = GetEffectiveBinding(node.Id, binding.Variable) ?? (binding.From, binding.As);
+            rows.Add(new WorkflowNodeSummary.BindingRow(
+                binding.Variable, effective.From, effective.As, binding.From, binding.As, IsNew: false));
+        }
+
+        foreach (var variable in AddedVariables(node.Prompt))
+        {
+            var effective = GetEffectiveBinding(node.Id, variable) ?? (string.Empty, null);
+            rows.Add(new WorkflowNodeSummary.BindingRow(
+                variable, effective.From, effective.As, null, null, IsNew: true));
+        }
+
+        return rows;
+    }
+
+    private string? ValidateVariableNameForNode(WorkflowManifestReader.NodeView node, string name)
+    {
+        if (!VariableNameRegex.IsMatch(name))
+        {
+            return "Variable names are lowercase: letters, digits, underscores, starting with a letter.";
+        }
+
+        var prompt = prompts.FirstOrDefault(p => p.Id == node.Prompt);
+
+        if (prompt == null)
+        {
+            return "This node has no prompt.";
+        }
+
+        return EffectiveVariables(prompt).Contains(name, StringComparer.Ordinal)
+            ? $"'{name}' already exists on prompt '{prompt.Id}'."
+            : null;
+    }
+
+    private async Task OnVariableAddedAsync(WorkflowNodeSummary.VariableAdd add)
+    {
+        publishSuccess = null;
+        var node = nodes.FirstOrDefault(n => n.Id == add.NodeId);
+
+        if (node?.Prompt == null || TryDeclareVariable(node.Prompt, add.Variable, out var name) != null)
+        {
+            return;
+        }
+
+        // The originating node gets the chosen source (when one was picked);
+        // other nodes sharing the prompt start unbound.
+        if (!string.IsNullOrEmpty(add.From))
+        {
+            bindingEdits[BindingKey(node.Id, name)] = (add.From, add.As);
+        }
+
+        await PersistDraftAsync();
+    }
 
     private async Task OnBindingChangedAsync(WorkflowNodeSummary.BindingChange change)
     {
@@ -521,6 +762,10 @@
         addedItems.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
+        variableAdds.Clear();
+        variableRemovals.Clear();
+        newVariableName = null;
+        newVariableError = null;
         newItemError = null;
 
         try
@@ -565,7 +810,9 @@
         Dictionary<string, string>? Edits,
         List<DraftAdded>? Added,
         List<string>? Removed,
-        List<DraftBinding>? Bindings = null);
+        List<DraftBinding>? Bindings = null,
+        Dictionary<string, List<string>>? VariableAdds = null,
+        Dictionary<string, List<string>>? VariableRemovals = null);
 
     private async Task RestoreDraftAsync()
     {
@@ -580,6 +827,8 @@
         List<DraftAdded>? added = null;
         List<string>? removed = null;
         List<DraftBinding>? bindings = null;
+        Dictionary<string, List<string>>? draftVariableAdds = null;
+        Dictionary<string, List<string>>? draftVariableRemovals = null;
 
         try
         {
@@ -591,6 +840,8 @@
                 added = payload?.Added;
                 removed = payload?.Removed;
                 bindings = payload?.Bindings;
+                draftVariableAdds = payload?.VariableAdds;
+                draftVariableRemovals = payload?.VariableRemovals;
             }
             else
             {
@@ -630,14 +881,52 @@
             }
         }
 
+        // Variables before bindings: an added-variable binding is only kept
+        // when its declaration was restored.
+        foreach (var (promptId, addNames) in draftVariableAdds ?? new Dictionary<string, List<string>>())
+        {
+            foreach (var addName in addNames ?? new List<string>())
+            {
+                // TryDeclareVariable revalidates (prompt existence, name shape,
+                // uniqueness against the loaded version).
+                TryDeclareVariable(promptId, addName, out _);
+            }
+        }
+
+        foreach (var (promptId, removedNames) in draftVariableRemovals ?? new Dictionary<string, List<string>>())
+        {
+            var prompt = prompts.FirstOrDefault(p => p.Id == promptId);
+
+            if (prompt == null)
+            {
+                continue;
+            }
+
+            foreach (var removedName in (removedNames ?? new List<string>()).Where(v => prompt.Variables.Contains(v, StringComparer.Ordinal)))
+            {
+                if (!variableRemovals.TryGetValue(promptId, out var set))
+                {
+                    variableRemovals[promptId] = set = new HashSet<string>(StringComparer.Ordinal);
+                }
+
+                set.Add(removedName);
+            }
+        }
+
         foreach (var draftBinding in bindings ?? new List<DraftBinding>())
         {
-            // Keep only rebinds whose node/variable still exists in the loaded
-            // version and which still differ from it.
-            var original = nodes.FirstOrDefault(n => n.Id == draftBinding.NodeId)?
-                .Bindings.FirstOrDefault(b => b.Variable == draftBinding.Variable);
+            // Keep rebinds whose node/variable still exists and still differs —
+            // or which bind a restored added variable (no original to differ from).
+            var node = nodes.FirstOrDefault(n => n.Id == draftBinding.NodeId);
+            var original = node?.Bindings.FirstOrDefault(b => b.Variable == draftBinding.Variable);
 
             if (original != null && (original.From != draftBinding.From || original.As != draftBinding.As))
+            {
+                bindingEdits[BindingKey(draftBinding.NodeId, draftBinding.Variable)] = (draftBinding.From, draftBinding.As);
+            }
+            else if (original == null
+                && node != null
+                && AddedVariables(node.Prompt).Contains(draftBinding.Variable, StringComparer.Ordinal))
             {
                 bindingEdits[BindingKey(draftBinding.NodeId, draftBinding.Variable)] = (draftBinding.From, draftBinding.As);
             }
@@ -653,7 +942,7 @@
         }
 
         var payload = new DraftPayload(
-            3,
+            4,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -661,7 +950,9 @@
             {
                 var parts = pair.Key.Split('\n', 2);
                 return new DraftBinding(parts[0], parts[1], pair.Value.From, pair.Value.As);
-            }).ToList());
+            }).ToList(),
+            variableAdds.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
+            variableRemovals.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()));
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
@@ -726,6 +1017,31 @@
 
         try
         {
+            // Declared-but-unbound variables block publish with a named message
+            // (explicit initialization; the validator would reject an empty
+            // source anyway — this is just the friendlier failure).
+            var unbound = new List<string>();
+
+            foreach (var prompt in prompts)
+            {
+                foreach (var variable in AddedVariables(prompt.Id))
+                {
+                    foreach (var node in NodesUsingPrompt(prompt.Id))
+                    {
+                        if (string.IsNullOrEmpty(GetEffectiveBinding(node.Id, variable)?.From))
+                        {
+                            unbound.Add($"Variable '{variable}' on node '{node.Id}' needs a source — set it in Graph.");
+                        }
+                    }
+                }
+            }
+
+            if (unbound.Count > 0)
+            {
+                publishErrors = unbound;
+                return;
+            }
+
             var files = new Dictionary<string, string>(content.Files, StringComparer.Ordinal);
             foreach (var (path, text) in edits)
             {
@@ -791,6 +1107,10 @@
         addedItems.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
+        variableAdds.Clear();
+        variableRemovals.Clear();
+        newVariableName = null;
+        newVariableError = null;
         newItemId = newItemName = newItemContent = null;
         newItemError = null;
         publishErrors = new List<string>();
@@ -805,27 +1125,61 @@
     // (variable names) are never re-cased by the serializer.
     private JsonElement ComposeManifest()
     {
-        if (bindingEdits.Count == 0)
+        if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0)
         {
             return content!.Manifest;
         }
 
         var root = System.Text.Json.Nodes.JsonNode.Parse(content!.Manifest.GetRawText())!;
 
-        if ((root["nodes"] ?? root["Nodes"]) is not System.Text.Json.Nodes.JsonArray nodesArray)
+        // Variable declarations: each edited prompt's variables array becomes
+        // the effective set (declared order minus removals, adds appended).
+        if ((root["prompts"] ?? root["Prompts"]) is System.Text.Json.Nodes.JsonArray promptsArray)
         {
-            return content.Manifest;
+            foreach (var prompt in prompts)
+            {
+                if (!HasVariableEdits(prompt.Id))
+                {
+                    continue;
+                }
+
+                var promptObject = promptsArray
+                    .OfType<System.Text.Json.Nodes.JsonObject>()
+                    .FirstOrDefault(p => (p["id"] ?? p["Id"])?.GetValue<string>() == prompt.Id);
+
+                if (promptObject == null)
+                {
+                    continue;
+                }
+
+                var variablesKey = promptObject.ContainsKey("Variables") ? "Variables" : "variables";
+                promptObject[variablesKey] = new System.Text.Json.Nodes.JsonArray(
+                    EffectiveVariables(prompt)
+                        .Select(v => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(v))
+                        .ToArray());
+            }
         }
 
+        if ((root["nodes"] ?? root["Nodes"]) is not System.Text.Json.Nodes.JsonArray nodesArray)
+        {
+            return JsonSerializer.SerializeToElement(root);
+        }
+
+        System.Text.Json.Nodes.JsonObject? BindingsFor(string nodeId) =>
+            nodesArray
+                .OfType<System.Text.Json.Nodes.JsonObject>()
+                .FirstOrDefault(n => (n["id"] ?? n["Id"])?.GetValue<string>() == nodeId)
+                is { } nodeObject
+                && (nodeObject["bindings"] ?? nodeObject["Bindings"]) is System.Text.Json.Nodes.JsonObject bindingsObject
+                    ? bindingsObject
+                    : null;
+
+        // Rebinds and added-variable bindings (the indexer adds missing keys).
         foreach (var pair in bindingEdits)
         {
             var parts = pair.Key.Split('\n', 2);
-            var nodeObject = nodesArray
-                .OfType<System.Text.Json.Nodes.JsonObject>()
-                .FirstOrDefault(n => (n["id"] ?? n["Id"])?.GetValue<string>() == parts[0]);
 
-            if (nodeObject == null
-                || (nodeObject["bindings"] ?? nodeObject["Bindings"]) is not System.Text.Json.Nodes.JsonObject bindingsObject)
+            if (BindingsFor(parts[0]) is not { } bindingsObject)
             {
                 continue;
             }
@@ -837,6 +1191,28 @@
                     ["from"] = pair.Value.From,
                     ["as"] = pair.Value.As
                 };
+        }
+
+        // Removed variables lose their binding keys on every using node.
+        foreach (var prompt in prompts)
+        {
+            if (!variableRemovals.TryGetValue(prompt.Id, out var removedVariables) || removedVariables.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var node in NodesUsingPrompt(prompt.Id))
+            {
+                if (BindingsFor(node.Id) is not { } bindingsObject)
+                {
+                    continue;
+                }
+
+                foreach (var variable in removedVariables)
+                {
+                    bindingsObject.Remove(variable);
+                }
+            }
         }
 
         return JsonSerializer.SerializeToElement(root);

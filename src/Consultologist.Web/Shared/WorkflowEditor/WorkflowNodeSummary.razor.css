@@ -33,3 +33,42 @@
 	color: var(--consultologist-accent);
 	font-size: 0.7rem;
 }
+
+.binding-row__hint {
+	font-size: 0.75rem;
+}
+
+.add-variable {
+	margin-top: 0.5rem;
+}
+
+.add-variable > summary {
+	cursor: pointer;
+	user-select: none;
+	font-size: 0.8rem;
+	color: var(--consultologist-text-muted);
+}
+
+.add-variable__form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.4rem;
+}
+
+.add-variable__submit {
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm, 4px);
+	background: var(--consultologist-surface);
+	cursor: pointer;
+	font-size: 0.78rem;
+	padding: 0.2rem 0.7rem;
+	color: inherit;
+}
+
+.add-variable__error {
+	color: var(--error-foreground, #a4262c);
+	font-size: 0.8rem;
+	margin: 0.3rem 0 0;
+}
