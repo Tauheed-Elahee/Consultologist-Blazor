@@ -1,0 +1,96 @@
+@* One binding's source + renderer selects — the shared editing primitive
+   behind the Graph node cards and the prompt pane's variable rows (#140).
+   The server validator remains the authority on publish. *@
+@using Consultologist.Web.Services.Workflow
+
+<select class="binding-row__select"
+        value="@Row.From"
+        @onchange="OnSourceChangedAsync"
+        aria-label="@($"Source for {Row.Variable}")">
+    @if (Row.From.Length == 0)
+    {
+        <option value="">choose source…</option>
+    }
+    @foreach (var option in SourceOptions(Nodes, Scalars, Node, Row.From))
+    {
+        <option value="@option">@option</option>
+    }
+</select>
+@if (Row.From.StartsWith("node:", StringComparison.Ordinal))
+{
+    var targetHasOutput = TargetHasOutput(Nodes, Row.From);
+    <span class="muted-text">render as</span>
+    <select class="binding-row__select"
+            value="@(Row.As ?? NoRenderer)"
+            @onchange="OnRendererChangedAsync"
+            aria-label="@($"Renderer for {Row.Variable}")">
+        <option value="@NoRenderer">plain</option>
+        <option value="concept-bullets" disabled="@(!targetHasOutput && Row.As != "concept-bullets")">concept-bullets</option>
+        <option value="concept-context" disabled="@(!targetHasOutput && Row.As != "concept-context")">concept-context</option>
+    </select>
+}
+
+@code {
+    internal const string NoRenderer = "__plain__";
+
+    [Parameter] public WorkflowManifestReader.NodeView Node { get; set; } = default!;
+    [Parameter] public WorkflowNodeSummary.BindingRow Row { get; set; } = default!;
+    [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
+    [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
+    [Parameter] public EventCallback<WorkflowNodeSummary.BindingChange> OnChanged { get; set; }
+
+    // The valid v5 source space for one node; a nonempty current value is
+    // always included so an unrecognized source still displays truthfully.
+    internal static IEnumerable<string> SourceOptions(
+        IReadOnlyList<WorkflowManifestReader.NodeView> nodes,
+        IReadOnlyList<string> scalars,
+        WorkflowManifestReader.NodeView node,
+        string current)
+    {
+        var options = new List<string> { "input:consult_draft" };
+
+        options.AddRange(nodes.Where(other => other.Id != node.Id).Select(other => $"node:{other.Id}"));
+
+        if (node.ForEach != null)
+        {
+            options.Add("item:name");
+            options.Add("item:content");
+        }
+
+        options.AddRange(scalars.Select(scalar => $"data:{scalar}"));
+
+        if (current.Length > 0 && !options.Contains(current))
+        {
+            options.Insert(0, current);
+        }
+
+        return options;
+    }
+
+    internal static bool TargetHasOutput(IReadOnlyList<WorkflowManifestReader.NodeView> nodes, string from) =>
+        nodes.FirstOrDefault(node => $"node:{node.Id}" == from)?.HasOutput == true;
+
+    private async Task OnSourceChangedAsync(ChangeEventArgs args)
+    {
+        var from = args.Value?.ToString();
+
+        if (string.IsNullOrWhiteSpace(from))
+        {
+            return;
+        }
+
+        // A renderer only makes sense on a node source; keep it when the new
+        // source is one, otherwise drop it.
+        var renderer = from.StartsWith("node:", StringComparison.Ordinal) ? Row.As : null;
+
+        await OnChanged.InvokeAsync(new WorkflowNodeSummary.BindingChange(Node.Id, Row.Variable, from, renderer));
+    }
+
+    private async Task OnRendererChangedAsync(ChangeEventArgs args)
+    {
+        var value = args.Value?.ToString();
+        var renderer = string.IsNullOrWhiteSpace(value) || value == NoRenderer ? null : value;
+
+        await OnChanged.InvokeAsync(new WorkflowNodeSummary.BindingChange(Node.Id, Row.Variable, Row.From, renderer));
+    }
+}

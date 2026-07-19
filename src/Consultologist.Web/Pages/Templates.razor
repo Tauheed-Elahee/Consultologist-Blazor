@@ -280,49 +280,74 @@
                                             Text="@GetText(prompt.File)"
                                             Modified="@edits.ContainsKey(prompt.File)"
                                             TextChanged="@(value => OnTextChangedAsync(prompt.File, value))">
-                            <div class="variable-chips">
-                                <span class="muted-text">Variables:</span>
-                                @foreach (var variable in prompt.Variables)
-                                {
-                                    var isRemoved = IsRemovedVariable(prompt.Id, variable);
-                                    var usedInText = !isRemoved && VariableUsedInText(prompt, variable);
-                                    <span class="variable-chip @(isRemoved ? "variable-chip--removed" : null)">
-                                        <code>@($"{{{{ {variable} }}}}")</code>
-                                        @if (isRemoved)
-                                        {
-                                            <button type="button" class="variable-chip__action" title="Restore variable"
-                                                    @onclick="() => RestoreVariableAsync(prompt, variable)">↺</button>
-                                        }
-                                        else
-                                        {
-                                            <button type="button" class="variable-chip__action"
-                                                    title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
-                                                    disabled="@usedInText"
-                                                    @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
-                                        }
-                                    </span>
-                                }
-                                @foreach (var variable in AddedVariables(prompt.Id))
-                                {
-                                    var usedInText = VariableUsedInText(prompt, variable);
-                                    <span class="variable-chip variable-chip--new">
-                                        <code>@($"{{{{ {variable} }}}}")</code>
-                                        <button type="button" class="variable-chip__action"
-                                                title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
-                                                disabled="@usedInText"
-                                                @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
-                                    </span>
-                                }
-                                <input class="variable-chips__input" placeholder="new_variable" @bind="newVariableName" />
-                                <button type="button" class="variable-chips__add" @onclick="() => AddVariableFromPromptAsync(prompt)">Add</button>
+                            <div class="prompt-variables">
+                                <span class="muted-text">Variables</span>
+                                <ul class="prompt-variables__list">
+                                    @{ var usingNodes = NodesUsingPrompt(prompt.Id).ToList(); }
+                                    @foreach (var variable in prompt.Variables.Concat(AddedVariables(prompt.Id)))
+                                    {
+                                        var isRemoved = IsRemovedVariable(prompt.Id, variable);
+                                        var usedInText = VariableUsedInText(prompt, variable);
+
+                                        <li class="prompt-variable-row @(isRemoved ? "prompt-variable-row--removed" : null)">
+                                            <code class="prompt-variable-row__name">@variable</code>
+                                            @if (isRemoved)
+                                            {
+                                                <button type="button" class="variable-chip__action" title="Restore variable"
+                                                        @onclick="() => RestoreVariableAsync(prompt, variable)">↺</button>
+                                            }
+                                            else
+                                            {
+                                                <span aria-hidden="true">←</span>
+                                                <span class="prompt-variable-row__sources">
+                                                    @foreach (var usingNode in usingNodes)
+                                                    {
+                                                        var row = RowFor(usingNode, variable);
+                                                        <span class="prompt-variable-row__source">
+                                                            @if (usingNodes.Count > 1)
+                                                            {
+                                                                <span class="muted-text">@usingNode.Id:</span>
+                                                            }
+                                                            <BindingSourceEditor Node="@usingNode"
+                                                                                 Row="@row"
+                                                                                 Nodes="@nodes"
+                                                                                 Scalars="@scalars"
+                                                                                 OnChanged="OnBindingChangedAsync" />
+                                                            @if (RowModified(row))
+                                                            {
+                                                                <span class="binding-pending" title="Pending change">●</span>
+                                                            }
+                                                        </span>
+                                                    }
+                                                </span>
+                                                <button type="button" class="variable-chip__action"
+                                                        title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
+                                                        disabled="@usedInText"
+                                                        @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
+                                            }
+                                        </li>
+                                    }
+                                    <li class="prompt-variable-row prompt-variable-row--add">
+                                        <input class="variable-chips__input" placeholder="new_variable" @bind="newVariableName" aria-label="New variable name" />
+                                        <span aria-hidden="true">←</span>
+                                        <select class="prompt-variable-row__select" @bind="newVariableSource" aria-label="New variable source">
+                                            <option value="">choose source…</option>
+                                            @foreach (var option in FirstUsingNodeOptions(prompt))
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="variable-chips__add" @onclick="() => AddVariableFromPromptAsync(prompt)">Add</button>
+                                    </li>
+                                </ul>
                             </div>
                             @if (newVariableError != null)
                             {
                                 <p class="variable-chips__error">@newVariableError</p>
                             }
                             <p class="muted-text">
-                                Declared placeholders are usable in the text; new variables need a source on
-                                each node using this prompt — set it in Graph.
+                                Declared placeholders are usable in the text; a new variable's source can be
+                                set here or in Graph — publish waits until every variable has one.
                                 @if (prompt.Prelude != null)
                                 {
                                     <span> · shared prelude: @prompt.Prelude (read-only)</span>
@@ -496,6 +521,7 @@
     private readonly Dictionary<string, List<string>> variableAdds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<string>> variableRemovals = new(StringComparer.Ordinal);
     private string? newVariableName;
+    private string newVariableSource = string.Empty;
     private string? newVariableError;
 
     private static readonly System.Text.RegularExpressions.Regex VariableNameRegex =
@@ -563,13 +589,47 @@
     private async Task AddVariableFromPromptAsync(WorkflowManifestReader.PromptView prompt)
     {
         publishSuccess = null;
-        newVariableError = TryDeclareVariable(prompt.Id, newVariableName ?? string.Empty, out _);
+        newVariableError = TryDeclareVariable(prompt.Id, newVariableName ?? string.Empty, out var name);
 
-        if (newVariableError == null)
+        if (newVariableError != null)
         {
-            newVariableName = null;
-            await PersistDraftAsync();
+            return;
         }
+
+        // A chosen source is one explicit decision applied to every node using
+        // this prompt; left empty, the variable stays unbound everywhere.
+        if (!string.IsNullOrEmpty(newVariableSource))
+        {
+            foreach (var node in NodesUsingPrompt(prompt.Id))
+            {
+                bindingEdits[BindingKey(node.Id, name)] = (newVariableSource, null);
+            }
+        }
+
+        newVariableName = null;
+        newVariableSource = string.Empty;
+        await PersistDraftAsync();
+    }
+
+    private WorkflowNodeSummary.BindingRow RowFor(WorkflowManifestReader.NodeView node, string variable)
+    {
+        var original = node.Bindings.FirstOrDefault(b => b.Variable == variable);
+        var effective = GetEffectiveBinding(node.Id, variable) ?? (original?.From ?? string.Empty, original?.As);
+
+        return new WorkflowNodeSummary.BindingRow(
+            variable, effective.From, effective.As, original?.From, original?.As, IsNew: original == null);
+    }
+
+    private static bool RowModified(WorkflowNodeSummary.BindingRow row) =>
+        row.IsNew || row.From != row.OriginalFrom || row.As != row.OriginalAs;
+
+    private IEnumerable<string> FirstUsingNodeOptions(WorkflowManifestReader.PromptView prompt)
+    {
+        var node = NodesUsingPrompt(prompt.Id).FirstOrDefault();
+
+        return node == null
+            ? Enumerable.Empty<string>()
+            : BindingSourceEditor.SourceOptions(nodes, scalars, node, string.Empty);
     }
 
     private async Task RemoveVariableAsync(WorkflowManifestReader.PromptView prompt, string variable)
@@ -637,16 +697,12 @@
                 continue;
             }
 
-            var effective = GetEffectiveBinding(node.Id, binding.Variable) ?? (binding.From, binding.As);
-            rows.Add(new WorkflowNodeSummary.BindingRow(
-                binding.Variable, effective.From, effective.As, binding.From, binding.As, IsNew: false));
+            rows.Add(RowFor(node, binding.Variable));
         }
 
         foreach (var variable in AddedVariables(node.Prompt))
         {
-            var effective = GetEffectiveBinding(node.Id, variable) ?? (string.Empty, null);
-            rows.Add(new WorkflowNodeSummary.BindingRow(
-                variable, effective.From, effective.As, null, null, IsNew: true));
+            rows.Add(RowFor(node, variable));
         }
 
         return rows;
@@ -765,6 +821,7 @@
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
+        newVariableSource = string.Empty;
         newVariableError = null;
         newItemError = null;
 
@@ -1110,6 +1167,7 @@
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
+        newVariableSource = string.Empty;
         newVariableError = null;
         newItemId = newItemName = newItemContent = null;
         newItemError = null;

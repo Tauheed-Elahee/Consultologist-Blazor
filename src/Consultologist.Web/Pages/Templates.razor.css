@@ -233,32 +233,65 @@
 	font-size: 0.85rem;
 }
 
-.variable-chips {
+.prompt-variables {
 	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 0.4rem;
+	flex-direction: column;
+	gap: 0.35rem;
 	font-size: 0.85rem;
 }
 
-.variable-chip {
-	display: inline-flex;
+.prompt-variables__list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.prompt-variable-row {
+	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 0.3rem;
-	padding: 0.1rem 0.3rem 0.1rem 0.55rem;
-	border: 1px solid var(--consultologist-border);
-	border-radius: 999px;
-	background: var(--consultologist-surface);
-	font-size: 0.78rem;
+	gap: 0.5rem;
 }
 
-.variable-chip--new {
-	border-color: var(--consultologist-accent);
+.prompt-variable-row__name {
+	min-width: 12rem;
+	font-size: 0.85rem;
 }
 
-.variable-chip--removed code {
+.prompt-variable-row--removed .prompt-variable-row__name {
 	text-decoration: line-through;
 	color: var(--consultologist-text-muted);
+}
+
+.prompt-variable-row__sources {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.prompt-variable-row__source {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.prompt-variable-row__select {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.78rem;
+	padding: 0.15rem 0.4rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-sm, 4px);
+	background: var(--consultologist-surface);
+	color: inherit;
+}
+
+.binding-pending {
+	color: var(--consultologist-accent);
+	font-size: 0.7rem;
 }
 
 .variable-chip__action {
