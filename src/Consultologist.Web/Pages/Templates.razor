@@ -247,8 +247,10 @@
                         <WorkflowNodeSummary Nodes="@nodes"
                                              Editable="true"
                                              Scalars="@scalars"
-                                             EffectiveBinding="@GetEffectiveBinding"
-                                             OnBindingChanged="OnBindingChangedAsync" />
+                                             RowsFor="@RowsFor"
+                                             ValidateVariableName="@ValidateVariableNameForNode"
+                                             OnBindingChanged="OnBindingChangedAsync"
+                                             OnVariableAdded="OnVariableAddedAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
                     {
@@ -620,6 +622,74 @@
 
     private (string From, string? As)? GetEffectiveBinding(string nodeId, string variable) =>
         bindingEdits.TryGetValue(BindingKey(nodeId, variable), out var edit) ? edit : null;
+
+    // The Graph cards' effective row model: declared bindings (minus pending
+    // removals, with rebinds applied) plus pending-added variables (unbound
+    // until a source is chosen).
+    private IReadOnlyList<WorkflowNodeSummary.BindingRow> RowsFor(WorkflowManifestReader.NodeView node)
+    {
+        var rows = new List<WorkflowNodeSummary.BindingRow>();
+
+        foreach (var binding in node.Bindings)
+        {
+            if (node.Prompt != null && IsRemovedVariable(node.Prompt, binding.Variable))
+            {
+                continue;
+            }
+
+            var effective = GetEffectiveBinding(node.Id, binding.Variable) ?? (binding.From, binding.As);
+            rows.Add(new WorkflowNodeSummary.BindingRow(
+                binding.Variable, effective.From, effective.As, binding.From, binding.As, IsNew: false));
+        }
+
+        foreach (var variable in AddedVariables(node.Prompt))
+        {
+            var effective = GetEffectiveBinding(node.Id, variable) ?? (string.Empty, null);
+            rows.Add(new WorkflowNodeSummary.BindingRow(
+                variable, effective.From, effective.As, null, null, IsNew: true));
+        }
+
+        return rows;
+    }
+
+    private string? ValidateVariableNameForNode(WorkflowManifestReader.NodeView node, string name)
+    {
+        if (!VariableNameRegex.IsMatch(name))
+        {
+            return "Variable names are lowercase: letters, digits, underscores, starting with a letter.";
+        }
+
+        var prompt = prompts.FirstOrDefault(p => p.Id == node.Prompt);
+
+        if (prompt == null)
+        {
+            return "This node has no prompt.";
+        }
+
+        return EffectiveVariables(prompt).Contains(name, StringComparer.Ordinal)
+            ? $"'{name}' already exists on prompt '{prompt.Id}'."
+            : null;
+    }
+
+    private async Task OnVariableAddedAsync(WorkflowNodeSummary.VariableAdd add)
+    {
+        publishSuccess = null;
+        var node = nodes.FirstOrDefault(n => n.Id == add.NodeId);
+
+        if (node?.Prompt == null || TryDeclareVariable(node.Prompt, add.Variable, out var name) != null)
+        {
+            return;
+        }
+
+        // The originating node gets the chosen source (when one was picked);
+        // other nodes sharing the prompt start unbound.
+        if (!string.IsNullOrEmpty(add.From))
+        {
+            bindingEdits[BindingKey(node.Id, name)] = (add.From, add.As);
+        }
+
+        await PersistDraftAsync();
+    }
 
     private async Task OnBindingChangedAsync(WorkflowNodeSummary.BindingChange change)
     {

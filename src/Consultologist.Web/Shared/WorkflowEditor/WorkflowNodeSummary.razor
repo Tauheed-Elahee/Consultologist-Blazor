@@ -1,7 +1,8 @@
 @* The Graph pane's node cards. Read-only by default; with Editable set, each
    binding row becomes a source dropdown (+ renderer for node sources) over
-   the valid v5 source space (#138) — the server validator remains the
-   authority on publish. *@
+   the valid v5 source space (#138), rows come from the host's effective
+   model (declared + pending-added variables, #140), and each card offers a
+   "+ variable" form. The server validator remains the authority on publish. *@
 @using Consultologist.Web.Services.Workflow
 
 @foreach (var node in Nodes)
@@ -30,69 +31,132 @@
             </div>
         </div>
         <ul class="binding-list">
-            @foreach (var binding in node.Bindings)
+            @foreach (var row in Rows(node))
             {
-                var effective = Effective(node.Id, binding);
-                var modified = effective.From != binding.From || effective.As != binding.As;
+                var modified = row.IsNew || row.From != row.OriginalFrom || row.As != row.OriginalAs;
 
                 <li class="binding-row @(Editable ? null : "muted-text")">
-                    <code class="binding-row__variable">@binding.Variable</code>
+                    <code class="binding-row__variable">@row.Variable</code>
                     <span aria-hidden="true">←</span>
                     @if (Editable)
                     {
                         <select class="binding-row__select"
-                                value="@effective.From"
-                                @onchange="args => OnSourceChangedAsync(node, binding, args)"
-                                aria-label="@($"Source for {binding.Variable}")">
-                            @foreach (var option in SourceOptions(node, effective.From))
+                                value="@row.From"
+                                @onchange="args => OnSourceChangedAsync(node, row, args)"
+                                aria-label="@($"Source for {row.Variable}")">
+                            @if (row.From.Length == 0)
+                            {
+                                <option value="">choose source…</option>
+                            }
+                            @foreach (var option in SourceOptions(node, row.From))
                             {
                                 <option value="@option">@option</option>
                             }
                         </select>
-                        @if (effective.From.StartsWith("node:", StringComparison.Ordinal))
+                        @if (row.From.StartsWith("node:", StringComparison.Ordinal))
                         {
-                            var targetHasOutput = TargetHasOutput(effective.From);
+                            var targetHasOutput = TargetHasOutput(row.From);
                             <span class="muted-text">render as</span>
                             <select class="binding-row__select"
-                                    value="@(effective.As ?? NoRenderer)"
-                                    @onchange="args => OnRendererChangedAsync(node, binding, args)"
-                                    aria-label="@($"Renderer for {binding.Variable}")">
+                                    value="@(row.As ?? NoRenderer)"
+                                    @onchange="args => OnRendererChangedAsync(node, row, args)"
+                                    aria-label="@($"Renderer for {row.Variable}")">
                                 <option value="@NoRenderer">plain</option>
-                                <option value="concept-bullets" disabled="@(!targetHasOutput && effective.As != "concept-bullets")">concept-bullets</option>
-                                <option value="concept-context" disabled="@(!targetHasOutput && effective.As != "concept-context")">concept-context</option>
+                                <option value="concept-bullets" disabled="@(!targetHasOutput && row.As != "concept-bullets")">concept-bullets</option>
+                                <option value="concept-context" disabled="@(!targetHasOutput && row.As != "concept-context")">concept-context</option>
                             </select>
                         }
                         @if (modified)
                         {
-                            <span class="binding-row__pending" title="Pending rebind">●</span>
+                            <span class="binding-row__pending" title="Pending change">●</span>
+                        }
+                        @if (row.IsNew && row.From.Length == 0)
+                        {
+                            <span class="muted-text binding-row__hint">new — choose source</span>
                         }
                     }
                     else
                     {
-                        <code>@(binding.As is null ? binding.From : $"{binding.From} (as {binding.As})")</code>
+                        <code>@(row.As is null ? row.From : $"{row.From} (as {row.As})")</code>
                     }
                 </li>
             }
         </ul>
+        @if (Editable && node.Prompt != null)
+        {
+            var form = FormFor(node.Id);
+            <details class="add-variable">
+                <summary>+ variable</summary>
+                <div class="add-variable__form">
+                    <input class="binding-row__select"
+                           placeholder="variable_name"
+                           value="@form.Name"
+                           @onchange="args => SetFormName(node.Id, args)"
+                           aria-label="New variable name" />
+                    <select class="binding-row__select"
+                            value="@form.Source"
+                            @onchange="args => SetFormSource(node.Id, args)"
+                            aria-label="New variable source">
+                        <option value="">choose source…</option>
+                        @foreach (var option in SourceOptions(node, string.Empty))
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </select>
+                    <button type="button" class="add-variable__submit" @onclick="() => SubmitAddVariableAsync(node)">Add</button>
+                </div>
+                @if (form.Error != null)
+                {
+                    <p class="add-variable__error">@form.Error</p>
+                }
+            </details>
+        }
     </article>
 }
 
 @code {
     private const string NoRenderer = "__plain__";
 
+    /// <summary>One effective binding row: current values plus the manifest's originals (null for pending-added variables).</summary>
+    public sealed record BindingRow(string Variable, string From, string? As, string? OriginalFrom, string? OriginalAs, bool IsNew);
+
     public sealed record BindingChange(string NodeId, string Variable, string From, string? As);
+
+    public sealed record VariableAdd(string NodeId, string Variable, string From, string? As);
 
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
     [Parameter] public bool Editable { get; set; }
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
-    [Parameter] public Func<string, string, (string From, string? As)?>? EffectiveBinding { get; set; }
+    [Parameter] public Func<WorkflowManifestReader.NodeView, IReadOnlyList<BindingRow>>? RowsFor { get; set; }
+    [Parameter] public Func<WorkflowManifestReader.NodeView, string, string?>? ValidateVariableName { get; set; }
     [Parameter] public EventCallback<BindingChange> OnBindingChanged { get; set; }
+    [Parameter] public EventCallback<VariableAdd> OnVariableAdded { get; set; }
 
-    private (string From, string? As) Effective(string nodeId, WorkflowManifestReader.BindingView binding) =>
-        EffectiveBinding?.Invoke(nodeId, binding.Variable) ?? (binding.From, binding.As);
+    private sealed class AddForm
+    {
+        public string? Name { get; set; }
+        public string Source { get; set; } = string.Empty;
+        public string? Error { get; set; }
+    }
 
-    // The valid v5 source space for one node; the current value is always
-    // included so an unrecognized source still displays truthfully.
+    private readonly Dictionary<string, AddForm> addForms = new(StringComparer.Ordinal);
+
+    private AddForm FormFor(string nodeId)
+    {
+        if (!addForms.TryGetValue(nodeId, out var form))
+        {
+            addForms[nodeId] = form = new AddForm();
+        }
+
+        return form;
+    }
+
+    private IReadOnlyList<BindingRow> Rows(WorkflowManifestReader.NodeView node) =>
+        RowsFor?.Invoke(node)
+            ?? node.Bindings.Select(b => new BindingRow(b.Variable, b.From, b.As, b.From, b.As, false)).ToList();
+
+    // The valid v5 source space for one node; a nonempty current value is
+    // always included so an unrecognized source still displays truthfully.
     private IEnumerable<string> SourceOptions(WorkflowManifestReader.NodeView node, string current)
     {
         var options = new List<string> { "input:consult_draft" };
@@ -107,7 +171,7 @@
 
         options.AddRange(Scalars.Select(scalar => $"data:{scalar}"));
 
-        if (!options.Contains(current))
+        if (current.Length > 0 && !options.Contains(current))
         {
             options.Insert(0, current);
         }
@@ -120,7 +184,7 @@
 
     private async Task OnSourceChangedAsync(
         WorkflowManifestReader.NodeView node,
-        WorkflowManifestReader.BindingView binding,
+        BindingRow row,
         ChangeEventArgs args)
     {
         var from = args.Value?.ToString();
@@ -132,21 +196,40 @@
 
         // A renderer only makes sense on a node source; keep it when the new
         // source is one, otherwise drop it.
-        var effective = Effective(node.Id, binding);
-        var renderer = from.StartsWith("node:", StringComparison.Ordinal) ? effective.As : null;
+        var renderer = from.StartsWith("node:", StringComparison.Ordinal) ? row.As : null;
 
-        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, binding.Variable, from, renderer));
+        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, row.Variable, from, renderer));
     }
 
     private async Task OnRendererChangedAsync(
         WorkflowManifestReader.NodeView node,
-        WorkflowManifestReader.BindingView binding,
+        BindingRow row,
         ChangeEventArgs args)
     {
         var value = args.Value?.ToString();
         var renderer = string.IsNullOrWhiteSpace(value) || value == NoRenderer ? null : value;
-        var effective = Effective(node.Id, binding);
 
-        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, binding.Variable, effective.From, renderer));
+        await OnBindingChanged.InvokeAsync(new BindingChange(node.Id, row.Variable, row.From, renderer));
+    }
+
+    private void SetFormName(string nodeId, ChangeEventArgs args) =>
+        FormFor(nodeId).Name = args.Value?.ToString();
+
+    private void SetFormSource(string nodeId, ChangeEventArgs args) =>
+        FormFor(nodeId).Source = args.Value?.ToString() ?? string.Empty;
+
+    private async Task SubmitAddVariableAsync(WorkflowManifestReader.NodeView node)
+    {
+        var form = FormFor(node.Id);
+        var name = form.Name?.Trim() ?? string.Empty;
+        form.Error = ValidateVariableName?.Invoke(node, name);
+
+        if (form.Error != null)
+        {
+            return;
+        }
+
+        await OnVariableAdded.InvokeAsync(new VariableAdd(node.Id, name, form.Source, null));
+        addForms.Remove(node.Id);
     }
 }
