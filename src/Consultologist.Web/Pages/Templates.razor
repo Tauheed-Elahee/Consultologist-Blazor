@@ -237,11 +237,22 @@
                                 <h3 class="panel-title">Workflow graph</h3>
                                 <p class="muted-text">
                                     Node structure and output contracts are fixed in this editor; prompt
-                                    bindings are editable per node below (#138). The diagram reflects the
-                                    published version — pending rebinds show as dots until you publish.
+                                    bindings and variables are editable below. Refresh redraws the graph —
+                                    pending edits included, highlighted in blue.
                                 </p>
                             </div>
+                            <button type="button" class="variable-chips__add"
+                                    disabled="@isDiagramRefreshing"
+                                    @onclick="RefreshDiagramAsync">@(isDiagramRefreshing ? "Refreshing…" : "Refresh")</button>
                         </div>
+                        @if (diagramIncludesPending)
+                        {
+                            <p class="muted-text">Showing pending edits (highlighted nodes).</p>
+                        }
+                        else if (HasManifestEdits && diagramText != null)
+                        {
+                            <p class="muted-text">Pending edits not shown — Refresh to preview them.</p>
+                        }
                         <WorkflowDagView Diagram="@diagramText" />
                         <h2 class="panel-title">Node details</h2>
                         <WorkflowNodeSummary Nodes="@nodes"
@@ -784,6 +795,10 @@
     private string DraftKey => DraftKeyPrefix + content!.Ref;
 
     private string? diagramText;
+    private bool diagramIncludesPending;
+    private bool isDiagramRefreshing;
+
+    private bool HasManifestEdits => bindingEdits.Count > 0 || VariableAddCount > 0 || VariableRemovalCount > 0;
 
     private void Select(string key)
     {
@@ -798,8 +813,68 @@
     private async Task LoadDiagramAsync()
     {
         diagramText = await WorkflowService.GetCurrentDiagramAsync();
+        diagramIncludesPending = false;
         await InvokeAsync(StateHasChanged);
     }
+
+    private async Task RefreshDiagramAsync()
+    {
+        if (isDiagramRefreshing)
+        {
+            return;
+        }
+
+        isDiagramRefreshing = true;
+
+        try
+        {
+            if (HasManifestEdits)
+            {
+                var diagram = await WorkflowService.GetDiagramForManifestAsync(ComposeManifest());
+
+                if (diagram != null)
+                {
+                    diagramText = diagram + PendingHighlightLines();
+                    diagramIncludesPending = true;
+                }
+            }
+            else
+            {
+                diagramText = await WorkflowService.GetCurrentDiagramAsync();
+                diagramIncludesPending = false;
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        finally
+        {
+            isDiagramRefreshing = false;
+        }
+    }
+
+    // Pending-ness is editor presentation, not manifest semantics: the changed
+    // nodes are highlighted by appending mermaid class lines, ids sanitized
+    // the same way the server generator does.
+    private string PendingHighlightLines()
+    {
+        var pendingIds = nodes
+            .Where(node => RowsFor(node).Any(RowModified))
+            .Select(node => SanitizeMermaidId(node.Id))
+            .ToList();
+
+        if (pendingIds.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        return "\n    classDef pending stroke:#0067b8,stroke-width:2.5px\n"
+            + $"    class {string.Join(",", pendingIds)} pending\n";
+    }
+
+    private static string SanitizeMermaidId(string raw)
+        => new(raw.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 
     private WorkflowManifestReader.DataItemView? SelectedStandard() =>
         collections.SelectMany(c => c.Items).FirstOrDefault(item => item.File == selectedKey);
@@ -825,6 +900,11 @@
         newVariableError = null;
         newItemError = null;
 
+        // The diagram belongs to the loaded version: drop it so package
+        // switches and post-publish reloads never show a stale graph.
+        diagramText = null;
+        diagramIncludesPending = false;
+
         try
         {
             content = await WorkflowService.GetCurrentPackageContentAsync();
@@ -841,6 +921,11 @@
                 selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault()?.File
                     ?? prompts.FirstOrDefault()?.File
                     ?? GraphKey;
+            }
+
+            if (selectedKey == GraphKey)
+            {
+                _ = LoadDiagramAsync();
             }
         }
         catch (AccessTokenNotAvailableException exception)

@@ -17,6 +17,7 @@ public interface IWorkflowEndpointService
     Task<Dictionary<string, PublicCatalogEntry>?> GetCatalogAsync(string version);
     Task<IReadOnlyList<string>?> GetLineageAsync(string packageRef);
     Task<string?> GetCurrentDiagramAsync();
+    Task<string?> GetDiagramForManifestAsync(JsonElement manifest);
 }
 
 /// <summary>One entry of a specific catalog version's document (public registry blob).</summary>
@@ -358,6 +359,46 @@ public sealed class WorkflowEndpointService : IWorkflowEndpointService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Workflow diagram unavailable.");
+            return null;
+        }
+    }
+
+    // The effective-graph preview (#144): the composed pending manifest goes
+    // to the server's generator, so the diagram stays single-sourced.
+    public async Task<string?> GetDiagramForManifestAsync(JsonElement manifest)
+    {
+        var previewUrl = _configuration["AzureFunction:WorkflowPackageDiagramPreviewUrl"];
+
+        if (string.IsNullOrWhiteSpace(previewUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, previewUrl)
+            {
+                Content = JsonContent.Create(manifest)
+            };
+            await AddAuthorizationAsync(request);
+            using var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Diagram preview failed with status {StatusCode}.", response.StatusCode);
+                return null;
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<DiagramPayload>();
+            return payload?.Diagram;
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Diagram preview unavailable.");
             return null;
         }
     }

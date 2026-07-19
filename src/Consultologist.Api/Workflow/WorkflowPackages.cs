@@ -288,6 +288,71 @@ public sealed class WorkflowPackages
             new { diagram = WorkflowDagDiagram.Generate(package.Manifest) }, cancellationToken);
     }
 
+    [Function("WorkflowPackageDiagramPreview")]
+    public async Task<HttpResponseData> PostDiagramPreviewAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "WorkflowPackages/Diagram")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        // Pure compute over the caller's own posted manifest — the editor's
+        // effective-graph preview (#144). No storage access; the diagram stays
+        // single-sourced in WorkflowDagDiagram.
+        string body;
+
+        using (var reader = new StreamReader(req.Body))
+        {
+            body = await reader.ReadToEndAsync(cancellationToken);
+        }
+
+        WorkflowPackageManifest? manifest;
+
+        try
+        {
+            manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(body, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest,
+                new { error = $"Malformed manifest: {ex.Message}" }, cancellationToken);
+        }
+
+        if (manifest == null)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest,
+                new { error = "A manifest document is required." }, cancellationToken);
+        }
+
+        try
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.OK,
+                new { diagram = WorkflowDagDiagram.Generate(manifest) }, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return await CreateJsonResponseAsync(req, HttpStatusCode.BadRequest,
+                new { error = ex.Message }, cancellationToken);
+        }
+    }
+
     [Function("WorkflowPackageLineage")]
     public async Task<HttpResponseData> GetLineageAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "options", Route = "WorkflowPackages/Lineage")] HttpRequestData req)
