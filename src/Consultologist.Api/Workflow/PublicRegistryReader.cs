@@ -159,7 +159,7 @@ public sealed class PublicRegistryReader
         return new PublicChainResponse(packages, catalog, agents, nowUtc);
     }
 
-    private static List<string> SortVersions(IEnumerable<string> versions) =>
+    internal static List<string> SortVersions(IEnumerable<string> versions) =>
         versions
             .Distinct(StringComparer.Ordinal)
             .OrderBy(v => CalVerVersion.TryParse(v, out var parsed) ? parsed : default)
