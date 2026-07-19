@@ -294,21 +294,6 @@
 	font-size: 0.7rem;
 }
 
-.variable-chip__action {
-	border: none;
-	background: none;
-	cursor: pointer;
-	color: var(--consultologist-text-muted);
-	font-size: 0.85rem;
-	line-height: 1;
-	padding: 0 0.15rem;
-}
-
-.variable-chip__action:disabled {
-	cursor: not-allowed;
-	opacity: 0.4;
-}
-
 .variable-chips__input {
 	font-family: var(--consultologist-font-mono, monospace);
 	font-size: 0.78rem;
@@ -328,6 +313,11 @@
 	font-size: 0.78rem;
 	padding: 0.2rem 0.7rem;
 	color: inherit;
+}
+
+.variable-chips__add:disabled {
+	cursor: not-allowed;
+	opacity: 0.4;
 }
 
 .variable-chips__error {

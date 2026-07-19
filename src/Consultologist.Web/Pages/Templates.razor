@@ -293,8 +293,8 @@
                                             <code class="prompt-variable-row__name">@variable</code>
                                             @if (isRemoved)
                                             {
-                                                <button type="button" class="variable-chip__action" title="Restore variable"
-                                                        @onclick="() => RestoreVariableAsync(prompt, variable)">↺</button>
+                                                <button type="button" class="variable-chips__add" title="Restore variable"
+                                                        @onclick="() => RestoreVariableAsync(prompt, variable)">Restore</button>
                                             }
                                             else
                                             {
@@ -320,10 +320,10 @@
                                                         </span>
                                                     }
                                                 </span>
-                                                <button type="button" class="variable-chip__action"
+                                                <button type="button" class="variable-chips__add"
                                                         title="@(usedInText ? "Still used in the template text — remove the placeholder first" : "Remove variable")"
                                                         disabled="@usedInText"
-                                                        @onclick="() => RemoveVariableAsync(prompt, variable)">×</button>
+                                                        @onclick="() => RemoveVariableAsync(prompt, variable)">Remove</button>
                                             }
                                         </li>
                                     }
