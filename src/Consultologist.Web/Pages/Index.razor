@@ -6,35 +6,63 @@
 
 <PageTitle>Consultologist Clinical Workspace</PageTitle>
 
-<section class="page-header">
-    <div class="page-header__content">
+<section class="landing-hero">
+    <div class="landing-hero__copy">
         <span class="section-eyebrow">Clinical workspace</span>
-        <h1 class="page-title">Consult drafting with traceable clinical context.</h1>
+        <h1 class="landing-hero__title">Consult drafting with traceable clinical context.</h1>
         <p class="page-description">
             Build structured specialist consults from referral details, review the generated note,
             and keep the physician in control before anything reaches the chart. Every consult
             resolves to versioned, inspectable artifacts — the workflow, its rules, and each
             step's provenance.
         </p>
+        <div class="action-row">
+            <AuthorizeView>
+                <NotAuthorized>
+                    <FluentAnchor Appearance="Appearance.Accent" Href="authentication/login">
+                        Log in
+                    </FluentAnchor>
+                </NotAuthorized>
+                <Authorized>
+                    <FluentAnchor Appearance="Appearance.Accent" Href="consults">
+                        Start a consult
+                    </FluentAnchor>
+                </Authorized>
+            </AuthorizeView>
+        </div>
     </div>
+    <figure class="note-artifact" aria-label="Example consult note with provenance annotations">
+        <div class="note-artifact__paper">
+            <div class="note-artifact__section">
+                <h2 class="note-artifact__heading">History of present illness</h2>
+                <p class="note-artifact__line">
+                    62-year-old presenting with progressive exertional dyspnea over three
+                    months, now limiting a single flight of stairs…
+                </p>
+            </div>
+            <div class="note-artifact__section">
+                <h2 class="note-artifact__heading">Allergies</h2>
+                <p class="note-artifact__line">No known drug allergies documented in the referral.</p>
+            </div>
+            <div class="note-artifact__section">
+                <h2 class="note-artifact__heading">Assessment</h2>
+                <p class="note-artifact__line">
+                    New-onset atrial fibrillation, rate-controlled; outpatient
+                    echocardiography arranged.
+                </p>
+            </div>
+        </div>
+        <figcaption class="note-artifact__annotations">
+            <span class="note-annotation" style="--at: 10%">general@v2026.07.6</span>
+            <span class="note-annotation" style="--at: 46%">text → test-json v47</span>
+            <span class="note-annotation note-annotation--verified" style="--at: 76%">6f52afd0… ✓</span>
+        </figcaption>
+    </figure>
 </section>
 
 <AuthorizeView>
     <NotAuthorized>
         <PublicChainStrip />
-        <section class="content-card">
-            <div class="form-stack">
-                <h2 class="panel-title">Sign in to continue</h2>
-                <p class="panel-description">
-                    Access consult drafts, templates, and your clinical workspace profile.
-                </p>
-                <div class="action-row">
-                    <FluentAnchor Appearance="Appearance.Accent" Href="authentication/login">
-                        Log in
-                    </FluentAnchor>
-                </div>
-            </div>
-        </section>
     </NotAuthorized>
     <Authorized>
         <section class="workflow-grid">
