@@ -31,7 +31,11 @@ public record PublicCatalogEntry(string? AgentName, string? AgentVersion);
 /// </summary>
 public record PublicChainView(
     IReadOnlyList<PublicPackageView>? Packages,
-    PublicCatalogView? OutputContracts);
+    PublicCatalogView? OutputContracts,
+    IReadOnlyList<PublicAgentView>? AgentDefinitions = null);
+
+/// <summary>One published agent definition's listing (the chain's third link).</summary>
+public record PublicAgentView(string? Name, string? Latest, List<string>? Versions);
 
 /// <summary>One package's registry listing (public repo package or the caller's fork).</summary>
 public record PublicPackageView(
@@ -40,7 +44,7 @@ public record PublicPackageView(
     List<string>? Versions,
     Dictionary<string, int>? SpecVersions = null);
 
-public record PublicCatalogView(Dictionary<string, PublicContractView>? Contracts);
+public record PublicCatalogView(Dictionary<string, PublicContractView>? Contracts, string? Latest = null);
 
 public record PublicContractView(string? AgentName);
 

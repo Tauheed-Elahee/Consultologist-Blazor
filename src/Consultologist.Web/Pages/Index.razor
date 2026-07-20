@@ -1,4 +1,8 @@
 @page "/"
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using Consultologist.Web.Services.Workflow
+@inject IWorkflowEndpointService WorkflowService
 
 <PageTitle>Consultologist Clinical Workspace</PageTitle>
 
@@ -17,6 +21,7 @@
 
 <AuthorizeView>
     <NotAuthorized>
+        <PublicChainStrip />
         <section class="content-card">
             <div class="form-stack">
                 <h2 class="panel-title">Sign in to continue</h2>
@@ -53,6 +58,10 @@
                         Fork the workflow package behind your consults — prompts and section
                         standards — with every version published and traceable.
                     </p>
+                    @if (currentRef != null)
+                    {
+                        <p class="muted-text">currently: <code>@currentRef</code></p>
+                    }
                     <div class="action-row">
                         <FluentAnchor Appearance="Appearance.Outline" Href="templates">
                             Open workflow editor
@@ -75,5 +84,42 @@
                 </div>
             </div>
         </section>
+        <PublicChainStrip />
     </Authorized>
 </AuthorizeView>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    private string? currentRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The pin line is signed-in decoration only: an unauthenticated fetch
+        // would redirect a visitor to login, so check the state first.
+        if (AuthenticationState == null)
+        {
+            return;
+        }
+
+        var state = await AuthenticationState;
+
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        try
+        {
+            currentRef = (await WorkflowService.GetCurrentPackageAsync()).Ref;
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            // Token expired mid-session: the line is decoration, not worth a redirect.
+        }
+        catch
+        {
+            // Unreachable package endpoint hides the line; the cards stand alone.
+        }
+    }
+}
