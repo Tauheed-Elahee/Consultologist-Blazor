@@ -40,6 +40,13 @@ verticals — reference corpora summarized into drafting context, structured
 patient lists reconciled into a summary variable — are expressible with it,
 but none of them shapes the format.
 
+To state the shape plainly: chains over different collections are
+**independent for-loops** — they fan over unrelated item sets, run in
+parallel under the readiness scheduler, and one chain's per-item failures
+never touch another chain — but every chain must connect downstream to the
+result (the reachability rule, § 6): independent in execution, never
+orphaned from the deliverable.
+
 ## 2. Vocabulary: no new syntax
 
 v6 adds **no manifest fields and no binding forms**. The whole step is a
@@ -145,11 +152,23 @@ Kept from v5.0:
 6. Acyclicity, binding/variable set-equality, renderer rules (per-item),
    templating gates — all unchanged.
 
+New in v6 (vacuous in v5.0, meaningful once multiple chains exist):
+
+7. **Reachability** — every node must transitively feed the `result` node
+   through binding edges (item-aligned, broadcast, or aggregate). A node or
+   chain whose outputs cannot reach the deliverable is a publish error —
+   the orphan-prompt rule's philosophy applied to execution: everything in
+   a package must matter to the note, and no agent spend runs for outputs
+   the deliverable never sees. (Under v5.0's single collection with the
+   result on its chain, disconnection was impossible in practice; the rule
+   only bites once the relaxations below exist. Decision 2026-07-20, review
+   round on #153.)
+
 Relaxed:
 
-7. ~~All forEach nodes share one collection~~ → forEach nodes may iterate
+8. ~~All forEach nodes share one collection~~ → forEach nodes may iterate
    any declared collection.
-8. ~~Aggregate closed~~ → scalar nodes may bind forEach nodes (aggregate
+9. ~~Aggregate closed~~ → scalar nodes may bind forEach nodes (aggregate
    edges, § 3 semantics).
 
 Still out of scope in v6 (future steps, not promises):
@@ -200,7 +219,10 @@ Still out of scope in v6 (future steps, not promises):
 - **#117 node editing** speaks this vocabulary: forEach assignment offers
   any declared collection; binding sources offer aggregate edges exactly
   where § 2 allows them (scalar consumers only); the graph diff preview's
-  existing removed/added coloring carries over.
+  existing removed/added coloring carries over. Client-side pre-checks
+  should surface unreachable nodes (§ 6.7) the way unbound variables are
+  surfaced today — a named, per-node publish block; the server validator
+  stays the authority.
 - The binding source dropdowns' option builder (BindingSourceEditor) gains
   the aggregate case: `node:<forEach-id>` options appear for scalar nodes,
   labeled as aggregates.
