@@ -20,6 +20,7 @@
 	--consultologist-shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
 	--page-gutter: clamp(1rem, 3vw, 2rem);
 	--section-gap: clamp(1.25rem, 3vw, 2rem);
+	--shell-max-width: 1600px;
 }
 
 html,
@@ -111,7 +112,7 @@ header.header.app-header {
 .app-header__inner,
 .app-footer__inner {
 	width: 100%;
-	max-width: 1600px;
+	max-width: var(--shell-max-width);
 	margin: 0 auto;
 	padding: 0.625rem var(--page-gutter);
 }
@@ -245,8 +246,11 @@ header.header.app-header {
 }
 
 .content-shell {
-	width: min(1180px, 100%);
+	/* One centered column for the whole shell: content matches the
+	   header/footer cap instead of hugging the left edge beneath them. */
+	width: min(var(--shell-max-width), 100%);
 	min-width: 0;
+	margin: 0 auto;
 	display: flex;
 	flex-direction: column;
 	gap: var(--section-gap);
