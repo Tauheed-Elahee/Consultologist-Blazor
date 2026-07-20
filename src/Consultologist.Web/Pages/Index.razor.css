@@ -1,0 +1,172 @@
+/* The landing's design pass (#148). The signature is the annotated note:
+   a paper-toned consult-note artifact with provenance annotations in its
+   margin. The paper tone and serif belong to the artifact ONLY — the page
+   canvas stays the app's neutral, and the annotations reuse the app's mono,
+   accent, and success tokens so the hero and the live chain strip below
+   speak one language. */
+
+.landing-hero {
+	--note-paper: #fbf8f2;
+	--note-ink: #2b2622;
+	--note-rule: rgba(43, 38, 34, 0.14);
+
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+	gap: clamp(1.5rem, 4vw, 3.5rem);
+	align-items: center;
+}
+
+.landing-hero__copy {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	max-width: 34rem;
+}
+
+.landing-hero__title {
+	margin: 0;
+	font-size: clamp(1.9rem, 3.5vw, 2.8rem);
+	line-height: 1.12;
+	letter-spacing: -0.015em;
+}
+
+/* The note artifact: a document, not a card. */
+.note-artifact {
+	position: relative;
+	margin: 0;
+	/* Room for the margin annotations on wide screens. */
+	padding-right: clamp(0rem, 12vw, 11rem);
+}
+
+.note-artifact__paper {
+	background: var(--note-paper);
+	color: var(--note-ink);
+	border: 1px solid var(--note-rule);
+	border-radius: var(--consultologist-radius-sm);
+	box-shadow: var(--consultologist-shadow-md);
+	padding: clamp(1.25rem, 2.5vw, 2rem);
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+	font-family: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+}
+
+.note-artifact__heading {
+	margin: 0 0 0.3rem;
+	font-size: 0.72rem;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: rgba(43, 38, 34, 0.65);
+	border-bottom: 1px solid var(--note-rule);
+	padding-bottom: 0.3rem;
+}
+
+.note-artifact__line {
+	margin: 0;
+	font-size: 0.95rem;
+	line-height: 1.5;
+}
+
+/* Margin annotations: the provenance the product attaches to every line. */
+.note-artifact__annotations {
+	position: absolute;
+	inset: 0 0 0 auto;
+	width: clamp(0rem, 12vw, 11rem);
+	pointer-events: none;
+}
+
+.note-annotation {
+	position: absolute;
+	top: var(--at);
+	left: 1.75rem;
+	white-space: nowrap;
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.72rem;
+	color: var(--consultologist-accent);
+	background: var(--consultologist-surface, #fff);
+	border: 1px solid var(--consultologist-border);
+	border-radius: 999px;
+	padding: 0.15rem 0.55rem;
+	box-shadow: var(--consultologist-shadow-sm);
+	opacity: 0;
+	transform: translateX(-6px);
+	animation: annotation-in 0.45s ease-out forwards;
+}
+
+/* The hairline connector back to the note's line. */
+.note-annotation::before {
+	content: "";
+	position: absolute;
+	right: 100%;
+	top: 50%;
+	width: 1.75rem;
+	border-top: 1px dashed var(--consultologist-accent);
+	opacity: 0.5;
+}
+
+.note-annotation--verified {
+	color: var(--consultologist-success);
+}
+
+.note-annotation--verified::before {
+	border-top-color: var(--consultologist-success);
+}
+
+.note-annotation:nth-child(1) { animation-delay: 0.25s; }
+.note-annotation:nth-child(2) { animation-delay: 0.45s; }
+.note-annotation:nth-child(3) { animation-delay: 0.65s; }
+
+@keyframes annotation-in {
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.note-annotation {
+		animation: none;
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* Quiet refinement below the hero: cards lift slightly on hover. */
+.content-card {
+	transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.content-card:hover {
+	box-shadow: var(--consultologist-shadow-md);
+	transform: translateY(-2px);
+}
+
+@media (max-width: 900px) {
+	.landing-hero {
+		grid-template-columns: 1fr;
+	}
+
+	.note-artifact {
+		padding-right: 0;
+	}
+
+	/* Annotations fold beneath the note as a chip row. */
+	.note-artifact__annotations {
+		position: static;
+		width: auto;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.75rem;
+		pointer-events: auto;
+	}
+
+	.note-annotation {
+		position: static;
+	}
+
+	.note-annotation::before {
+		display: none;
+	}
+}
