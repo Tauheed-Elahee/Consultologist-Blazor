@@ -1,267 +1,300 @@
-# specVersion 6 Design: Multi-Collection Fan and Aggregate Edges (Not Implemented)
+# specVersion 6 Design: Multi-Collection Fan, Aggregator Nodes, One Assembled Document (Not Implemented)
 
 Recorded 2026-07-20 at the opening of Milestone 9 (#152; design issue #153,
-implementation #116). Status: **design settled, not implemented**. v6 is one
-move: relax the v5.0 single-collection closure — and take the one further step
-that relaxation forces. Working alias during Milestone 9 planning was "5.1";
-the manifest field is an integer, so the step ships as `specVersion: 6`.
+implementation #116). Status: **design settled, not implemented**. Working
+alias during Milestone 9 planning was "5.1"; the manifest field is an
+integer, so the step ships as `specVersion: 6`.
 
-Decisions fixed in the 2026-07-20 design round (recorded on #152/#153):
-integer version bump to 6 with the engine accepting {5, 6}; general-purpose
-scope (minimal correct semantics, no single driving vertical); **aggregates
-fail loud**; **labeled-blocks aggregate rendering**.
+v6 is three moves designed together:
 
-## 1. Motivation: why relaxing one rule requires opening another
+1. **Multiple collections** — the v5.0 single-collection closure relaxes;
+   chains over different collections are independent for-loops.
+2. **Aggregator nodes** — a deterministic node property (`aggregate:`)
+   collects other nodes' outputs; the **only** way outputs cross from a
+   forEach chain to the rest of the graph.
+3. **One assembled document** — every v6 package's `result` references an
+   aggregator; the deliverable is a single server-assembled document, not
+   client-assembled sections.
 
-v5.0 closes three things at once (package-format-v5.md § closures): aggregate
-edges (a forEach node's output is bindable only by same-collection forEach
-nodes), cross-collection edges, and — because of those two — multiple
-collections themselves. The validator's own comment states the dependency:
-with aggregate and cross-collection edges closed, a second collection's
-forEach chain would be *disconnected* — publishable but unreachable, since
-nothing outside it could ever consume its outputs. Deleting the
-single-collection check alone would produce packages that validate but cannot
-matter.
+Design-round decisions recorded on #153/PR #155 (three rounds, 2026-07-20):
+integer bump to 6, engine accepts {5, 6}; general-purpose scope; aggregates
+fail loud; labeled-blocks rendering; reachability required; aggregation only
+via aggregator nodes (an earlier draft's implicit aggregate *bindings* into
+prompt nodes is **superseded** by round 3); ordered multi-source
+aggregators; result-on-aggregator required in v6. Declared inputs and
+multiple deliverables stay future (§ 11).
 
-So v6 is two coupled relaxations, the second licensing the first:
+## 1. Motivation
 
-1. **Multiple collections**: forEach nodes may iterate different declared
-   collections; each collection with at least one forEach node gets its own
-   item fan.
-2. **Aggregate edges**: a **scalar** (non-forEach) node may bind a forEach
-   node's output, meaning *the aggregate of all its instances*. This is the
-   bridge that makes a secondary chain consumable: collection B's chain →
-   aggregate into a scalar node → broadcast (unchanged v5 semantics) into
-   collection A's chain.
+v5.0 closes three things at once (package-format-v5.md § closures):
+aggregate edges, cross-collection edges, and — because of those two —
+multiple collections themselves. The validator's own comment states the
+dependency: with both edge families closed, a second collection's forEach
+chain would be *disconnected* — publishable but unreachable. Deleting the
+single-collection check alone would produce packages that validate but
+cannot matter. So relaxing it requires a legal way for a chain's outputs to
+be consumed: the aggregator node.
 
-The scope is deliberately general (design decision): per-item chains plus
-aggregate-into-scalar is the minimal correct connective tissue. Concrete
-verticals — reference corpora summarized into drafting context, structured
-patient lists reconciled into a summary variable — are expressible with it,
-but none of them shapes the format.
+Independently, the v5 deliverable is client-assembled: the engine emits
+per-section outputs and every consumer (Consults note view, copy button,
+History) pieces the document together. v6 makes assembly part of the
+workflow itself — deterministic, server-side, recorded — so the consult
+leaves the engine as one document with one hash.
 
-To state the shape plainly: chains over different collections are
+The scope stays deliberately general (round-1 decision): per-item chains,
+ordered aggregation, one document. Concrete verticals — reference corpora
+summarized into drafting context, structured patient lists reconciled into
+a summary variable — are expressible, but none of them shapes the format.
+
+To state the loop shape plainly: chains over different collections are
 **independent for-loops** — they fan over unrelated item sets, run in
 parallel under the readiness scheduler, and one chain's per-item failures
 never touch another chain — but every chain must connect downstream to the
-result (the reachability rule, § 6): independent in execution, never
-orphaned from the deliverable.
+result (§ 7 reachability): independent in execution, never orphaned from
+the deliverable.
 
-## 2. Vocabulary: no new syntax
+## 2. Vocabulary
 
-v6 adds **no manifest fields and no binding forms**. The whole step is a
-change in what existing forms are allowed to mean:
+One addition, in the v5 "one kind with properties" spirit (`forEach` makes
+a node multiple; `aggregate` makes it deterministic):
 
-| Binding | v5.0 | v6 |
+```jsonc
+{
+  "id": "assemble-note",
+  "label": "Assemble note",
+  "aggregate": ["node:section-instructions", "node:closing-remarks"]
+}
+```
+
+An **aggregator node** declares `aggregate`: a non-empty **ordered list**
+of `node:` refs. It declares **no** `prompt`, `bindings`, `output`, or
+`forEach` — the property is the behavior. All other nodes ("prompt nodes")
+are unchanged v5 nodes.
+
+Edge semantics:
+
+| Edge | v5.0 | v6 |
 |---|---|---|
-| forEach node → same-collection forEach node (`node:<id>`) | item-aligned edge | unchanged |
-| forEach node → different-collection forEach node | rejected | **still rejected** |
-| forEach node → scalar node (`node:<id>` bound by a scalar) | rejected ("aggregate closed") | **the aggregate edge** |
-| scalar → anything | broadcast | unchanged |
-| `forEach:` values | all name ONE collection | may name different collections |
-| `as` renderer on an aggregate binding | n/a | **rejected** (concept renderers stay per-item; future work) |
+| forEach node → same-collection forEach node (binding) | item-aligned | unchanged |
+| forEach node → different-collection forEach node | rejected | still rejected |
+| forEach node → scalar **prompt** node | rejected ("aggregate closed") | **still rejected** — aggregation is never implicit in a binding |
+| forEach node → **aggregator** (listed as a source) | n/a | **the aggregate edge**: the chain's collected instances |
+| scalar prompt node → aggregator (listed as a source) | n/a | the node's single output, verbatim |
+| aggregator → anything (bound as `node:<id>`) | n/a | broadcasts like a scalar — into prompt nodes, forEach instances (the reference-corpus pattern), or other aggregators (composition) |
+| `as` renderer on any aggregate-related edge | n/a | rejected (concept renderers stay per-item; future) |
 
-`result` still names exactly one forEach node; that node's collection remains
-the section source ("sections are server-resolved" is untouched).
+`result` must reference an **aggregator** node in v6 (§ 4).
 
-## 3. Aggregate semantics
+## 3. Aggregator semantics
 
 ### Rendering (normative)
 
-An aggregate binding renders the source node's instance outputs as **labeled
-blocks**, in **collection order** (the order of `index.json` items — the same
-order the fan uses):
+An aggregator renders its sources **in declared order**, joined by blank
+lines:
 
-```
-## {item name}
+- A **forEach source** renders as labeled blocks in the collection's
+  `index.json` order: for each item, a line `## ` + the item's `name`, a
+  blank line, the instance's output text, a blank line before whatever
+  follows.
+- A **scalar source** (prompt node or aggregator) renders as its output
+  text, verbatim — no heading. A heading over scalar content is authorable
+  content, not format behavior.
 
-{instance output text}
+No prologue, no epilogue, no trailing newline beyond the final text's own.
+The format is **normative, not advisory**: aggregator output feeds hashes
+and downstream prompt inputs, so the bytes are pinned by the spec exactly
+as Scriban rendering is. (Round-1 decision: labeled blocks over plain
+concatenation and JSON — readable by the model and by a human inspecting a
+job's inputs; item names give the model stable referents. A JSON aggregate
+form can arrive later behind a renderer.)
 
-## {next item name}
+### Execution
 
-{instance output text}
-```
+Deterministic, engine-side, **no agent call** — the operation has one
+correct answer, so an agent would add cost, latency, and alteration risk
+for nothing. The orchestrator composes the recorded outputs inline: no
+activity, no retry semantics. The output is a **first-class node output**
+— hashed, recorded like any node's, with its own row in History's grid.
 
-Exactly: for each item, a line `## ` + the item's `name` field, a blank line,
-the instance's output text, a blank line before the next heading. No prologue,
-no epilogue, no trailing newline beyond the final output's own. This format is
-**normative, not advisory**: the rendered text is a prompt input, so it flows
-into the consuming node's input hash — reproducibility requires the bytes to
-be pinned by the spec, exactly as Scriban rendering is.
-
-Rationale (design round): labeled blocks are readable by the model *and* by a
-human inspecting a job's prompt inputs in History; item names give the model
-stable referents. Plain concatenation and structured JSON were considered and
-declined — JSON remains available later behind a renderer once aggregate
-renderers open.
+Note what this makes expressible *without* any further format feature:
+**agent-mediated assembly is an authoring choice.** A package may route
+`sections-aggregator → harmonizing prompt node → single-source aggregator
+→ result`; the harmonizing agent (which can alter section content — a
+provenance trade-off) is then visible in the graph, chosen by the author,
+and recorded per-node, rather than being a format special case.
 
 ### Failure (normative)
 
-**Aggregates fail loud.** If any instance of the source node failed (or was
-skipped by upstream failure), the aggregate binding's consumer fails with an
-error naming the failed item id(s); it does not run with a partial aggregate.
-Failure then cascades downstream of the consumer through the existing skip
-propagation. Per-item independence *within* a chain is unchanged — one
-section's failure still leaves sibling sections completing; what it can no
-longer do is silently thin out an aggregate someone downstream consumed.
+**Aggregators fail loud** (round-1 decision). If any contributing instance
+of any source failed or was skipped, the aggregator fails with an error
+naming the failed item id(s); it never composes a partial document.
+Failure cascades downstream through the existing skip propagation.
+Per-item independence *within* a chain is unchanged; what a failure can no
+longer do is silently thin out a document someone consumed. Rationale: a
+consult built on a silently-reduced aggregate is a provenance hazard — the
+record would look complete while resting on missing context; fail-loud is
+the clinically conservative default.
 
-Rationale (design round): a consult built on a silently-reduced aggregate is a
-provenance hazard — the record would look complete while resting on missing
-context. Fail-loud matches the validator philosophy and is the clinically
-conservative default. A "survivors + marker" mode was considered and declined
-for v6.
+## 4. The deliverable: one assembled document
 
-## 4. The fan: per-collection item sets
+In v6 the `result` references an aggregator, and **its output is the
+deliverable**: the engine completes the job with one assembled document.
+Clients render, copy, and export that document instead of piecing sections
+together.
+
+**Blocks replace sections as the deliverable units.** The result
+aggregator's *expansion*, in source order, defines the units: one block
+per (forEach source, item) pair — index order within each source — and one
+block per scalar source. Setup listing ("what this consult will contain"),
+streaming preview (blocks fill in as instances complete), and progress
+counts enumerate exactly these units; the M8 run rail's per-chain groups
+already present them. Unit keys are composite (`nodeId:itemId`) since item
+ids are unique per collection, not globally.
+
+**Hashes.** `workflowOutputHash` gains **definition v2** for v6 jobs:
+`Sha256Hex` of the assembled document's UTF-8 bytes. (v1 — the
+ordinal-sorted per-section hash map — remains the definition for v5 jobs;
+records carry the definition version as today.) Per-block provenance is
+unchanged: every instance output keeps its own recorded hash.
+
+**v5 coexistence.** specVersion 5 packages keep the per-section
+deliverable and v1 hash; the engine supports both modes. `general` stays 5
+until republished as 6.
+
+## 5. The fan: per-collection item sets
 
 The orchestration input's single `Items` snapshot (the result collection)
-becomes **one item set per fanned collection**, all snapshotted at job start
-(the operational-snapshot species — Durable replay determinism, unchanged
-taxonomy). Shape note for #116: the v5 single-set shape must keep
-deserializing (records and in-flight jobs), e.g. by keying sets per
-collection with the v5 shape mapping to the result collection's key.
+becomes **one item set per fanned collection**, all snapshotted at job
+start (the operational-snapshot species — Durable replay determinism,
+unchanged taxonomy). Shape note for #116: the v5 single-set shape must
+keep deserializing (records and in-flight jobs). Instance keying is
+already collection-agnostic: `nodeId:itemId` works unchanged because a
+node belongs to exactly one collection.
 
-Instance keying is already collection-agnostic: `nodeId:itemId` composite
-keys work unchanged because a node belongs to exactly one collection.
-Sections remain the result node's collection — the job's deliverable count
-and identity do not change meaning.
+## 6. Readiness
 
-## 5. Readiness
+- **forEach instance** (unchanged): every same-collection `node:`
+  dependency item-aligned complete, every scalar dependency (prompt node
+  or aggregator, broadcast) complete.
+- **Prompt scalar node** (unchanged): every dependency settled.
+- **Aggregator**: every source settled — for a forEach source, all
+  instances of that node completed; any failed/skipped instance makes the
+  aggregator fail per § 3 rather than run.
 
-- **forEach instance** (unchanged): every same-collection `node:` dependency
-  item-aligned complete, every scalar dependency complete.
-- **Scalar node**: every dependency settled — where a dependency on a forEach
-  node (the aggregate edge) means **all instances of that node completed**;
-  any failed/skipped instance makes the scalar fail per § 3 rather than run.
+Acyclicity over the full graph (binding edges + aggregate source edges) is
+required and checked with the same Kahn pass.
 
-Acyclicity over the node graph (edges = bindings, aggregate edges included)
-is still required and still checked with the same Kahn pass; an aggregate
-edge from a chain back into a node that feeds the same chain is a cycle and
-rejected like any other.
-
-## 6. The v6 closure set
+## 7. The v6 closure set
 
 Kept from v5.0:
 
-1. Schema catalog match — every declared schema canonically matches a catalog
-   output contract.
+1. Schema catalog match — every declared schema canonically matches a
+   catalog output contract.
 2. Cross-collection item edges closed — no forEach → forEach edges across
    collections.
-3. One deliverable — exactly one `result`, referencing a forEach node.
+3. One deliverable — exactly one `result`; **in v6 it references an
+   aggregator node** (changed from "a forEach node").
 4. No conditionals, loops, or expression language.
 5. Orphan prompts are errors; a prompt is referenced by exactly one node.
-6. Acyclicity, binding/variable set-equality, renderer rules (per-item),
-   templating gates — all unchanged.
+6. Acyclicity, binding/variable set-equality, per-item renderer rules,
+   templating gates — unchanged.
 
-New in v6 (vacuous in v5.0, meaningful once multiple chains exist):
+New in v6:
 
-7. **Reachability** — every node must transitively feed the `result` node
-   through binding edges (item-aligned, broadcast, or aggregate). A node or
-   chain whose outputs cannot reach the deliverable is a publish error —
-   the orphan-prompt rule's philosophy applied to execution: everything in
-   a package must matter to the note, and no agent spend runs for outputs
-   the deliverable never sees. (Under v5.0's single collection with the
-   result on its chain, disconnection was impossible in practice; the rule
-   only bites once the relaxations below exist. Decision 2026-07-20, review
-   round on #153.)
+7. **Reachability** — every node must transitively feed the `result`
+   through binding or aggregate edges. A node or chain whose outputs
+   cannot reach the deliverable is a publish error — the orphan-prompt
+   philosophy applied to execution: no agent spend for outputs the
+   document never sees. (Vacuous under v5.0's single collection; bites
+   once the relaxations below exist. Round-2 decision.)
+8. **Aggregator well-formedness** — `aggregate` is a non-empty ordered
+   list of existing `node:` refs; aggregator nodes declare no
+   prompt-family fields; the result aggregator must **transitively include
+   at least one forEach source** (a package with no fan has no consult).
+9. **Aggregation is explicit** — forEach nodes are bindable only
+   item-aligned (same collection) or via aggregators; never directly by a
+   scalar prompt node.
 
 Relaxed:
 
-8. ~~All forEach nodes share one collection~~ → forEach nodes may iterate
-   any declared collection.
-9. ~~Aggregate closed~~ → scalar nodes may bind forEach nodes (aggregate
-   edges, § 3 semantics).
+10. ~~All forEach nodes share one collection~~ → forEach nodes may
+    iterate any declared collection.
+11. ~~Aggregate closed~~ → aggregator nodes per §§ 2–3.
 
 Still out of scope in v6 (future steps, not promises):
 
-- forEach nodes consuming aggregates (staged chains).
-- Multiple `result`s / multiple deliverables (sketched in § 10).
-- Declared inputs beyond `input:consult_draft` (sketched in § 10).
-- Renderers (`as`) on aggregate bindings, including a JSON aggregate form.
+- Declared inputs beyond `input:consult_draft` (sketched in § 11).
+- Multiple `result`s / multiple deliverables (sketched in § 11).
+- Renderers on aggregate edges, including a JSON aggregate form.
 - Cross-collection item-aligned semantics (zip/cartesian) — no known need.
 
-## 7. Progress and provenance
+## 8. Progress and provenance
 
-- **Run rail / SectionSteps**: the per-section step list stays the *result
-  collection's* chain — sections are the deliverable and their progress
-  model is untouched. Secondary chains surface as node-level progress
-  (node-completed when all instances settle), exactly how non-forEach nodes
-  present today.
-- **History grid**: generalizes without a format change — NodeOutputs are
-  already keyed `nodeId:itemId`, so a secondary chain renders as a chevroned
-  per-item group under its node, identical to the main chain's groups. The
-  Setup/Done framing, hashes, and convergence markers apply as-is.
-- **Hashes**: an aggregate is a prompt input like any other — the rendered
-  labeled-blocks text feeds the consumer's input hash. Because the rendering
-  is normative (§ 3), the hash is reproducible from the record's refs. No new
-  record species: refs / operational snapshots / derived projections cover
-  everything (provenance.md taxonomy unchanged).
+- **The run rail / setup listing** enumerate the deliverable's blocks
+  (§ 4) and each chain's nodes — the M8 rail already renders per-chain
+  chevron groups, and secondary chains present as node-level rows with
+  per-item groups exactly like the main chain.
+- **History's grid** gains aggregator rows like any node row: input hashes
+  (the source outputs), output hash (the composed document or intermediate
+  aggregate). NodeOutputs' `nodeId:itemId` keying generalizes untouched.
+- **Hashes**: aggregator outputs hash like any node output; the
+  deliverable hash is § 4's workflowOutputHash v2. No new record species —
+  refs / operational snapshots / derived projections cover everything
+  (provenance.md taxonomy unchanged).
 
-## 8. Versioning mechanics
+## 9. Versioning mechanics
 
-- A manifest declares the rule set it was validated under: `specVersion: 5`
-  packages validate under the v5.0 closures (frozen), `specVersion: 6` under
-  § 6. A package needs 6 only when it uses what 6 opens; `general` stays 5
-  until it actually goes multi-collection.
+- A manifest declares the rule set it was validated under: `specVersion:
+  5` validates under the frozen v5.0 closures, `6` under § 7. A package
+  needs 6 only when it uses what 6 opens.
 - **The engine accepts exactly {5, 6}**; the store's acceptance and the
   package selector's integer spec gating (#137) extend naturally.
-- The publisher stamps the declared version it validated; it never upgrades
-  a manifest's declaration.
-- package-format-v5.md remains the frozen v5 normative spec and gains a
-  header note pointing here (the v2–v4 archive pattern); the v6 normative
-  spec is written when #116 implements.
+- The publisher stamps the declared version it validated; it never
+  upgrades a manifest's declaration.
+- package-format-v5.md remains the frozen v5 normative spec (header note
+  added); the v6 normative spec is written when #116 implements.
 
-## 9. Editor implications (forward pointers)
+## 10. Editor implications (forward pointers)
 
 - **#154 "+ data folder"** becomes meaningful: a new collection is
-  publishable *and consumable* once a chain iterates it and an aggregate
-  bridges it. The #115 membership machinery (added-items model, index
-  composition, per-collection paths) generalizes; the single-collection
-  assumption in the editor's compose step is the main seam.
+  publishable *and consumable* once a chain iterates it and an aggregator
+  bridges it. The #115 membership machinery generalizes; the editor's
+  compose step drops its single-collection assumption.
 - **#117 node editing** speaks this vocabulary: forEach assignment offers
-  any declared collection; binding sources offer aggregate edges exactly
-  where § 2 allows them (scalar consumers only); the graph diff preview's
-  existing removed/added coloring carries over. Client-side pre-checks
-  should surface unreachable nodes (§ 6.7) the way unbound variables are
-  surfaced today — a named, per-node publish block; the server validator
-  stays the authority.
-- The binding source dropdowns' option builder (BindingSourceEditor) gains
-  the aggregate case: `node:<forEach-id>` options appear for scalar nodes,
-  labeled as aggregates.
+  any declared collection; creating an **aggregator node** (choose and
+  order sources) joins node creation; BindingSourceEditor offers
+  aggregators as scalar sources; client-side pre-checks surface
+  unreachable nodes (§ 7.7) the way unbound variables are surfaced — a
+  named, per-node publish block, with the server validator the authority.
+- The DAG diagram renders aggregators as their own boxes — the assembly
+  is graph-visible by construction, no synthetic presentation needed.
 
-## 10. Future steps beyond v6 (sketched, not promised)
+## 11. Future steps beyond v6 (sketched, not promised)
 
-Recorded from the 2026-07-20 design review so the roadmap is legible;
-nothing in §§ 1–9 depends on this section, and no shape here is committed.
+Recorded from the design review so the roadmap is legible; nothing above
+depends on this section, and no shape here is committed.
 
 ### Declared inputs — the natural v7
 
-The engine has exactly one input today (`input:consult_draft`; the request
-is `{consultDraft, workflowPackage?}`, effective-input-hash v2 covers the
-draft alone) — but the binding vocabulary is already namespaced
-(`input:<id>`), so the format was built with room. The step would be:
-
-- The manifest declares its inputs: `inputs: [{id, label, required}]`.
-  `input:<id>` bindings validate against the declaration (today the single
-  legal id is hardcoded).
-- The Consults setup phase renders one field per declared input — **the
-  package defines its own intake form**, composing directly with the
-  fork/editor model (fork the package, change what it asks for).
-- The job request carries all inputs; the effective-input-hash definition
-  bumps to v3, covering the declared inputs canonically (id-keyed, like
-  the workflow-output-hash's ordinal-sorted map).
-
-Blast radius is contained: format + validator, one endpoint contract, the
-setup UI, one hash version. A clean single-step release.
+The engine has exactly one input today (`input:consult_draft`; effective-
+input-hash v2 covers the draft alone) — but the binding vocabulary is
+already namespaced (`input:<id>`), so the format was built with room. The
+step: the manifest declares `inputs: [{id, label, required}]`; `input:<id>`
+bindings validate against the declaration; the Consults setup phase renders
+one field per declared input — **the package defines its own intake form**,
+composing with the fork model; the request carries all inputs and the
+effective-input-hash bumps to v3 (id-keyed canonical map). Contained blast
+radius: format + validator, one endpoint contract, the setup UI, one hash
+version.
 
 ### Multiple deliverables — further out, and a product decision first
 
 `result` becoming a list is a product change wearing a format change's
-clothes: a job would no longer produce *the note* but a set of documents
-(note + patient letter + structured summary…). Everything that assumes one
-deliverable moves — the sections model (sections = the result collection),
-the Consults result view, History's grid and the `workflowOutputHash`
-definition (per-deliverable forms), the copy affordance. None of that is
-hard individually; together it redefines what a job is, which is a product
-decision to make deliberately, not a format step to slip in. No shape
-committed here beyond the observation that reachability (§ 6.7) would
-generalize to "reaches *a* result".
+clothes: a job would produce a set of documents (note + patient letter +
+structured summary…). Everything assuming one deliverable moves — the
+blocks model per deliverable, the result view, History, the output-hash
+form, copy. It redefines what a job is, which is a decision to make
+deliberately, not a format step to slip in. One observation committed:
+reachability (§ 7.7) would generalize to "reaches *a* result", and the v6
+aggregator machinery is its natural building block (one aggregator per
+deliverable).
