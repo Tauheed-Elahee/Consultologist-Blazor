@@ -174,7 +174,8 @@ Relaxed:
 Still out of scope in v6 (future steps, not promises):
 
 - forEach nodes consuming aggregates (staged chains).
-- Multiple `result`s / multiple deliverables.
+- Multiple `result`s / multiple deliverables (sketched in § 10).
+- Declared inputs beyond `input:consult_draft` (sketched in § 10).
 - Renderers (`as`) on aggregate bindings, including a JSON aggregate form.
 - Cross-collection item-aligned semantics (zip/cartesian) — no known need.
 
@@ -226,3 +227,41 @@ Still out of scope in v6 (future steps, not promises):
 - The binding source dropdowns' option builder (BindingSourceEditor) gains
   the aggregate case: `node:<forEach-id>` options appear for scalar nodes,
   labeled as aggregates.
+
+## 10. Future steps beyond v6 (sketched, not promised)
+
+Recorded from the 2026-07-20 design review so the roadmap is legible;
+nothing in §§ 1–9 depends on this section, and no shape here is committed.
+
+### Declared inputs — the natural v7
+
+The engine has exactly one input today (`input:consult_draft`; the request
+is `{consultDraft, workflowPackage?}`, effective-input-hash v2 covers the
+draft alone) — but the binding vocabulary is already namespaced
+(`input:<id>`), so the format was built with room. The step would be:
+
+- The manifest declares its inputs: `inputs: [{id, label, required}]`.
+  `input:<id>` bindings validate against the declaration (today the single
+  legal id is hardcoded).
+- The Consults setup phase renders one field per declared input — **the
+  package defines its own intake form**, composing directly with the
+  fork/editor model (fork the package, change what it asks for).
+- The job request carries all inputs; the effective-input-hash definition
+  bumps to v3, covering the declared inputs canonically (id-keyed, like
+  the workflow-output-hash's ordinal-sorted map).
+
+Blast radius is contained: format + validator, one endpoint contract, the
+setup UI, one hash version. A clean single-step release.
+
+### Multiple deliverables — further out, and a product decision first
+
+`result` becoming a list is a product change wearing a format change's
+clothes: a job would no longer produce *the note* but a set of documents
+(note + patient letter + structured summary…). Everything that assumes one
+deliverable moves — the sections model (sections = the result collection),
+the Consults result view, History's grid and the `workflowOutputHash`
+definition (per-deliverable forms), the copy affordance. None of that is
+hard individually; together it redefines what a job is, which is a product
+decision to make deliberately, not a format step to slip in. No shape
+committed here beyond the observation that reachability (§ 6.7) would
+generalize to "reaches *a* result".
