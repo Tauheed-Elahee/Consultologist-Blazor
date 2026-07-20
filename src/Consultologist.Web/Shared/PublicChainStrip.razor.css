@@ -1,0 +1,66 @@
+.chain-strip {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.chain-strip__heading {
+	margin: 0;
+	font-size: 0.85rem;
+}
+
+.chain-strip__tiles {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: stretch;
+	gap: 0.75rem;
+}
+
+.chain-strip__tile {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	min-width: 13rem;
+	padding: 0.75rem 1rem;
+	border: 1px solid var(--consultologist-border);
+	border-radius: var(--consultologist-radius-md, 8px);
+	background: var(--consultologist-surface);
+	font-size: 0.8rem;
+}
+
+.chain-strip__tile-title {
+	font-size: 0.7rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--consultologist-text-muted);
+}
+
+.chain-strip__ref {
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.78rem;
+	color: inherit;
+	text-decoration: none;
+	border-bottom: 1px dotted var(--consultologist-border);
+	width: fit-content;
+}
+
+.chain-strip__ref:hover {
+	color: var(--consultologist-accent);
+	border-bottom-color: var(--consultologist-accent);
+}
+
+.chain-strip__arrow {
+	align-self: center;
+	color: var(--consultologist-text-muted);
+}
+
+@media (max-width: 720px) {
+	.chain-strip__arrow {
+		display: none;
+	}
+
+	.chain-strip__tile {
+		width: 100%;
+	}
+}

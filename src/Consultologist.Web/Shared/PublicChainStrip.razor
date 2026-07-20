@@ -1,0 +1,77 @@
+@* The landing's live chain strip (#112): workflow → rules → agents tiles
+   from the anonymous Public/Chain view — the transparency story rendered by
+   the app itself, and a live prototype of the marketing site's core section.
+   An unreachable chain renders nothing; the static landing stands alone. *@
+@using Consultologist.Web.Services.Workflow
+@inject IWorkflowEndpointService WorkflowService
+@inject IConfiguration Configuration
+
+@if (chain != null)
+{
+    <section class="chain-strip">
+        <p class="muted-text chain-strip__heading">What runs a consult — live from the public registries:</p>
+        <div class="chain-strip__tiles">
+            <div class="chain-strip__tile">
+                <span class="chain-strip__tile-title">Workflow</span>
+                @foreach (var package in chain.Packages ?? Enumerable.Empty<PublicPackageView>())
+                {
+                    if (string.IsNullOrWhiteSpace(package.Name))
+                    {
+                        continue;
+                    }
+
+                    <a class="chain-strip__ref" target="_blank" rel="noopener"
+                       href="@RegistryLink($"workflow-packages/{package.Name}/{package.Latest}/manifest.json")">
+                        @package.Name@("@")@(package.Latest ?? "latest")
+                    </a>
+                    <span class="muted-text">@(package.Versions?.Count ?? 0) versions</span>
+                }
+            </div>
+            <span class="chain-strip__arrow" aria-hidden="true">→</span>
+            <div class="chain-strip__tile">
+                <span class="chain-strip__tile-title">Rules</span>
+                @if (chain.OutputContracts is { } catalog)
+                {
+                    <a class="chain-strip__ref" target="_blank" rel="noopener"
+                       href="@RegistryLink($"output-contracts/{catalog.Latest}/output-contracts.json")">
+                        output-contracts@("@")@(catalog.Latest ?? "latest")
+                    </a>
+                    @foreach (var contract in catalog.Contracts ?? new Dictionary<string, PublicContractView>())
+                    {
+                        <span class="muted-text">@contract.Key → @(contract.Value.AgentName ?? "agent")</span>
+                    }
+                }
+            </div>
+            <span class="chain-strip__arrow" aria-hidden="true">→</span>
+            <div class="chain-strip__tile">
+                <span class="chain-strip__tile-title">Agents</span>
+                @foreach (var agent in chain.AgentDefinitions ?? Enumerable.Empty<PublicAgentView>())
+                {
+                    if (string.IsNullOrWhiteSpace(agent.Name))
+                    {
+                        continue;
+                    }
+
+                    <a class="chain-strip__ref" target="_blank" rel="noopener"
+                       href="@RegistryLink($"agent-definitions/{agent.Name}/{agent.Latest}/definition.yaml")">
+                        @agent.Name v@(agent.Latest ?? "?")
+                    </a>
+                }
+                <span class="muted-text">Foundry-pinned, attested at startup</span>
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    private PublicChainView? chain;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Anonymous and failure-tolerant: a null chain simply renders nothing.
+        chain = await WorkflowService.GetPublicChainAsync();
+    }
+
+    private string RegistryLink(string path) =>
+        $"{(Configuration["AzureFunction:PublicRegistryBaseUrl"] ?? string.Empty).TrimEnd('/')}/{path}";
+}
