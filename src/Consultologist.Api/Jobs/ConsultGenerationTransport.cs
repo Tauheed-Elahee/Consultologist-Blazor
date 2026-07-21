@@ -188,27 +188,50 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.ServiceUnavailable, new { error = "Workflow package registry is unavailable." }, cancellationToken);
             }
 
-            if (package.Manifest.SpecVersion == 6)
-            {
-                // The format layer accepts and validates v6 (publish, view, diagram);
-                // execution lands with the engine update. No window where a pinned v6
-                // package fails strangely mid-run.
-                _logger.LogWarning("Workflow package {Package} is specVersion 6; execution is not yet enabled.", package.Ref);
-                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} is specVersion 6; v6 execution arrives with the engine update. Pin a specVersion 5 package meanwhile." }, cancellationToken);
-            }
-
             if (package.Nodes is not { Count: > 0 } || package.ResultNodeId is null)
             {
                 _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no executable nodes; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
                 return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package." }, cancellationToken);
             }
 
-            // Sections are package data: the result node's collection is the one
-            // section source (package-format-v5.md).
-            var collection = WorkflowPackageSections.ResolveCollection(package);
-            var items = collection.Items
-                .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
-                .ToList();
+            // v5: the result node's collection is the one section source. v6: Items
+            // carries the deliverable's BLOCKS (the result aggregator's expansion)
+            // and Collections carries one item set per fanned collection
+            // (package-format-v6-design.md §§ 4–5).
+            IReadOnlyList<IReadOnlyDictionary<string, string>> items;
+            IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? collectionSets = null;
+
+            if (package.Manifest.SpecVersion == 6)
+            {
+                items = WorkflowPackageSections.ResolveBlocks(package)
+                    .Select(block => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["id"] = block.Id,
+                        ["name"] = block.Name
+                    })
+                    .ToList();
+
+                collectionSets = package.Nodes
+                    .Where(node => node.ForEach != null)
+                    .Select(node => node.ForEach![WorkflowNodeBindingSources.DataPrefix.Length..])
+                    .Distinct(StringComparer.Ordinal)
+                    .ToDictionary(
+                        collectionId => collectionId,
+                        collectionId => (IReadOnlyList<IReadOnlyDictionary<string, string>>)(package.Data?.Collections.GetValueOrDefault(collectionId)
+                                ?? throw new InvalidOperationException($"Package {package.Ref} has no data collection '{collectionId}'."))
+                            .Items
+                            .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
+                            .ToList(),
+                        StringComparer.Ordinal);
+            }
+            else
+            {
+                var collection = WorkflowPackageSections.ResolveCollection(package);
+                items = collection.Items
+                    .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
+                    .ToList();
+            }
+
             var dataScalars = package.Data?.Scalars;
 
             var resolvedPackageRef = package.Ref;
@@ -261,7 +284,8 @@ public sealed class ConsultGenerationJobs
                     package.ResultNodeId,
                     items,
                     dataScalars,
-                    CatalogRef: _catalog.ResolvedRef),
+                    CatalogRef: _catalog.ResolvedRef,
+                    Collections: collectionSets),
                 new StartOrchestrationOptions { InstanceId = jobId },
                 cancellationToken);
 
