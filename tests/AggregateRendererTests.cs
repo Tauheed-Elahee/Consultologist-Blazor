@@ -127,6 +127,22 @@ public class AssembledDocumentEntityTests
     }
 
     [Fact]
+    public void ToResponse_TotalCount_IsTheDeliverableBlockCount_NotTheSectionDictSize()
+    {
+        var (entity, state) = CreateEntity();
+        // A v6 run adds per-item PROGRESS sections under plain item ids beside
+        // the block sections created up front — the total must stay the block
+        // count from the stored scalar.
+        state().GetOrAddSection("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
+        state().GetOrAddSection("item-1", "Block one").Status = ConsultGenerationSectionStatuses.Running;
+
+        var response = state().ToResponse();
+
+        Assert.Equal(1, response.TotalSectionCount);
+        Assert.Equal(1, response.CompletedSectionCount);
+    }
+
+    [Fact]
     public void ToResponse_CompletedV5Job_KeepsHashV1()
     {
         var (entity, state) = CreateEntity();

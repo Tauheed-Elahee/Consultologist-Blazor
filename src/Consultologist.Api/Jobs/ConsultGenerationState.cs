@@ -456,7 +456,11 @@ public sealed class ConsultGenerationJobState
             JobId,
             AppUserId,
             Status,
-            Sections.Count,
+            // The stored scalar, never Sections.Count (the phase-7 decision): v6
+            // states also hold per-item PROGRESS sections under plain item ids
+            // beside the deliverable's block sections, and counting the dict
+            // would double the total.
+            TotalSectionCount > 0 ? TotalSectionCount : Sections.Count,
             completedSections.Count,
             failedSections.Count,
             completedSections,

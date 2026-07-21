@@ -976,12 +976,21 @@
     return runEventSeen || !isAiRequestLoading ? "Completed" : "Running";
   }
 
+  // v6 block ids are composite ("resultSourceNodeId:itemId") while the live
+  // prose-step events carry the plain item id — match on the item part.
+  private static string ItemPart(string sectionId)
+  {
+    var separator = sectionId.IndexOf(':');
+    return separator < 0 ? sectionId : sectionId[(separator + 1)..];
+  }
+
   // Per-item status under one forEach node. Pair ticks come from the
   // section-prose-step events; a done node covers items whose events were
   // missed (polling fallback), and failed sections skip their remaining steps.
   private string? NodeItemStatus(WorkflowManifestReader.NodeView node, bool nodeDone, bool nodeCurrent, string sectionId)
   {
-    if (completedNodeItems.Contains($"{node.Id}:{sectionId}")
+    if (completedNodeItems.Contains($"{node.Id}:{ItemPart(sectionId)}")
+        || completedNodeItems.Contains($"{node.Id}:{sectionId}")
         || (node.IsResult && generatedSections.ContainsKey(sectionId)))
     {
       return "Completed";
