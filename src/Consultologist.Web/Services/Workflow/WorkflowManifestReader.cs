@@ -22,7 +22,8 @@ public static class WorkflowManifestReader
         string? ForEach,
         IReadOnlyList<BindingView> Bindings,
         bool IsResult,
-        bool HasOutput);
+        bool HasOutput,
+        IReadOnlyList<string>? Aggregate = null);
 
     public sealed record DataItemView(string Id, string Name, string File);
 
@@ -78,6 +79,16 @@ public static class WorkflowManifestReader
                 }
             }
 
+            List<string>? aggregate = null;
+
+            if (TryGetProperty(node, "aggregate", out var aggregateElement) && aggregateElement.ValueKind == JsonValueKind.Array)
+            {
+                aggregate = aggregateElement.EnumerateArray()
+                    .Select(entry => entry.GetString() ?? string.Empty)
+                    .Where(entry => entry.Length > 0)
+                    .ToList();
+            }
+
             var id = ReadString(node, "id") ?? string.Empty;
             nodes.Add(new NodeView(
                 id,
@@ -86,7 +97,8 @@ public static class WorkflowManifestReader
                 ReadString(node, "forEach"),
                 bindings,
                 string.Equals(id, resultNodeId, StringComparison.Ordinal),
-                TryGetProperty(node, "output", out var output) && output.ValueKind == JsonValueKind.Object));
+                TryGetProperty(node, "output", out var output) && output.ValueKind == JsonValueKind.Object,
+                aggregate));
         }
 
         return nodes;

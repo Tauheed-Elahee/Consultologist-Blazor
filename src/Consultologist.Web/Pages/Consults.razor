@@ -131,7 +131,26 @@
 
                 <div class="consult-run__grid">
                     <section class="result-panel">
-                        @if (generatedSections.Count > 0)
+                        @if (assembledDocument != null)
+                        {
+                            @* v6: the deliverable is one server-assembled document. *@
+                            <div>
+                                <div class="result-header">
+                                    <h2 class="panel-title">Consultation note</h2>
+                                    <div class="result-header__actions">
+                                        <FluentBadge Appearance="Appearance.Accent">assembled</FluentBadge>
+                                        <FluentButton Appearance="Appearance.Accent" @onclick="CopyNoteAsync">
+                                            @CopyButtonLabel
+                                        </FluentButton>
+                                    </div>
+                                </div>
+
+                                <article class="note-preview generated-note">
+                                    @((MarkupString)MarkdownPreview.Render(assembledDocument))
+                                </article>
+                            </div>
+                        }
+                        else if (generatedSections.Count > 0)
                         {
                             <div>
                                 <div class="result-header">
@@ -331,6 +350,7 @@
   private string? runTerminalStatus;
   private string? copyFeedback;
   private int copyFeedbackToken;
+  private string? assembledDocument;
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
@@ -415,6 +435,7 @@
     editingDraft = false;
     runEventSeen = false;
     runTerminalStatus = null;
+    assembledDocument = null;
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
@@ -839,6 +860,12 @@
     // on it.
     runEventSeen = true;
     generatedSections = response.GeneratedSections;
+
+    if (response.AssembledDocument != null)
+    {
+      // v6 deliverable: present on Completed payloads only, kept once seen.
+      assembledDocument = response.AssembledDocument;
+    }
     failedSectionErrors = response.FailedSections;
     totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
     completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
@@ -905,14 +932,14 @@
 
   private string CopyButtonLabel => copyFeedback ?? "Copy note";
 
-  // Copies the finished note as plain text in note order: section name on its
-  // own line, prose below, blank line between sections.
+  // Copies the finished note as plain text: the assembled document verbatim
+  // (v6), or note-ordered sections — name on its own line, prose below,
+  // blank line between (v5).
   private async Task CopyNoteAsync()
   {
-    var sections = sectionStandards
+    var text = assembledDocument ?? string.Join("\n\n", sectionStandards
       .Where(standard => generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
-      .Select(standard => $"{standard.Name}\n{generatedSections[standard.Id].Trim()}");
-    var text = string.Join("\n\n", sections);
+      .Select(standard => $"{standard.Name}\n{generatedSections[standard.Id].Trim()}"));
 
     try
     {

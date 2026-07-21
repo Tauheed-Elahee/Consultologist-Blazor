@@ -27,9 +27,29 @@
                     {
                         <span> · for each @node.ForEach item</span>
                     }
+                    @if (node.Aggregate != null)
+                    {
+                        <span> · aggregator</span>
+                    }
                 </p>
             </div>
         </div>
+        @if (node.Aggregate != null)
+        {
+            @* Deterministic aggregation: sources in declared order (v6). *@
+            <ul class="binding-list">
+                @foreach (var sourceRef in node.Aggregate)
+                {
+                    <li class="binding-row muted-text">
+                        <code>@sourceRef</code>
+                        <span aria-hidden="true">→</span>
+                        <span>collected in order</span>
+                    </li>
+                }
+            </ul>
+        }
+        else
+        {
         <ul class="binding-list">
             @foreach (var row in Rows(node))
             {
@@ -61,6 +81,7 @@
                 </li>
             }
         </ul>
+        }
         @if (Editable && node.Prompt != null)
         {
             var form = FormFor(node.Id);
