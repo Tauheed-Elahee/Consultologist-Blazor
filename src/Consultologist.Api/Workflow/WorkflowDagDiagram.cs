@@ -34,6 +34,23 @@ public static class WorkflowDagDiagram
 
         foreach (var node in nodes.Where(node => node.ForEach is null))
         {
+            if (node.Aggregate != null)
+            {
+                // Aggregators are graph-visible by construction: their own box, one
+                // labeled edge per source in declared order (v6, aggregator nodes).
+                sb.Append($"    {Sanitize(node.Id)}[\"{node.Id}<br/>{node.Label}<br/>aggregate\"]\n");
+
+                foreach (var sourceRef in node.Aggregate)
+                {
+                    var sourceId = sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                        ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
+                        : sourceRef;
+                    sb.Append($"    {Sanitize(sourceId)} -->|\"aggregate\"| {Sanitize(node.Id)}\n");
+                }
+
+                continue;
+            }
+
             var label = $"{node.Id}<br/>{node.Label}";
             if (node.Output != null)
             {

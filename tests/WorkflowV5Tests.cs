@@ -268,13 +268,13 @@ public class WorkflowV5ValidationTests
     }
 
     [Fact]
-    public void Validate_RejectsNonV5SpecVersions()
+    public void Validate_RejectsUnsupportedSpecVersions()
     {
         var manifest = V5Fixtures.Manifest() with { SpecVersion = 4 };
 
         Assert.Contains(
             V5Fixtures.Validate(manifest).Errors,
-            e => e.Contains("accepts exactly specVersion 5"));
+            e => e.Contains("accepts specVersion 5 or 6"));
     }
 
     [Theory]
