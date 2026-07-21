@@ -212,6 +212,38 @@ public class WorkflowPackagePublisherTests
     }
 
     [Fact]
+    public async Task Publish_AcceptsAnAddedSecondCollection_TheEditorShape()
+    {
+        // The "+ data folder" contract (#154): a fork adds one data-map entry,
+        // a freshly composed index.json, and the first item's file — inert
+        // (no node reads it) but valid, on v5 as well as v6.
+        var (publisher, writer, _) = CreatePublisher();
+        var manifest = V5Fixtures.Manifest();
+        manifest = manifest with
+        {
+            Data = new Dictionary<string, string>(manifest.Data!) { ["guidelines"] = "data/guidelines/" }
+        };
+        var files = V5Fixtures.Files(manifest);
+        files["data/guidelines/index.json"] = """
+            {
+              "fields": ["id", "name", "content"],
+              "items": [
+                { "id": "neutropenic-fever", "name": "Neutropenic Fever", "file": "neutropenic-fever.md" }
+              ]
+            }
+            """;
+        files["data/guidelines/neutropenic-fever.md"] = "Assess for neutropenic fever risk.";
+
+        var result = await publisher.PublishAsync(OwnerId, Request(manifest: manifest, files: files), CancellationToken.None);
+
+        Assert.True(result.Succeeded, string.Join(" | ", result.Errors));
+        Assert.Equal("data/guidelines/", writer.ReadManifest(AccountName, "v2026.07.1").Data!["guidelines"]);
+        Assert.Equal(
+            files["data/guidelines/neutropenic-fever.md"],
+            writer.Blobs[$"{AccountName}/v2026.07.1/data/guidelines/neutropenic-fever.md"]);
+    }
+
+    [Fact]
     public async Task Publish_SecondVersion_IncrementsFromLatest()
     {
         var (publisher, writer, _) = CreatePublisher();
