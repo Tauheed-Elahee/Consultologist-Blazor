@@ -38,7 +38,8 @@ public sealed record WorkflowNodeSpec(
     string? Prompt = null,
     Dictionary<string, WorkflowBindingValue>? Bindings = null,
     WorkflowNodeOutputSpec? Output = null,
-    string? ForEach = null);
+    string? ForEach = null,
+    List<string>? Aggregate = null);
 
 public sealed record WorkflowNodeOutputSpec(
     string Schema,

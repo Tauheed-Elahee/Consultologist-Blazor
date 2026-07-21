@@ -62,7 +62,8 @@ public sealed record ConsultNodeDescriptor(
     string? OutputContract = null,
     string? FailIfEmpty = null,
     string? ForEach = null,
-    string? ConceptSource = null);
+    string? ConceptSource = null,
+    IReadOnlyList<string>? Aggregate = null);
 
 public sealed record ConsultNodeBindingDescriptor(string From, string? As = null);
 

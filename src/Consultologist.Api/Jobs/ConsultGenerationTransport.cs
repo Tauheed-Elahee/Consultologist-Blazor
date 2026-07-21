@@ -188,6 +188,15 @@ public sealed class ConsultGenerationJobs
                 return await CreateJsonResponseAsync(req, HttpStatusCode.ServiceUnavailable, new { error = "Workflow package registry is unavailable." }, cancellationToken);
             }
 
+            if (package.Manifest.SpecVersion == 6)
+            {
+                // The format layer accepts and validates v6 (publish, view, diagram);
+                // execution lands with the engine update. No window where a pinned v6
+                // package fails strangely mid-run.
+                _logger.LogWarning("Workflow package {Package} is specVersion 6; execution is not yet enabled.", package.Ref);
+                return await CreateJsonResponseAsync(req, HttpStatusCode.UnprocessableEntity, new { error = $"Workflow package {package.Ref} is specVersion 6; v6 execution arrives with the engine update. Pin a specVersion 5 package meanwhile." }, cancellationToken);
+            }
+
             if (package.Nodes is not { Count: > 0 } || package.ResultNodeId is null)
             {
                 _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no executable nodes; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
@@ -646,7 +655,8 @@ public sealed class ConsultGenerationJobs
                         $"Node '{node.Id}' declares schema '{node.Output.Schema}' with no resolved output contract."),
             FailIfEmpty: node.Output?.FailIfEmpty,
             ForEach: node.ForEach,
-            ConceptSource: WorkflowNodeDefaults.WellKnownConceptSources.GetValueOrDefault(node.Id, node.Id));
+            ConceptSource: WorkflowNodeDefaults.WellKnownConceptSources.GetValueOrDefault(node.Id, node.Id),
+            Aggregate: node.Aggregate);
     }
 
     private static string BuildStatusUrl(HttpRequestData req, string jobId)
