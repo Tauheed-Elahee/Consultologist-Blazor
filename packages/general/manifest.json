@@ -1,7 +1,7 @@
 {
 	"name": "general",
-	"version": "v2026.07.6",
-	"specVersion": 5,
+	"version": "v2026.07.7",
+	"specVersion": 6,
 	"derivedFrom": null,
 	"templating": { "engine": "scriban", "engineVersion": "7.2.5" },
 	"preludes": {
@@ -30,7 +30,7 @@
 		{ "id": "section-instructions", "file": "prompts/section-instructions.md",
 		  "variables": ["patient_section_draft", "section_name", "section_standard"] }
 	],
-	"result": "node:section-instructions",
+	"result": "node:assemble-note",
 	"nodes": [
 		{ "id": "extract-patient-concepts",
 		  "label": "Extracting clinical concepts",
@@ -80,6 +80,10 @@
 		  "prompt": "section-instructions",
 		  "bindings": { "patient_section_draft": "node:patient-section-draft",
 		                "section_name": "item:name",
-		                "section_standard": "item:content" } }
+		                "section_standard": "item:content" } },
+
+		{ "id": "assemble-note",
+		  "label": "Assembling note",
+		  "aggregate": ["node:section-instructions"] }
 	]
 }

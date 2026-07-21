@@ -1,9 +1,11 @@
-# specVersion 6 Design: Multi-Collection Fan, Aggregator Nodes, One Assembled Document (Not Implemented)
+# specVersion 6 Design: Multi-Collection Fan, Aggregator Nodes, One Assembled Document
 
 Recorded 2026-07-20 at the opening of Milestone 9 (#152; design issue #153,
-implementation #116). Status: **design settled, not implemented**. Working
-alias during Milestone 9 planning was "5.1"; the manifest field is an
-integer, so the step ships as `specVersion: 6`.
+implementation #116). Status: **implemented 2026-07-21** (#116: format layer
+PR #161, engine PR #162, delivery PR 3; normative spec:
+[package-format-v6.md](package-format-v6.md)). Working alias during
+Milestone 9 planning was "5.1"; the manifest field is an integer, so the
+step ships as `specVersion: 6`.
 
 v6 is three moves designed together:
 

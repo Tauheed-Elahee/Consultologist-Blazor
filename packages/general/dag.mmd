@@ -12,6 +12,8 @@ flowchart TD
     identify_problem -->|"problem_concepts"| create_patient_trajectory
     extract_patient_concepts -->|"patient_concepts"| create_patient_trajectory
     create_typical_trajectory -->|"typical_trajectory_concepts"| create_patient_trajectory
+    assemble_note["assemble-note<br/>Assembling note<br/>aggregate"]
+    section_instructions -->|"aggregate"| assemble_note
 
     data_standards -->|"forEach"| foreach_data_standards
     subgraph foreach_data_standards["per data:standards item"]

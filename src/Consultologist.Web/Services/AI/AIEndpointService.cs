@@ -304,7 +304,10 @@ public record ConsultGenerationJobResponse(
     string? WorkflowOutputHash = null,
     int? WorkflowOutputHashVersion = null,
     IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
-    IReadOnlyDictionary<string, ConsultGenerationNodeStatus>? NodeOutputs = null);
+    IReadOnlyDictionary<string, ConsultGenerationNodeStatus>? NodeOutputs = null,
+    // v6: the result aggregator's rendered output — the deliverable itself
+    // (Completed jobs only; workflowOutputHash v2 is its digest).
+    string? AssembledDocument = null);
 
 /// <summary>
 /// One node of the job's workflow DAG (v5: one kind, ForEach as multiplicity).
