@@ -453,8 +453,38 @@ header.header.app-header {
 }
 
 .markdown-preview p,
-.markdown-preview ul {
+.markdown-preview ul,
+.markdown-preview ol {
 	margin: 0 0 0.75rem;
+}
+
+/* Heading levels the full renderer can emit (the old lightweight preview
+   only ever produced h4). */
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4 {
+	margin: 1rem 0 0.4rem;
+	color: var(--consultologist-text);
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.markdown-preview h1 {
+	font-size: 1.1rem;
+}
+
+.markdown-preview h2 {
+	font-size: 1rem;
+}
+
+.markdown-preview h3,
+.markdown-preview h4 {
+	font-size: 0.92rem;
+}
+
+.markdown-preview > :first-child {
+	margin-top: 0;
 }
 
 .markdown-preview > :last-child {
@@ -489,6 +519,46 @@ header.header.app-header {
 	margin: 0;
 	white-space: pre-wrap;
 	overflow-wrap: break-word;
+}
+
+/* The v6 assembled document: rendered markdown (h2 block headings), styled to
+   match the v5 per-section view's typography. Block flow with margins instead
+   of the flex gap so a heading sits tight above its first paragraph. */
+.generated-note--assembled {
+	display: block;
+}
+
+.generated-note--assembled h2 {
+	margin: 1.25rem 0 0.45rem;
+	color: var(--consultologist-text);
+	font-size: 1rem;
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.generated-note--assembled h3,
+.generated-note--assembled h4 {
+	margin: 1rem 0 0.35rem;
+	color: var(--consultologist-text);
+	font-size: 0.92rem;
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.generated-note--assembled h2:first-child,
+.generated-note--assembled h3:first-child {
+	margin-top: 0;
+}
+
+.generated-note--assembled p,
+.generated-note--assembled ul,
+.generated-note--assembled ol {
+	margin: 0 0 0.75rem;
+	overflow-wrap: break-word;
+}
+
+.generated-note--assembled > :last-child {
+	margin-bottom: 0;
 }
 
 .app-footer a {
