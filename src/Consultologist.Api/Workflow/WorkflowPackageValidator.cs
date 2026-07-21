@@ -7,10 +7,12 @@ using Scriban.Runtime;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Validates a specVersion-5 package per docs/customizable-workflow/
-/// package-format-v5.md. Used at load time by the store (the engine's enforcement
-/// point) and by tests; the same checks apply at publish time. Pre-v5 formats were
-/// retired by the v5-only rebase — the engine accepts exactly specVersion 5.
+/// Validates specVersion-5 and -6 packages: a manifest declares the rule set it
+/// was validated under (package-format-v5.md frozen; package-format-v6-design.md
+/// for the v6 closures — multi-collection, aggregator nodes, reachability). Used
+/// at load time by the store (the engine's enforcement point) and by tests; the
+/// same checks apply at publish time. Pre-v5 formats were retired by the v5-only
+/// rebase.
 /// </summary>
 public static class WorkflowPackageValidator
 {
@@ -83,14 +85,14 @@ public static class WorkflowPackageValidator
             }
         }
 
-        if (manifest.SpecVersion != 5)
+        if (manifest.SpecVersion is not (5 or 6))
         {
-            errors.Add($"specVersion {manifest.SpecVersion} is not supported: this engine accepts exactly specVersion 5 (pre-v5 packages are archived; see registry-operations.md).");
+            errors.Add($"specVersion {manifest.SpecVersion} is not supported: this engine accepts specVersion 5 or 6 (pre-v5 packages are archived; see registry-operations.md).");
         }
         else
         {
             ValidateDerivedFrom(manifest, errors);
-            ValidateV5Nodes(manifest, files, catalogSchemas, errors);
+            ValidateNodes(manifest, files, catalogSchemas, errors);
         }
 
         return new ValidationResult(errors, warnings);
@@ -118,23 +120,25 @@ public static class WorkflowPackageValidator
     }
 
     /// <summary>
-    /// The specVersion-5 node rules: one kind, forEach multiplicity, the relational
-    /// edge semantics (item-aligned / broadcast allowed; aggregate and
-    /// cross-collection closed), collection-declared item fields, and the result
-    /// contract. See docs/customizable-workflow/package-format-v5.md.
+    /// The node rules, selected by declared specVersion. v5: one kind, forEach
+    /// multiplicity, item-aligned/broadcast edges only, one shared collection,
+    /// result on a forEach node (package-format-v5.md, frozen). v6 additionally:
+    /// multiple collections, aggregator nodes (the only aggregation), result on
+    /// an aggregator, and reachability (package-format-v6-design.md § 7).
     /// </summary>
-    private static void ValidateV5Nodes(
+    private static void ValidateNodes(
         WorkflowPackageManifest manifest,
         IReadOnlyDictionary<string, string> files,
         IReadOnlyDictionary<string, string> catalogSchemas,
         List<string> errors)
     {
+        var v6 = manifest.SpecVersion == 6;
         var data = WorkflowDataResolver.Resolve(manifest, files, errors);
         var nodes = manifest.Nodes ?? new List<WorkflowNodeSpec>();
 
         if (nodes.Count == 0)
         {
-            errors.Add("nodes is required and must not be empty in specVersion 5.");
+            errors.Add($"nodes is required and must not be empty in specVersion {manifest.SpecVersion}.");
             return;
         }
 
@@ -197,10 +201,14 @@ public static class WorkflowPackageValidator
                         return;
                     }
 
-                    // The edge-semantics table: aggregate and cross-collection closed.
+                    // The edge-semantics table: cross-collection closed everywhere;
+                    // aggregation closed in v5 and explicit-only (aggregator nodes,
+                    // never bindings) in v6.
                     if (targetNode.ForEach != null && node.ForEach is null)
                     {
-                        errors.Add($"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}', whose aggregate output is not bindable in specVersion 5.0.");
+                        errors.Add(v6
+                            ? $"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}': aggregation is explicit in specVersion 6 — collect it through an aggregator node."
+                            : $"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}', whose aggregate output is not bindable in specVersion 5.0.");
                         return;
                     }
 
@@ -234,11 +242,60 @@ public static class WorkflowPackageValidator
             }
         }
 
+        void CheckAggregator(WorkflowNodeSpec node)
+        {
+            // Aggregators are deterministic: the property is the behavior, and the
+            // prompt-family fields must be absent (package-format-v6-design.md § 2).
+            if (node.Prompt != null || node.Bindings is { Count: > 0 } || node.Output != null || node.ForEach != null)
+            {
+                errors.Add($"Aggregator node '{node.Id}' must declare only aggregate (no prompt, bindings, output, or forEach).");
+            }
+
+            if (node.Aggregate!.Count == 0)
+            {
+                errors.Add($"Aggregator node '{node.Id}' declares an empty aggregate list.");
+                return;
+            }
+
+            foreach (var sourceRef in node.Aggregate)
+            {
+                if (!sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                    || sourceRef.Length == WorkflowNodeBindingSources.NodePrefix.Length)
+                {
+                    errors.Add($"Aggregator node '{node.Id}' source '{sourceRef}' must be 'node:<id>'.");
+                    continue;
+                }
+
+                var sourceId = sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..];
+
+                if (!nodesById.ContainsKey(sourceId))
+                {
+                    errors.Add($"Aggregator node '{node.Id}' references unknown node '{sourceId}'.");
+                    continue;
+                }
+
+                edges.TryAdd(node.Id, new HashSet<string>(StringComparer.Ordinal));
+                edges[node.Id].Add(sourceId);
+            }
+        }
+
         foreach (var node in nodes)
         {
             if (string.IsNullOrWhiteSpace(node.Label))
             {
                 errors.Add($"Node '{node.Id}' has no label.");
+            }
+
+            if (node.Aggregate != null)
+            {
+                if (!v6)
+                {
+                    errors.Add($"Node '{node.Id}' declares aggregate, which requires specVersion 6.");
+                    continue;
+                }
+
+                CheckAggregator(node);
+                continue;
             }
 
             if (node.ForEach != null && !TryResolveForEachCollection(node, data, out var forEachError, out _))
@@ -290,21 +347,94 @@ public static class WorkflowPackageValidator
             errors.Add($"Prompt '{overused}' is referenced by more than one node.");
         }
 
-        // v5.0 closure: the engine fans one item set per job, so every forEach node
-        // shares one collection (disconnected parallel chains would have no consumer
-        // anyway). Relaxable alongside the cross-collection edge closure.
-        var forEachCollections = nodes
-            .Where(node => node.ForEach != null)
-            .Select(node => node.ForEach!)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        if (forEachCollections.Count > 1)
+        if (!v6)
         {
-            errors.Add($"All forEach nodes must share one collection in specVersion 5.0 (found {string.Join(", ", forEachCollections.Select(c => $"'{c}'"))}).");
+            // v5.0 closure: the engine fans one item set per job, so every forEach
+            // node shares one collection (disconnected parallel chains would have no
+            // consumer anyway). Relaxed in v6, where aggregator nodes are the
+            // consumer and reachability replaces this rule.
+            var forEachCollections = nodes
+                .Where(node => node.ForEach != null)
+                .Select(node => node.ForEach!)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (forEachCollections.Count > 1)
+            {
+                errors.Add($"All forEach nodes must share one collection in specVersion 5.0 (found {string.Join(", ", forEachCollections.Select(c => $"'{c}'"))}).");
+            }
         }
 
-        ValidateResult(manifest, nodesById, errors);
+        ValidateResult(manifest, nodesById, v6, errors);
+
+        if (v6)
+        {
+            ValidateReachability(manifest, nodes, nodesById, edges, errors);
+        }
+
         ValidateAcyclic(nodes, edges, errors);
+    }
+
+    /// <summary>
+    /// The v6 reachability closure: every node must transitively feed the result
+    /// through binding or aggregate edges — the orphan-prompt philosophy applied
+    /// to execution (package-format-v6-design.md § 7). The result aggregator must
+    /// also transitively include at least one forEach source: a package with no
+    /// fan has no consult.
+    /// </summary>
+    private static void ValidateReachability(
+        WorkflowPackageManifest manifest,
+        IReadOnlyList<WorkflowNodeSpec> nodes,
+        IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
+        IReadOnlyDictionary<string, HashSet<string>> edges,
+        List<string> errors)
+    {
+        if (manifest.Result is null
+            || !manifest.Result.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+        {
+            return; // The result's own errors are already reported.
+        }
+
+        var resultNodeId = manifest.Result[WorkflowNodeBindingSources.NodePrefix.Length..];
+
+        if (!nodesById.ContainsKey(resultNodeId))
+        {
+            return;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { resultNodeId };
+        var frontier = new Queue<string>();
+        frontier.Enqueue(resultNodeId);
+
+        while (frontier.Count > 0)
+        {
+            var current = frontier.Dequeue();
+
+            if (!edges.TryGetValue(current, out var dependencies))
+            {
+                continue;
+            }
+
+            foreach (var dependency in dependencies)
+            {
+                if (reachable.Add(dependency))
+                {
+                    frontier.Enqueue(dependency);
+                }
+            }
+        }
+
+        foreach (var node in nodes)
+        {
+            if (!reachable.Contains(node.Id))
+            {
+                errors.Add($"Node '{node.Id}' does not feed the result: every node must transitively reach '{resultNodeId}' in specVersion 6.");
+            }
+        }
+
+        if (!reachable.Any(id => nodesById.TryGetValue(id, out var reached) && reached.ForEach != null))
+        {
+            errors.Add("The result must transitively include at least one forEach source in specVersion 6.");
+        }
     }
 
     private static bool TryResolveForEachCollection(
@@ -338,11 +468,12 @@ public static class WorkflowPackageValidator
     private static void ValidateResult(
         WorkflowPackageManifest manifest,
         IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
+        bool v6,
         List<string> errors)
     {
         if (manifest.Result is null)
         {
-            errors.Add("result is required in specVersion 5.");
+            errors.Add($"result is required in specVersion {manifest.SpecVersion}.");
             return;
         }
 
@@ -361,7 +492,16 @@ public static class WorkflowPackageValidator
             return;
         }
 
-        if (resultNode.ForEach is null)
+        if (v6)
+        {
+            // The deliverable is the assembled document: v6 results always name an
+            // aggregator (package-format-v6-design.md § 4).
+            if (resultNode.Aggregate is null)
+            {
+                errors.Add($"result must reference an aggregator node in specVersion 6 ('{resultNodeId}' is not one).");
+            }
+        }
+        else if (resultNode.ForEach is null)
         {
             errors.Add($"result must reference a forEach node ('{resultNodeId}' runs once).");
         }
