@@ -185,9 +185,18 @@
                     <button type="button"
                             class="editor-nav__item @(selectedKey == GraphKey ? "editor-nav__item--selected" : "")"
                             @onclick="() => Select(GraphKey)">
-                        <span class="editor-nav__dot">@(bindingEdits.Count > 0 ? "●" : "")</span>
+                        <span class="editor-nav__dot">@(bindingEdits.Count > 0 || nodeEdits.Count > 0 ? "●" : "")</span>
                         <span>Graph</span>
                     </button>
+                    @foreach (var navNode in EffectiveNodes)
+                    {
+                        <button type="button"
+                                class="editor-nav__item editor-nav__item--nested @(selectedKey == NodeKeyFor(navNode.Id) ? "editor-nav__item--selected" : "")"
+                                @onclick="() => Select(NodeKeyFor(navNode.Id))">
+                            <span class="editor-nav__dot">@(NodeHasPending(navNode) ? "●" : "")</span>
+                            <span>@navNode.Label</span>
+                        </button>
+                    }
                 </nav>
 
                 <section class="content-card editor-pane">
@@ -303,13 +312,38 @@
                         }
                         <WorkflowDagView Diagram="@diagramText" />
                         <h2 class="panel-title">Node details</h2>
-                        <WorkflowNodeSummary Nodes="@nodes"
+                        <WorkflowNodeSummary Nodes="@EffectiveNodes"
                                              Editable="true"
                                              Scalars="@scalars"
+                                             Collections="@CollectionIds"
+                                             ContractOptions="@ContractOptions"
+                                             NodeModified="@(id => nodeEdits.ContainsKey(id))"
                                              RowsFor="@RowsFor"
                                              ValidateVariableName="@ValidateVariableNameForNode"
                                              OnBindingChanged="OnBindingChangedAsync"
-                                             OnVariableAdded="OnVariableAddedAsync" />
+                                             OnVariableAdded="OnVariableAddedAsync"
+                                             OnNodeChanged="OnNodeChangedAsync" />
+                    }
+                    else if (SelectedNode() is { } selectedNode)
+                    {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">@selectedNode.Label</h3>
+                                <p class="muted-text">One workflow node — the same card as the Graph pane's Node details.</p>
+                            </div>
+                        </div>
+                        <WorkflowNodeSummary Nodes="@EffectiveNodes"
+                                             Only="@selectedNode.Id"
+                                             Editable="true"
+                                             Scalars="@scalars"
+                                             Collections="@CollectionIds"
+                                             ContractOptions="@ContractOptions"
+                                             NodeModified="@(id => nodeEdits.ContainsKey(id))"
+                                             RowsFor="@RowsFor"
+                                             ValidateVariableName="@ValidateVariableNameForNode"
+                                             OnBindingChanged="OnBindingChangedAsync"
+                                             OnVariableAdded="OnVariableAddedAsync"
+                                             OnNodeChanged="OnNodeChangedAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
                     {
@@ -429,6 +463,7 @@
     private const string GraphKey = "graph";
     private const string NewKeyPrefix = "new:";
     private const string AddCollectionKey = "add-collection";
+    private const string NodeKeyPrefix = "node:";
 
     // Membership changes (#115): pending until publish, mirrored to the draft.
     private sealed class AddedItem
@@ -463,7 +498,7 @@
         new("^[a-z0-9][a-z0-9-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + removedFiles.Count
-        + bindingEdits.Count + VariableAddCount + VariableRemovalCount;
+        + bindingEdits.Count + nodeEdits.Count + VariableAddCount + VariableRemovalCount;
 
     private string PendingSummary()
     {
@@ -478,6 +513,7 @@
         if (addedItems.Count > 0) parts.Add($"+{addedItems.Count}");
         if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
         if (bindingEdits.Count > 0) parts.Add($"{bindingEdits.Count} rebound");
+        if (nodeEdits.Count > 0) parts.Add($"{nodeEdits.Count} node{(nodeEdits.Count == 1 ? "" : "s")}");
         if (VariableAddCount > 0) parts.Add($"+{VariableAddCount} var");
         if (VariableRemovalCount > 0) parts.Add($"−{VariableRemovalCount} var");
         return $" ({string.Join(" · ", parts)})";
@@ -636,6 +672,70 @@
     // the loaded manifest's value removes itself.
     private readonly Dictionary<string, (string From, string? As)> bindingEdits = new(StringComparer.Ordinal);
     private IReadOnlyList<string> scalars = Array.Empty<string>();
+
+    // Pending node-field edits (#117), keyed by node id. Each entry is the
+    // node's complete effective tuple; one equal to the manifest removes
+    // itself, like binding rows.
+    private readonly Dictionary<string, WorkflowNodeSummary.NodeChange> nodeEdits = new(StringComparer.Ordinal);
+    private IReadOnlyList<string> schemaIds = Array.Empty<string>();
+
+    // The manifest's nodes with pending field edits applied — the single list
+    // every editing surface (Graph cards, sidebar panes, source dropdowns)
+    // reads, so a pending forEach change immediately reshapes valid sources.
+    private IReadOnlyList<WorkflowManifestReader.NodeView> EffectiveNodes =>
+        nodes.Select(n => nodeEdits.TryGetValue(n.Id, out var edit)
+            ? n with
+            {
+                Label = edit.Label,
+                ForEach = edit.ForEach,
+                OutputSchema = edit.OutputSchema,
+                FailIfEmpty = edit.FailIfEmpty,
+                HasOutput = edit.OutputSchema != null
+            }
+            : n).ToList();
+
+    private IReadOnlyList<string> CollectionIds => EffectiveCollections.Select(c => c.Id).ToList();
+
+    // Output-contract choices are the package's own schema ids — their files
+    // are present and already validated as canonical catalog matches.
+    private IReadOnlyList<string> ContractOptions => schemaIds;
+
+    private static string NodeKeyFor(string nodeId) => NodeKeyPrefix + nodeId;
+
+    private WorkflowManifestReader.NodeView? SelectedNode() =>
+        selectedKey != null && selectedKey.StartsWith(NodeKeyPrefix, StringComparison.Ordinal)
+            ? EffectiveNodes.FirstOrDefault(n => n.Id == selectedKey[NodeKeyPrefix.Length..])
+            : null;
+
+    private bool NodeHasPending(WorkflowManifestReader.NodeView node) =>
+        nodeEdits.ContainsKey(node.Id)
+        || bindingEdits.Keys.Any(key => key.StartsWith(node.Id + "\n", StringComparison.Ordinal))
+        || (node.Prompt != null && HasVariableEdits(node.Prompt));
+
+    private async Task OnNodeChangedAsync(WorkflowNodeSummary.NodeChange change)
+    {
+        var original = nodes.FirstOrDefault(n => n.Id == change.NodeId);
+
+        if (original == null)
+        {
+            return;
+        }
+
+        if (change.Label == original.Label
+            && change.ForEach == original.ForEach
+            && change.OutputSchema == original.OutputSchema
+            && change.FailIfEmpty == original.FailIfEmpty)
+        {
+            nodeEdits.Remove(change.NodeId);
+        }
+        else
+        {
+            nodeEdits[change.NodeId] = change;
+        }
+
+        publishSuccess = null;
+        await PersistDraftAsync();
+    }
 
     // Pending prompt-variable declarations and removals (#140), keyed by
     // prompt id. New variables start unbound on every using node; publish is
@@ -909,7 +1009,7 @@
     private bool diagramIncludesPending;
     private bool isDiagramRefreshing;
 
-    private bool HasManifestEdits => bindingEdits.Count > 0 || VariableAddCount > 0 || VariableRemovalCount > 0;
+    private bool HasManifestEdits => bindingEdits.Count > 0 || nodeEdits.Count > 0 || VariableAddCount > 0 || VariableRemovalCount > 0;
 
     private void Select(string key)
     {
@@ -1011,6 +1111,12 @@
                     }
                 }
             }
+        }
+
+        // Field-edited nodes (#117) keep the blue outline too.
+        foreach (var nodeId in nodeEdits.Keys.Where(id => !pendingNodes.Contains(id)))
+        {
+            pendingNodes.Add(nodeId);
         }
 
         return (changed, removed, pendingNodes);
@@ -1139,6 +1245,7 @@
         addedCollections.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
+        nodeEdits.Clear();
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -1160,11 +1267,18 @@
             nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
             collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
             scalars = WorkflowManifestReader.ReadScalars(content.Manifest);
+            schemaIds = WorkflowManifestReader.ReadSchemaIds(content.Manifest);
             await RestoreDraftAsync();
 
             // Keep the selection when it still exists in the loaded version;
             // otherwise land on the first standard.
-            if (selectedKey != GraphKey && (selectedKey == null || !content.Files.ContainsKey(selectedKey)))
+            if (selectedKey != null
+                && selectedKey.StartsWith(NodeKeyPrefix, StringComparison.Ordinal)
+                && nodes.Any(n => NodeKeyFor(n.Id) == selectedKey))
+            {
+                // A still-existing node pane survives reloads.
+            }
+            else if (selectedKey != GraphKey && (selectedKey == null || !content.Files.ContainsKey(selectedKey)))
             {
                 selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault()?.File
                     ?? prompts.FirstOrDefault()?.File
@@ -1195,6 +1309,8 @@
 
     private sealed record DraftBinding(string NodeId, string Variable, string From, string? As);
 
+    private sealed record DraftNodeEdit(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
+
     private sealed record DraftPayload(
         int Version,
         Dictionary<string, string>? Edits,
@@ -1203,7 +1319,8 @@
         List<DraftBinding>? Bindings = null,
         Dictionary<string, List<string>>? VariableAdds = null,
         Dictionary<string, List<string>>? VariableRemovals = null,
-        List<string>? AddedCollections = null);
+        List<string>? AddedCollections = null,
+        List<DraftNodeEdit>? NodeEdits = null);
 
     private async Task RestoreDraftAsync()
     {
@@ -1221,6 +1338,7 @@
         Dictionary<string, List<string>>? draftVariableAdds = null;
         Dictionary<string, List<string>>? draftVariableRemovals = null;
         List<string>? draftAddedCollections = null;
+        List<DraftNodeEdit>? draftNodeEdits = null;
 
         try
         {
@@ -1235,6 +1353,7 @@
                 draftVariableAdds = payload?.VariableAdds;
                 draftVariableRemovals = payload?.VariableRemovals;
                 draftAddedCollections = payload?.AddedCollections;
+                draftNodeEdits = payload?.NodeEdits;
             }
             else
             {
@@ -1323,6 +1442,26 @@
             }
         }
 
+        // Node-field edits: kept only when the node still exists and the
+        // tuple still differs from the loaded version.
+        foreach (var draftNodeEdit in draftNodeEdits ?? new List<DraftNodeEdit>())
+        {
+            var original = nodes.FirstOrDefault(n => n.Id == draftNodeEdit.NodeId);
+
+            if (original == null
+                || string.IsNullOrWhiteSpace(draftNodeEdit.Label)
+                || (draftNodeEdit.Label == original.Label
+                    && draftNodeEdit.ForEach == original.ForEach
+                    && draftNodeEdit.OutputSchema == original.OutputSchema
+                    && draftNodeEdit.FailIfEmpty == original.FailIfEmpty))
+            {
+                continue;
+            }
+
+            nodeEdits[draftNodeEdit.NodeId] = new WorkflowNodeSummary.NodeChange(
+                draftNodeEdit.NodeId, draftNodeEdit.Label, draftNodeEdit.ForEach, draftNodeEdit.OutputSchema, draftNodeEdit.FailIfEmpty);
+        }
+
         foreach (var draftBinding in bindings ?? new List<DraftBinding>())
         {
             // Keep rebinds whose node/variable still exists and still differs —
@@ -1352,7 +1491,7 @@
         }
 
         var payload = new DraftPayload(
-            5,
+            6,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -1363,7 +1502,8 @@
             }).ToList(),
             variableAdds.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
             variableRemovals.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
-            addedCollections.ToList());
+            addedCollections.ToList(),
+            nodeEdits.Values.Select(edit => new DraftNodeEdit(edit.NodeId, edit.Label, edit.ForEach, edit.OutputSchema, edit.FailIfEmpty)).ToList());
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
@@ -1532,6 +1672,7 @@
         addedCollections.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
+        nodeEdits.Clear();
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -1553,7 +1694,8 @@
     // (variable names) are never re-cased by the serializer.
     private JsonElement ComposeManifest()
     {
-        if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0 && addedCollections.Count == 0)
+        if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0
+            && addedCollections.Count == 0 && nodeEdits.Count == 0)
         {
             return content!.Manifest;
         }
@@ -1610,14 +1752,55 @@
             return JsonSerializer.SerializeToElement(root);
         }
 
-        System.Text.Json.Nodes.JsonObject? BindingsFor(string nodeId) =>
+        System.Text.Json.Nodes.JsonObject? NodeFor(string nodeId) =>
             nodesArray
                 .OfType<System.Text.Json.Nodes.JsonObject>()
-                .FirstOrDefault(n => (n["id"] ?? n["Id"])?.GetValue<string>() == nodeId)
-                is { } nodeObject
+                .FirstOrDefault(n => (n["id"] ?? n["Id"])?.GetValue<string>() == nodeId);
+
+        System.Text.Json.Nodes.JsonObject? BindingsFor(string nodeId) =>
+            NodeFor(nodeId) is { } nodeObject
                 && (nodeObject["bindings"] ?? nodeObject["Bindings"]) is System.Text.Json.Nodes.JsonObject bindingsObject
                     ? bindingsObject
                     : null;
+
+        // Node-field edits (#117): label always written; forEach and output
+        // written or removed to match the effective tuple.
+        foreach (var pair in nodeEdits)
+        {
+            if (NodeFor(pair.Key) is not { } nodeObject)
+            {
+                continue;
+            }
+
+            nodeObject[nodeObject.ContainsKey("Label") ? "Label" : "label"] = pair.Value.Label;
+
+            if (pair.Value.ForEach is null)
+            {
+                nodeObject.Remove("forEach");
+                nodeObject.Remove("ForEach");
+            }
+            else
+            {
+                nodeObject[nodeObject.ContainsKey("ForEach") ? "ForEach" : "forEach"] = pair.Value.ForEach;
+            }
+
+            if (pair.Value.OutputSchema is null)
+            {
+                nodeObject.Remove("output");
+                nodeObject.Remove("Output");
+            }
+            else
+            {
+                var outputObject = new System.Text.Json.Nodes.JsonObject { ["schema"] = pair.Value.OutputSchema };
+
+                if (!string.IsNullOrWhiteSpace(pair.Value.FailIfEmpty))
+                {
+                    outputObject["failIfEmpty"] = pair.Value.FailIfEmpty;
+                }
+
+                nodeObject[nodeObject.ContainsKey("Output") ? "Output" : "output"] = outputObject;
+            }
+        }
 
         // Rebinds and added-variable bindings (the indexer adds missing keys).
         foreach (var pair in bindingEdits)
