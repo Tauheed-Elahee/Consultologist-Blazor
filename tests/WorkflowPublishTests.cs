@@ -212,6 +212,30 @@ public class WorkflowPackagePublisherTests
     }
 
     [Fact]
+    public async Task Publish_AcceptsEditedNodeFields_TheEditorShape()
+    {
+        // Node editing (#117): a relabeled node and a node whose output
+        // contract was dropped (its binding uses no concept renderer, so
+        // nothing else must change) publish and round-trip.
+        var (publisher, writer, _) = CreatePublisher();
+        var manifest = V5Fixtures.Manifest();
+        var nodes = manifest.Nodes!.Select(node => node.Id switch
+        {
+            "extract-patient-concepts" => node with { Label = "Reading the draft" },
+            "create-typical-trajectory" => node with { Output = null },
+            _ => node
+        }).ToList();
+        manifest = manifest with { Nodes = nodes };
+
+        var result = await publisher.PublishAsync(OwnerId, Request(manifest: manifest, files: V5Fixtures.Files(manifest)), CancellationToken.None);
+
+        Assert.True(result.Succeeded, string.Join(" | ", result.Errors));
+        var stored = writer.ReadManifest(AccountName, "v2026.07.1");
+        Assert.Equal("Reading the draft", stored.Nodes!.Single(n => n.Id == "extract-patient-concepts").Label);
+        Assert.Null(stored.Nodes!.Single(n => n.Id == "create-typical-trajectory").Output);
+    }
+
+    [Fact]
     public async Task Publish_AcceptsAnAddedSecondCollection_TheEditorShape()
     {
         // The "+ data folder" contract (#154): a fork adds one data-map entry,
