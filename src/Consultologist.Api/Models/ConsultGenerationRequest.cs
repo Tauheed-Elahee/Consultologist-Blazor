@@ -41,7 +41,10 @@ public record ConsultGenerationJobResponse(
     int? EffectiveInputHashVersion = null,
     string? CatalogRef = null,
     string? WorkflowOutputHash = null,
-    int? WorkflowOutputHashVersion = null);
+    int? WorkflowOutputHashVersion = null,
+    // v6: the result aggregator's rendered output — the deliverable itself
+    // (Completed jobs only; hash version 2 covers exactly these bytes).
+    string? AssembledDocument = null);
 
 /// <summary>
 /// The identity and display label of one per-section prose step, snapshotted from the
