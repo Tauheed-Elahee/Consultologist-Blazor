@@ -34,6 +34,35 @@
 	font-size: 0.7rem;
 }
 
+.node-fields {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 1rem;
+	padding: 0.35rem 0 0.15rem;
+	border-bottom: 1px solid var(--consultologist-border);
+}
+
+.node-field {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 0.8rem;
+	color: var(--consultologist-text-muted);
+}
+
+.node-field--wide {
+	flex: 1 1 100%;
+}
+
+.node-field--wide .node-field__input {
+	flex: 1;
+}
+
+.node-field__input {
+	font-family: inherit;
+}
+
 .binding-row__hint {
 	font-size: 0.75rem;
 }
