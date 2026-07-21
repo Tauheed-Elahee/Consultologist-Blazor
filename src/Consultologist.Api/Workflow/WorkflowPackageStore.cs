@@ -15,7 +15,9 @@ public interface IWorkflowPackageStore
 public sealed class WorkflowPackageStore : IWorkflowPackageStore
 {
     private const string ContainerName = WorkflowPackageBlobContainerFactory.ContainerName;
-    public const int SupportedSpecVersion = 5;
+
+    /// <summary>A manifest declares the rule set it was validated under (package-format-v6-design.md § 9).</summary>
+    public static readonly IReadOnlyList<int> SupportedSpecVersions = new[] { 5, 6 };
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -58,12 +60,12 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(manifestJson, JsonOptions)
             ?? throw new InvalidOperationException($"Workflow package manifest for {cacheKey} is empty or malformed.");
 
-        // v5-only engine: pre-v5 registry versions remain archived artifacts but are
-        // not executable (the v5-only rebase; see registry-operations.md).
-        if (manifest.SpecVersion != SupportedSpecVersion)
+        // Pre-v5 registry versions remain archived artifacts but are not executable
+        // (the v5-only rebase; see registry-operations.md).
+        if (!SupportedSpecVersions.Contains(manifest.SpecVersion))
         {
             throw new InvalidOperationException(
-                $"Workflow package {cacheKey} is specVersion {manifest.SpecVersion}; this engine accepts exactly specVersion {SupportedSpecVersion}. Pre-v5 packages are archived and not executable.");
+                $"Workflow package {cacheKey} is specVersion {manifest.SpecVersion}; this engine accepts specVersion {string.Join(" or ", SupportedSpecVersions)}. Pre-v5 packages are archived and not executable.");
         }
 
         var loaded = await LoadPromptsAsync(packageRef.Name, version, manifest, cancellationToken);
