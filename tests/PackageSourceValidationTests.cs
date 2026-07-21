@@ -96,27 +96,33 @@ public class PackageSourceValidationTests
     }
 
     [Fact]
-    public void GeneralPackageSource_DeclaresTheCanonicalV5Pipeline()
+    public void GeneralPackageSource_DeclaresTheCanonicalV6Pipeline()
     {
         var packageDir = Path.Combine(FindRepoRoot(), "packages", "general");
         var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(
             File.ReadAllText(Path.Combine(packageDir, "manifest.json")), JsonOptions)!;
 
-        // The repo package is the package-format-v5.md normative example: the
-        // one-kind respelling of the verbatim pipeline, pinned to the canonical
-        // fixture so behavior stays byte-stable across the format cutover.
-        Assert.Equal(5, manifest.SpecVersion);
+        // The repo package is the canonical pipeline in its v6 form (#116): the
+        // v5 nodes byte-stable, plus the assemble-note result aggregator that
+        // makes the deliverable one document.
+        Assert.Equal(6, manifest.SpecVersion);
         Assert.Null(manifest.DerivedFrom);
-        Assert.Equal("node:section-instructions", manifest.Result);
+        Assert.Equal("node:assemble-note", manifest.Result);
         Assert.Equal("data/standards/", manifest.Data!["standards"]);
 
+        var aggregatorNode = manifest.Nodes!.Single(node => node.Aggregate != null);
+        Assert.Equal("assemble-note", aggregatorNode.Id);
+        Assert.Equal(new List<string> { "node:section-instructions" }, aggregatorNode.Aggregate);
+        Assert.Null(aggregatorNode.Prompt);
+
         var canonical = V5Fixtures.Manifest().Nodes!;
+        var promptNodes = manifest.Nodes!.Where(node => node.Aggregate is null).ToList();
 
         Assert.Equal(
             canonical.Select(node => (node.Id, node.Label, node.Prompt, node.ForEach)),
-            manifest.Nodes!.Select(node => (node.Id, node.Label, node.Prompt, node.ForEach)));
+            promptNodes.Select(node => (node.Id, node.Label, node.Prompt, node.ForEach)));
 
-        foreach (var (declared, expected) in manifest.Nodes!.Zip(canonical))
+        foreach (var (declared, expected) in promptNodes.Zip(canonical))
         {
             Assert.Equal(expected.Output, declared.Output);
             Assert.Equal(
