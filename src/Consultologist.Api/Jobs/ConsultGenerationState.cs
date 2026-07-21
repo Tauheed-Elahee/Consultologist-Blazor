@@ -89,6 +89,21 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
+    /// <summary>
+    /// v6: stores the result aggregator's rendered output — the assembled
+    /// document that IS the deliverable (package-format-v6-design.md § 4).
+    /// </summary>
+    public async Task CompleteDocument(string text)
+    {
+        var state = EnsureState();
+        state.SchemaVersion = 5;
+        state.AssembledDocument = text;
+        state.History.Add(new JobHistoryEvent("success", "Assembled document produced.", null, DateTimeOffset.UtcNow));
+        State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
+    }
+
     public async Task FailSection(SectionGenerationResult result)
     {
         var state = EnsureState();
@@ -259,7 +274,12 @@ public sealed record ConsultGenerationOrchestrationInput(
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
     IReadOnlyDictionary<string, string>? DataScalars = null,
     int EffectiveInputHashVersion = 2,
-    string? CatalogRef = null);
+    string? CatalogRef = null,
+    // v6 (package-format-v6-design.md): one item set per fanned collection,
+    // keyed by collection id. Non-null selects the v6 path; Items then carries
+    // the deliverable's BLOCKS (the result aggregator's expansion) for the
+    // entity's section model, while the fan reads these sets.
+    IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? Collections = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -340,6 +360,10 @@ public sealed class ConsultGenerationJobState
     public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
     public List<ConsultNodeDescriptor>? Nodes { get; set; }
     public Dictionary<string, ConsultNodeOutputState>? NodeOutputs { get; set; }
+
+    // v6: the result aggregator's rendered output — the deliverable itself
+    // (stored text, the same species as sections' GeneratedText).
+    public string? AssembledDocument { get; set; }
 
     public static ConsultGenerationJobState Create(
         string jobId,
@@ -468,12 +492,17 @@ public sealed class ConsultGenerationJobState
             CatalogRef: CatalogRef,
             // Derived, never stored: the deliverable hash of a partial job is
             // undefined, so only completed jobs carry it (provenance.md).
-            WorkflowOutputHash: Status == ConsultGenerationJobStatuses.Completed
-                ? ConsultGenerationProvenance.ComputeWorkflowOutputHash(completedSections)
-                : null,
-            WorkflowOutputHashVersion: Status == ConsultGenerationJobStatuses.Completed
-                ? ConsultGenerationProvenance.WorkflowOutputHashVersion
-                : null);
+            WorkflowOutputHash: Status != ConsultGenerationJobStatuses.Completed
+                ? null
+                : AssembledDocument != null
+                    ? ConsultGenerationProvenance.ComputeAssembledDocumentHash(AssembledDocument)
+                    : ConsultGenerationProvenance.ComputeWorkflowOutputHash(completedSections),
+            WorkflowOutputHashVersion: Status != ConsultGenerationJobStatuses.Completed
+                ? null
+                : AssembledDocument != null
+                    ? ConsultGenerationProvenance.AssembledDocumentHashVersion
+                    : ConsultGenerationProvenance.WorkflowOutputHashVersion,
+            AssembledDocument: Status == ConsultGenerationJobStatuses.Completed ? AssembledDocument : null);
     }
 }
 

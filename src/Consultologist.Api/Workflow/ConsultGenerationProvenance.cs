@@ -48,6 +48,26 @@ internal static class ConsultGenerationProvenance
     }
 
     /// <summary>
+    /// The workflow-output hash, definition version 2 (v6 jobs): SHA-256 of the
+    /// assembled document's UTF-8 bytes — the deliverable is one document, so its
+    /// digest is the whole story. Derived at response time from the stored
+    /// document (package-format-v6-design.md § 4); v1 remains the definition for
+    /// v5 jobs' per-section deliverable.
+    /// </summary>
+    public const int AssembledDocumentHashVersion = 2;
+
+    public static string ComputeAssembledDocumentHash(string assembledDocument)
+        => Sha256Hex(assembledDocument);
+
+    /// <summary>
+    /// The aggregator's input hash: canonical JSON array of the source instance
+    /// output hashes, in aggregation order — the composition is a pure function
+    /// of exactly these outputs (package-format-v6-design.md § 3).
+    /// </summary>
+    public static string ComputeAggregateInputHash(IReadOnlyList<string> sourceOutputHashes)
+        => Sha256Hex(JsonSerializer.Serialize(sourceOutputHashes, CanonicalJsonOptions));
+
+    /// <summary>
     /// Lowercase-hex SHA-256 of the UTF-8 text — the per-node provenance hash: a node's
     /// InputHash covers the exact rendered prompt the agent receives (template +
     /// prelude + variables), its OutputHash the raw assistant text, so two runs can be

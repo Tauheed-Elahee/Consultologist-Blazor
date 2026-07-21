@@ -42,10 +42,14 @@ public sealed class ConsultGenerationOrchestrator
         var resultNodeId = input.ResultNodeId
             ?? throw new InvalidOperationException("Consult generation input names no result node; the job start snapshots it from the workflow package.");
 
-        // The work items: the package data collection, snapshotted at job start.
+        // The work items: v5 jobs carry the one collection's items; v6 jobs carry
+        // per-collection sets in Collections and the deliverable's BLOCKS in Items
+        // (the result aggregator's expansion, feeding the entity's section model).
         var items = input.Items is { Count: > 0 }
             ? input.Items
             : throw new InvalidOperationException("Consult generation input carries no work items; the job start snapshots them from the workflow package.");
+        var collections = input.Collections;
+        var v6 = collections is { Count: > 0 };
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -96,14 +100,43 @@ public sealed class ConsultGenerationOrchestrator
         // results (docs/customizable-workflow/package-format-v5.md).
         var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
         var chainNodes = nodes.Where(node => node.ForEach != null).ToList();
+        var aggregators = nodes.Where(node => node.Aggregate != null).ToList();
         var outputs = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal);
         var pendingTasks = new Dictionary<Task<NodeRunResult>, (string NodeId, string? ItemId)>();
         var started = new HashSet<string>(StringComparer.Ordinal);
         var failedItems = new HashSet<string>(StringComparer.Ordinal);
+        var failedAggregators = new Dictionary<string, string>(StringComparer.Ordinal);
         var nodeLevelCompleted = new HashSet<string>(StringComparer.Ordinal);
 
-        string ItemName(string itemId) =>
-            items.First(item => item["id"] == itemId).GetValueOrDefault("name", itemId);
+        string CollectionIdOf(ConsultNodeDescriptor node) =>
+            node.ForEach!.StartsWith(WorkflowNodeBindingSources.DataPrefix, StringComparison.Ordinal)
+                ? node.ForEach[WorkflowNodeBindingSources.DataPrefix.Length..]
+                : node.ForEach;
+
+        // v6: each forEach node fans over ITS collection's items; v5 keeps the
+        // single shared set. Failed-item keys are collection-scoped in v6 (item
+        // ids are unique per collection, not globally).
+        IReadOnlyList<IReadOnlyDictionary<string, string>> FanItems(ConsultNodeDescriptor node) =>
+            v6
+                ? collections!.GetValueOrDefault(CollectionIdOf(node))
+                    ?? throw new InvalidOperationException($"Node '{node.Id}' fans collection '{CollectionIdOf(node)}', which the job snapshot does not carry.")
+                : items;
+
+        string FailedKey(ConsultNodeDescriptor node, string itemId) =>
+            v6 ? $"{CollectionIdOf(node)}:{itemId}" : itemId;
+
+        string ItemName(ConsultNodeDescriptor node, string itemId) =>
+            FanItems(node).First(item => item["id"] == itemId).GetValueOrDefault("name", itemId);
+
+        // v6 deliverable blocks: the result aggregator's direct sources.
+        var resultNode = nodesById.GetValueOrDefault(resultNodeId);
+        var resultSourceIds = v6 && resultNode?.Aggregate != null
+            ? resultNode.Aggregate
+                .Select(sourceRef => sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                    ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
+                    : sourceRef)
+                .ToList()
+            : new List<string>();
 
         void StartInstance(ConsultNodeDescriptor node, IReadOnlyDictionary<string, string>? item)
         {
@@ -129,6 +162,11 @@ public sealed class ConsultGenerationOrchestrator
         {
             foreach (var node in nodes)
             {
+                if (node.Aggregate != null)
+                {
+                    continue; // Aggregators compose inline, never as activities.
+                }
+
                 if (node.ForEach is null)
                 {
                     if (!started.Contains(node.Id)
@@ -140,11 +178,11 @@ public sealed class ConsultGenerationOrchestrator
                     continue;
                 }
 
-                foreach (var item in items)
+                foreach (var item in FanItems(node))
                 {
                     var itemId = item["id"];
 
-                    if (failedItems.Contains(itemId)
+                    if (failedItems.Contains(FailedKey(node, itemId))
                         || started.Contains(ConsultNodeScheduler.InstanceKey(node.Id, itemId)))
                     {
                         continue;
@@ -170,8 +208,8 @@ public sealed class ConsultGenerationOrchestrator
                     continue;
                 }
 
-                var allSettled = items.All(item =>
-                    failedItems.Contains(item["id"])
+                var allSettled = FanItems(node).All(item =>
+                    failedItems.Contains(FailedKey(node, item["id"]))
                     || outputs.ContainsKey(ConsultNodeScheduler.InstanceKey(node.Id, item["id"])));
 
                 if (!allSettled)
@@ -189,19 +227,156 @@ public sealed class ConsultGenerationOrchestrator
             }
         }
 
-        async Task FailItemAsync(string itemId, string error)
+        async Task FailItemAsync(ConsultNodeDescriptor node, string itemId, string error)
         {
-            failedItems.Add(itemId);
-            failedSectionCount++;
+            failedItems.Add(FailedKey(node, itemId));
 
-            await context.Entities.CallEntityAsync(
-                entityId,
-                nameof(ConsultGenerationJobEntity.FailSection),
-                new SectionGenerationResult(itemId, ItemName(itemId), false, null, error));
+            if (!v6)
+            {
+                failedSectionCount++;
+
+                await context.Entities.CallEntityAsync(
+                    entityId,
+                    nameof(ConsultGenerationJobEntity.FailSection),
+                    new SectionGenerationResult(itemId, ItemName(node, itemId), false, null, error));
+            }
+            else
+            {
+                // v6 blocks: every result-source block over this collection fails —
+                // the item can no longer reach the document.
+                foreach (var source in resultSourceIds
+                    .Select(id => nodesById.GetValueOrDefault(id))
+                    .Where(source => source?.ForEach != null
+                        && string.Equals(CollectionIdOf(source), CollectionIdOf(node), StringComparison.Ordinal)))
+                {
+                    failedSectionCount++;
+
+                    await context.Entities.CallEntityAsync(
+                        entityId,
+                        nameof(ConsultGenerationJobEntity.FailSection),
+                        new SectionGenerationResult($"{source!.Id}:{itemId}", ItemName(node, itemId), false, null, error));
+                }
+            }
 
             // Downstream item-aligned instances never start; nodes waiting only on
             // this item may now be node-level complete.
             await MarkFullyCompletedChainNodesAsync();
+        }
+
+        // Aggregators compose inline once every source settles — deterministic,
+        // no activity, no retries; a failed contributing item fails the aggregator
+        // loud (never a partial document), cascading downstream by absence
+        // (package-format-v6-design.md §§ 3, 6).
+        async Task TryCompleteAggregatorsAsync()
+        {
+            var progressed = true;
+
+            while (progressed)
+            {
+                progressed = false;
+
+                foreach (var aggregator in aggregators)
+                {
+                    if (outputs.ContainsKey(aggregator.Id) || failedAggregators.ContainsKey(aggregator.Id))
+                    {
+                        continue;
+                    }
+
+                    var parts = new List<ConsultAggregateRenderer.Part>();
+                    var sourceHashes = new List<string>();
+                    var failedContributors = new List<string>();
+                    var allSettled = true;
+
+                    foreach (var sourceRef in aggregator.Aggregate!)
+                    {
+                        var sourceId = sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                            ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
+                            : sourceRef;
+                        var source = nodesById[sourceId];
+
+                        if (source.ForEach != null)
+                        {
+                            var sourceItems = FanItems(source);
+                            var failed = sourceItems
+                                .Where(item => failedItems.Contains(FailedKey(source, item["id"])))
+                                .Select(item => item["id"])
+                                .ToList();
+
+                            if (failed.Count > 0)
+                            {
+                                failedContributors.AddRange(failed.Select(id => $"{sourceId}:{id}"));
+                                continue;
+                            }
+
+                            if (!sourceItems.All(item => outputs.ContainsKey(ConsultNodeScheduler.InstanceKey(sourceId, item["id"]))))
+                            {
+                                allSettled = false;
+                                continue;
+                            }
+
+                            parts.Add(new ConsultAggregateRenderer.ForEachPart(sourceItems
+                                .Select(item => (
+                                    item.GetValueOrDefault("name", item["id"]),
+                                    outputs[ConsultNodeScheduler.InstanceKey(sourceId, item["id"])].RawOutput.Trim()))
+                                .ToList()));
+                            sourceHashes.AddRange(sourceItems
+                                .Select(item => outputs[ConsultNodeScheduler.InstanceKey(sourceId, item["id"])].OutputHash));
+                        }
+                        else if (failedAggregators.ContainsKey(sourceId))
+                        {
+                            failedContributors.Add(sourceId);
+                        }
+                        else if (outputs.TryGetValue(sourceId, out var sourceResult))
+                        {
+                            parts.Add(new ConsultAggregateRenderer.ScalarPart(sourceResult.RawOutput.Trim()));
+                            sourceHashes.Add(sourceResult.OutputHash);
+                        }
+                        else
+                        {
+                            allSettled = false;
+                        }
+                    }
+
+                    if (failedContributors.Count > 0)
+                    {
+                        failedAggregators[aggregator.Id] =
+                            $"{aggregator.Label} could not assemble: {string.Join(", ", failedContributors)} did not complete.";
+                        progressed = true;
+                        continue;
+                    }
+
+                    if (!allSettled)
+                    {
+                        continue;
+                    }
+
+                    var rendered = ConsultAggregateRenderer.Render(parts);
+                    var aggregateResult = new NodeRunResult(
+                        rendered,
+                        null,
+                        ConsultGenerationProvenance.ComputeAggregateInputHash(sourceHashes),
+                        ConsultGenerationProvenance.Sha256Hex(rendered));
+                    outputs[aggregator.Id] = aggregateResult;
+                    completedNodeCount++;
+                    progressed = true;
+
+                    await context.Entities.CallEntityAsync(
+                        entityId,
+                        nameof(ConsultGenerationJobEntity.MarkNodeCompleted),
+                        new ConsultGenerationNodeUpdate(
+                            aggregator.Id, aggregator.Label, null,
+                            aggregateResult.InputHash, aggregateResult.OutputHash,
+                            completedNodeCount, totalNodeCount));
+
+                    if (string.Equals(aggregator.Id, resultNodeId, StringComparison.Ordinal))
+                    {
+                        await context.Entities.CallEntityAsync(
+                            entityId,
+                            nameof(ConsultGenerationJobEntity.CompleteDocument),
+                            rendered);
+                    }
+                }
+            }
         }
 
         StartReadyInstances();
@@ -237,6 +412,17 @@ public sealed class ConsultGenerationOrchestrator
                     new ConsultGenerationNodeUpdate(
                         node.Id, node.Label, result.Concepts, result.InputHash, result.OutputHash,
                         completedNodeCount, totalNodeCount));
+
+                if (v6 && resultSourceIds.Contains(nodeId))
+                {
+                    // A scalar source of the result aggregator is one block.
+                    completedSectionCount++;
+
+                    await context.Entities.CallEntityAsync(
+                        entityId,
+                        nameof(ConsultGenerationJobEntity.CompleteSection),
+                        new SectionGenerationResult(nodeId, node.Label, true, result.RawOutput.Trim(), null));
+                }
             }
             else
             {
@@ -250,7 +436,7 @@ public sealed class ConsultGenerationOrchestrator
                 }
                 catch (Exception ex)
                 {
-                    await FailItemAsync(itemId, $"{node.Label} failed: {ex.Message}");
+                    await FailItemAsync(node, itemId, $"{node.Label} failed: {ex.Message}");
                     PublishStatus(ConsultGenerationJobStatuses.Running);
                     StartReadyInstances();
                     continue;
@@ -258,7 +444,7 @@ public sealed class ConsultGenerationOrchestrator
 
                 if (node.FailIfEmpty != null && (result.Concepts?.Count ?? 0) == 0)
                 {
-                    await FailItemAsync(itemId, node.FailIfEmpty);
+                    await FailItemAsync(node, itemId, node.FailIfEmpty);
                     PublishStatus(ConsultGenerationJobStatuses.Running);
                     StartReadyInstances();
                     continue;
@@ -266,37 +452,51 @@ public sealed class ConsultGenerationOrchestrator
 
                 outputs[ConsultNodeScheduler.InstanceKey(nodeId, itemId)] = result;
 
-                var completedChainCount = chainNodes.Count(chainNode =>
+                var chain = v6
+                    ? chainNodes.Where(chainNode => string.Equals(CollectionIdOf(chainNode), CollectionIdOf(node), StringComparison.Ordinal)).ToList()
+                    : chainNodes;
+                var completedChainCount = chain.Count(chainNode =>
                     outputs.ContainsKey(ConsultNodeScheduler.InstanceKey(chainNode.Id, itemId)));
 
                 await context.Entities.CallEntityAsync(
                     entityId,
                     nameof(ConsultGenerationJobEntity.MarkNodeItemCompleted),
                     new ConsultGenerationNodeItemUpdate(
-                        node.Id, node.Label, itemId, ItemName(itemId),
+                        node.Id, node.Label, itemId, ItemName(node, itemId),
                         result.Concepts, result.InputHash, result.OutputHash,
-                        completedChainCount, chainNodes.Count));
+                        completedChainCount, chain.Count));
 
-                if (nodeId == resultNodeId)
+                if (!v6 && nodeId == resultNodeId)
                 {
                     completedSectionCount++;
 
                     await context.Entities.CallEntityAsync(
                         entityId,
                         nameof(ConsultGenerationJobEntity.CompleteSection),
-                        new SectionGenerationResult(itemId, ItemName(itemId), true, result.RawOutput.Trim(), null));
+                        new SectionGenerationResult(itemId, ItemName(node, itemId), true, result.RawOutput.Trim(), null));
+                }
+                else if (v6 && resultSourceIds.Contains(nodeId))
+                {
+                    // v6 blocks stream as the result aggregator's sources complete.
+                    completedSectionCount++;
+
+                    await context.Entities.CallEntityAsync(
+                        entityId,
+                        nameof(ConsultGenerationJobEntity.CompleteSection),
+                        new SectionGenerationResult($"{nodeId}:{itemId}", ItemName(node, itemId), true, result.RawOutput.Trim(), null));
                 }
 
                 await MarkFullyCompletedChainNodesAsync();
             }
 
+            await TryCompleteAggregatorsAsync();
             PublishStatus(ConsultGenerationJobStatuses.Running);
             StartReadyInstances();
         }
 
-        var expectedInstances = nodes.Sum(node => node.ForEach is null
+        var expectedInstances = nodes.Where(node => node.Aggregate is null).Sum(node => node.ForEach is null
             ? 1
-            : items.Count(item => !failedItems.Contains(item["id"])));
+            : FanItems(node).Count(item => !failedItems.Contains(FailedKey(node, item["id"]))));
         if (started.Count(key => outputs.ContainsKey(key)) < expectedInstances && failedItems.Count == 0)
         {
             // Unreachable for validated packages (the graph is acyclic and complete);
@@ -304,13 +504,37 @@ public sealed class ConsultGenerationOrchestrator
             throw new InvalidOperationException("Workflow nodes could not all be scheduled; the node graph is not executable.");
         }
 
-        var finalStatus = completedSectionCount > 0
-            ? ConsultGenerationJobStatuses.Completed
-            : ConsultGenerationJobStatuses.Failed;
+        // A final pass settles aggregator failure state for the job outcome.
+        await TryCompleteAggregatorsAsync();
+
+        string finalStatus;
+        string? finalError = null;
+
+        if (v6)
+        {
+            // The deliverable is the assembled document: no document, no consult
+            // (fail-loud all the way to the job, package-format-v6-design.md § 3).
+            var documentProduced = outputs.ContainsKey(resultNodeId);
+            finalStatus = documentProduced
+                ? ConsultGenerationJobStatuses.Completed
+                : ConsultGenerationJobStatuses.Failed;
+            finalError = documentProduced
+                ? null
+                : failedAggregators.GetValueOrDefault(resultNodeId)
+                    ?? failedAggregators.Values.FirstOrDefault()
+                    ?? "The assembled document could not be produced.";
+        }
+        else
+        {
+            finalStatus = completedSectionCount > 0
+                ? ConsultGenerationJobStatuses.Completed
+                : ConsultGenerationJobStatuses.Failed;
+        }
 
         logger.LogInformation(
-            "ConsultGenerationOrchestrator completed. JobId={JobId}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
+            "ConsultGenerationOrchestrator completed. JobId={JobId}, Status={Status}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
             context.InstanceId,
+            finalStatus,
             completedSectionCount,
             failedSectionCount,
             totalSectionCount);
@@ -318,7 +542,7 @@ public sealed class ConsultGenerationOrchestrator
         await context.Entities.CallEntityAsync(
             entityId,
             nameof(ConsultGenerationJobEntity.FinalizeJob),
-            new ConsultGenerationJobFinalize(finalStatus));
+            new ConsultGenerationJobFinalize(finalStatus, finalError));
 
         PublishStatus(finalStatus);
         }
