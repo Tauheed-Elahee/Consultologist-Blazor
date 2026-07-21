@@ -1,5 +1,13 @@
 # Workflow Package Format — specVersion 5 (Fork Lineage, Data Collections, One Node Kind)
 
+> **Format v6 designed 2026-07-20, not yet implemented**
+> ([package-format-v6-design.md](package-format-v6-design.md), Milestone 9):
+> it relaxes the single-collection closure, introduces deterministic
+> aggregator nodes, and makes the deliverable one assembled document. This
+> document stays the frozen v5 normative spec — v5 packages keep validating
+> under exactly these rules after v6 ships (a manifest declares the rule set
+> it was validated under).
+
 Normative specification for `specVersion: 5` packages, authored for Milestone 5
 (issue #59, PR 1 of 4). v5 makes three moves designed together
 ([package-format-v5-design.md](package-format-v5-design.md)): all customization
