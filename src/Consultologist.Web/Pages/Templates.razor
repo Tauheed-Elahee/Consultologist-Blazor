@@ -441,11 +441,11 @@
                                 </select>
                             </label>
                             <label class="input-field">
-                                <span>id (lowercase, letters/digits/-/_)</span>
-                                <FluentTextField @bind-Value="newNodeId" Placeholder="summarize-guidelines" />
+                                <span>id (lowercase, letters/digits/-/_)@(newNodePrompt.Length > 0 ? " — optional, defaults to the prompt's name" : "")</span>
+                                <FluentTextField @bind-Value="newNodeId" Placeholder="@(newNodePrompt.Length > 0 ? newNodePrompt : "summarize-guidelines")" />
                             </label>
                             <label class="input-field">
-                                <span>label</span>
+                                <span>label@(newNodePrompt.Length > 0 ? " — optional, defaults to the prompt's name" : "")</span>
                                 <FluentTextField @bind-Value="newNodeLabel" Placeholder="Summarizing guidelines" />
                             </label>
                             @if (newNodeKind != "aggregator")
@@ -1109,8 +1109,23 @@
 
     private async Task AddNodeAsync()
     {
+        var aggregator = newNodeKind == "aggregator";
+        var promptRef = aggregator || newNodePrompt.Length == 0 ? null : newNodePrompt;
+
+        // With an existing prompt chosen, the node defaults to the prompt's
+        // own name — the house convention (node and prompt sharing an id is
+        // fine: they are separate manifest namespaces).
         var id = newNodeId?.Trim() ?? string.Empty;
+        if (id.Length == 0 && promptRef != null)
+        {
+            id = promptRef;
+        }
+
         var label = newNodeLabel?.Trim() ?? string.Empty;
+        if (label.Length == 0 && promptRef != null)
+        {
+            label = char.ToUpperInvariant(id[0]) + id[1..].Replace('-', ' ').Replace('_', ' ');
+        }
 
         if (!ItemIdPattern.IsMatch(id))
         {
@@ -1118,9 +1133,17 @@
             return;
         }
 
-        if (nodes.Any(n => n.Id == id) || addedNodes.Any(a => a.Id == id) || EffectivePrompts.Any(p => p.Id == id))
+        if (nodes.Any(n => n.Id == id) || addedNodes.Any(a => a.Id == id))
         {
-            newNodeError = $"A node or prompt named '{id}' already exists.";
+            newNodeError = $"A node named '{id}' already exists.";
+            return;
+        }
+
+        // Only a freshly minted prompt (named after the node) can collide
+        // with an existing prompt id.
+        if (promptRef == null && !aggregator && EffectivePrompts.Any(p => p.Id == id))
+        {
+            newNodeError = $"A prompt named '{id}' already exists — choose it in the prompt field, or pick another node id.";
             return;
         }
 
@@ -1129,9 +1152,6 @@
             newNodeError = "A label is required.";
             return;
         }
-
-        var aggregator = newNodeKind == "aggregator";
-        var promptRef = aggregator || newNodePrompt.Length == 0 ? null : newNodePrompt;
         addedNodes.Add(new AddedNode
         {
             Id = id,
