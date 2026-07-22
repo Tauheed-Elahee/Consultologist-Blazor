@@ -93,8 +93,8 @@ public sealed class WorkflowPackages
                 package.Manifest.Name,
                 package.Manifest.Version,
                 package.Manifest.SpecVersion,
-                WorkflowPackageSections.Resolve(package)
-                    .Select(section => new WorkflowPackageSectionResponse(section.Id, section.Name, section.Content))
+                WorkflowPackageBlocks.Resolve(package)
+                    .Select(block => new WorkflowPackageBlockResponse(block.Id, block.Name))
                     .ToList()),
             cancellationToken);
 

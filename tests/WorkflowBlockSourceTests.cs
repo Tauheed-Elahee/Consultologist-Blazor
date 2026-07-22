@@ -2,7 +2,7 @@ using Consultologist.Api.Workflow;
 
 namespace Consultologist.Api.Tests;
 
-public class WorkflowPackageSectionsTests
+public class WorkflowPackageBlocksTests
 {
     [Fact]
     public void Resolve_V5Package_ReadsTheResultNodesCollection()
@@ -19,7 +19,7 @@ public class WorkflowPackageSectionsTests
             Data: data,
             ResultNodeId: "section-instructions");
 
-        var sections = WorkflowPackageSections.Resolve(package);
+        var sections = WorkflowPackageBlocks.Resolve(package);
 
         Assert.Equal(2, sections.Count);
         Assert.Equal(("hpi", "History of Present Illness", "Document the presenting illness."), (sections[0].Id, sections[0].Name, sections[0].Content));

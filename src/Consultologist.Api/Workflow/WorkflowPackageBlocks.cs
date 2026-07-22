@@ -1,16 +1,16 @@
 namespace Consultologist.Api.Workflow;
 
-/// <summary>One section of the consult note: an item of the standards collection.</summary>
-public sealed record WorkflowStandardsSection(string Id, string Name, string Content);
+/// <summary>One deliverable block: in v5 a section (standards item), in v6 a result-aggregator expansion entry.</summary>
+public sealed record WorkflowDeliverableBlock(string Id, string Name, string Content);
 
 /// <summary>
-/// The single section source for a resolved package: the result node's forEach
-/// collection (sections are package data; package-format-v5.md). Shared by the
+/// The single block source for a resolved package: v5 = the result node's
+/// forEach collection; v6 = the result aggregator's expansion. Shared by the
 /// WorkflowPackages/Current endpoint and consult job start.
 /// </summary>
-public static class WorkflowPackageSections
+public static class WorkflowPackageBlocks
 {
-    public static IReadOnlyList<WorkflowStandardsSection> Resolve(WorkflowPackage package)
+    public static IReadOnlyList<WorkflowDeliverableBlock> Resolve(WorkflowPackage package)
     {
         if (package.Manifest.SpecVersion == 6)
         {
@@ -18,7 +18,7 @@ public static class WorkflowPackageSections
         }
 
         return ResolveCollection(package).Items
-            .Select(item => new WorkflowStandardsSection(
+            .Select(item => new WorkflowDeliverableBlock(
                 item.Id,
                 item.Fields.GetValueOrDefault("name", item.Id),
                 item.Fields.GetValueOrDefault("content", string.Empty)))
@@ -31,7 +31,7 @@ public static class WorkflowPackageSections
     /// block per item (composite "nodeId:itemId" ids, collection index order);
     /// scalar sources one block under the node id.
     /// </summary>
-    public static IReadOnlyList<WorkflowStandardsSection> ResolveBlocks(WorkflowPackage package)
+    public static IReadOnlyList<WorkflowDeliverableBlock> ResolveBlocks(WorkflowPackage package)
     {
         var nodes = package.Nodes ?? new List<WorkflowNodeSpec>();
         var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
@@ -43,7 +43,7 @@ public static class WorkflowPackageSections
             throw new InvalidOperationException($"Package {package.Ref} result node '{resultNode.Id}' is not an aggregator (specVersion 6 requires one).");
         }
 
-        var blocks = new List<WorkflowStandardsSection>();
+        var blocks = new List<WorkflowDeliverableBlock>();
 
         foreach (var sourceRef in resultNode.Aggregate)
         {
@@ -59,14 +59,14 @@ public static class WorkflowPackageSections
                 var collection = package.Data?.Collections.GetValueOrDefault(collectionId)
                     ?? throw new InvalidOperationException($"Package {package.Ref} has no data collection '{collectionId}'.");
 
-                blocks.AddRange(collection.Items.Select(item => new WorkflowStandardsSection(
+                blocks.AddRange(collection.Items.Select(item => new WorkflowDeliverableBlock(
                     $"{sourceId}:{item.Id}",
                     item.Fields.GetValueOrDefault("name", item.Id),
                     item.Fields.GetValueOrDefault("content", string.Empty))));
             }
             else
             {
-                blocks.Add(new WorkflowStandardsSection(sourceId, source.Label, string.Empty));
+                blocks.Add(new WorkflowDeliverableBlock(sourceId, source.Label, string.Empty));
             }
         }
 
