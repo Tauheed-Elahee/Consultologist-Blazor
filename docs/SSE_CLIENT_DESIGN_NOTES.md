@@ -6,7 +6,7 @@ Native `EventSource` is the browser's built-in SSE client. Instead of Blazor `Ht
 
 ```js
 const source = new EventSource("/api/ConsultGenerationJobs/{jobId}/events");
-source.addEventListener("section-completed", event => {
+source.addEventListener("block-completed", event => {
   // event.lastEventId is populated by SSE id:
 });
 ```

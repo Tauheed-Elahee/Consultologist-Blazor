@@ -53,7 +53,7 @@ SSE Status Stream Function
   |
   | reads durable orchestration/entity state repeatedly
   v
-event: progress / section-completed / section-failed / done
+event: progress / block-completed / block-failed / done
 ```
 
 Durable Functions responsibilities:
@@ -101,9 +101,9 @@ Example Durable Entity state:
 ```text
 ConsultGenerationJobEntity(jobId)
 ├─ Status
-├─ TotalSectionCount
-├─ CompletedSectionCount
-├─ FailedSectionCount
+├─ TotalBlockCount
+├─ CompletedBlockCount
+├─ FailedBlockCount
 └─ Sections
    ├─ hpi: Completed + generated text
    ├─ exam: Failed + error
@@ -154,8 +154,8 @@ Each activity should return a section-level success/failure envelope so one fail
 
 ```csharp
 public record SectionGenerationResult(
-    string SectionId,
-    string SectionName,
+    string BlockId,
+    string BlockName,
     bool Success,
     string? GeneratedText,
     string? Error);
@@ -193,7 +193,7 @@ Activity finishes
   -> Orchestrator observes completion
   -> Orchestrator writes section state
   -> SSE endpoint sees changed state
-  -> Browser receives section-completed event
+  -> Browser receives block-completed event
   -> Blazor renders that section immediately
 ```
 
@@ -211,10 +211,10 @@ GET /api/ConsultGenerationJobs/{jobId}/events
 event: snapshot
 data: { "status": "Running", "completedSectionCount": 2, "failedSectionCount": 0, "totalSectionCount": 9 }
 
-event: section-completed
+event: block-completed
 data: { "sectionId": "hpi", "generatedText": "..." }
 
-event: section-failed
+event: block-failed
 data: { "sectionId": "exam", "error": "Azure AI request timeout" }
 
 event: done

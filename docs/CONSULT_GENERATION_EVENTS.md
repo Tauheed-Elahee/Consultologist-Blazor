@@ -3,7 +3,7 @@
 > **Updated for Milestone 5 (2026-07-15)**: the engine executes one node kind with
 > per-(node, item) scheduling. The event *surface* is unchanged — `node-completed`
 > fires per node-level completion (a forEach node completes when its last item
-> settles), and `section-prose-step` events are synthesized from per-item node
+> settles), and `item-step` events are synthesized from per-item node
 > completions with identical payloads (step ids = the forEach chain's node ids).
 
 This is the current consult generation flow after the .NET 10 SSE migration.
@@ -67,16 +67,16 @@ sequenceDiagram
         alt New completed section found
             Orchestrator->>Entity: CompleteSection(result)
             Orchestrator->>Durable: Set custom status Running
-            Jobs-->>SSE: event: section-completed
-            SSE-->>Client: section-completed JSON
-            Client-->>Page: ConsultGenerationJobSseEvent("section-completed", json)
+            Jobs-->>SSE: event: block-completed
+            SSE-->>Client: block-completed JSON
+            Client-->>Page: ConsultGenerationJobSseEvent("block-completed", json)
             Page->>Page: Add generated section text
         else New failed section found
             Orchestrator->>Entity: FailSection(result)
             Orchestrator->>Durable: Set custom status Running
-            Jobs-->>SSE: event: section-failed
-            SSE-->>Client: section-failed JSON
-            Client-->>Page: ConsultGenerationJobSseEvent("section-failed", json)
+            Jobs-->>SSE: event: block-failed
+            SSE-->>Client: block-failed JSON
+            Client-->>Page: ConsultGenerationJobSseEvent("block-failed", json)
             Page->>Page: Add failed section error
         else No section change for heartbeat interval
             Jobs-->>SSE: event: heartbeat
@@ -113,11 +113,11 @@ The `/events` endpoint emits these server-sent event names:
 - `node-completed`: one DAG node's completion (or the map node's start), with
   `JobId`, `NodeId`, package-declared `Label`, `Message`, and node counts
   (milestone 4; replaces the fixed analysis stage events).
-- `section-prose-step`: per-section prose progress with the step id, package-declared
+- `item-step`: per-item chain progress with the step id, package-declared
   `Label`, `Message`, and step counts (milestone 3; replaces the fixed step-named
   events).
-- `section-completed`: one completed section with `JobId`, `SectionId`, and generated `Text`.
-- `section-failed`: one failed section with `JobId`, `SectionId`, and `Error`.
+- `block-completed`: one completed block with `JobId`, `BlockId`, and generated `Text`.
+- `block-failed`: one failed block with `JobId`, `BlockId`, and `Error`.
 - `heartbeat`: stream keepalive with `JobId` and current `Status`.
 - `done`: final full `ConsultGenerationJobResponse`.
 - `error`: stream-level failure with `JobId` and `Error`.
@@ -128,4 +128,4 @@ the event store for jobs that ran before milestones 3–4; the client ignores th
 
 Semantic events include persisted `id:` values in the form `{jobId}:{sequence:D12}`. Heartbeat events are not persisted and do not advance the semantic event sequence.
 
-The Blazor page treats `snapshot`, `node-completed`, `section-prose-step`, `section-completed`, `section-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.
+The Blazor page treats `snapshot`, `node-completed`, `item-step`, `block-completed`, `block-failed`, and `done` as live UI update events. It falls back to polling `GET /api/ConsultGenerationJobs/{jobId}` when stream setup fails, the stream times out, the stream ends before `done`, event handling fails, or the server emits `error`.

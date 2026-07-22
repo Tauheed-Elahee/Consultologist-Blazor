@@ -66,8 +66,8 @@ data: {...}
   - `snapshot`
   - analysis stages
   - section prose steps
-  - `section-completed`
-  - `section-failed`
+  - `block-completed`
+  - `block-failed`
   - `done` for successful terminal job completion
   - terminal `error` for failed terminal jobs
 - Do not persist heartbeat events.
@@ -234,7 +234,7 @@ RowKey = !sequence
 RowKey = !event-key:{sha256(EventKey)}
 ```
 
-`EventKey` values are deterministic semantic keys such as `snapshot`, `analysis:concepts-extracted`, `section-prose:hpi:section-standard-draft-created`, `section-completed:hpi`, `error:runtime-failed`, and `done`.
+`EventKey` values are deterministic semantic keys such as `snapshot`, `analysis:concepts-extracted`, `item-step:hpi:section-standard-draft-created`, `block-completed:hpi`, `error:runtime-failed`, and `done`.
 
 ### Profile Job Index
 
@@ -250,8 +250,8 @@ CreatedAtUtc
 StartedAtUtc
 CompletedAtUtc
 SectionCount
-CompletedSectionCount
-FailedSectionCount
+CompletedBlockCount
+FailedBlockCount
 ```
 
 Use reverse timestamp row keys so newest jobs list first.

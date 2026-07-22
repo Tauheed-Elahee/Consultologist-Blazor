@@ -55,8 +55,8 @@ This is the pre-milestone-4 workflow, kept for the transport-mechanics record.
 9. The event stream sends live progress events to the browser:
 
    - `snapshot`
-   - `section-completed`
-   - `section-failed`
+   - `block-completed`
+   - `block-failed`
    - `heartbeat`
    - `done`
    - `error`
@@ -347,8 +347,8 @@ These events would be emitted in addition to the existing section events:
 
 ```text
 snapshot
-section-completed
-section-failed
+block-completed
+block-failed
 heartbeat
 done
 error
@@ -384,11 +384,11 @@ Recommended event flow:
 
    Preprocessing is complete and parallel section generation has started.
 
-8. `section-completed`
+8. `block-completed`
 
    One section has completed and can be rendered in the consult note.
 
-9. `section-failed`
+9. `block-failed`
 
    One section failed and the browser can show the section-level error.
 
@@ -663,8 +663,8 @@ problem-identified -> Identifying primary problem
 typical-trajectory-created -> Building reference trajectory
 patient-trajectory-created -> Building patient trajectory
 section-generation-started -> Generating sections
-section-completed -> Section completed
-section-failed -> Section failed
+block-completed -> Section completed
+block-failed -> Section failed
 done -> Consult complete
 error -> Live updates interrupted
 ```
