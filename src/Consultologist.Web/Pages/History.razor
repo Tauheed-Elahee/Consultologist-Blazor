@@ -57,10 +57,10 @@
                                     </div>
                                     <div class="job-history-item__meta">
                                         <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
-                                        <span class="muted-text">@job.CompletedSectionCount / @job.TotalSectionCount sections</span>
-                                        @if (job.FailedSectionCount > 0)
+                                        <span class="muted-text">@job.CompletedBlockCount / @job.TotalBlockCount sections</span>
+                                        @if (job.FailedBlockCount > 0)
                                         {
-                                            <span class="muted-text">@job.FailedSectionCount failed</span>
+                                            <span class="muted-text">@job.FailedBlockCount failed</span>
                                         }
                                     </div>
                                     <div class="job-history-item__id">

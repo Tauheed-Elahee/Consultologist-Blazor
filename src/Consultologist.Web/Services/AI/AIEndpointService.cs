@@ -164,8 +164,8 @@ public class AIEndpointService : IAIEndpointService
                 "Consult generation job polled. JobId={JobId}, Status={Status}, Completed={CompletedCount}, Failed={FailedCount}, ElapsedMs={ElapsedMs}",
                 result.JobId,
                 result.Status,
-                result.CompletedSectionCount,
-                result.FailedSectionCount,
+                result.CompletedBlockCount,
+                result.FailedBlockCount,
                 stopwatch.ElapsedMilliseconds);
 
             return result;
@@ -277,18 +277,18 @@ public record ConsultGenerationJobResponse(
     string JobId,
     string? AppUserId,
     string Status,
-    int TotalSectionCount,
-    int CompletedSectionCount,
-    int FailedSectionCount,
-    Dictionary<string, string> GeneratedSections,
-    Dictionary<string, string> FailedSections,
+    int TotalBlockCount,
+    int CompletedBlockCount,
+    int FailedBlockCount,
+    Dictionary<string, string> GeneratedBlocks,
+    Dictionary<string, string> FailedBlocks,
     bool Success,
     int? SchemaVersion = null,
     string? AnalysisStatus = null,
     string? AnalysisError = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
-    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
+    IReadOnlyDictionary<string, ConsultGenerationItemProgress>? ItemProgress = null,
     string? RuntimeFailureStage = null,
     string? RuntimeFailureError = null,
     IReadOnlyList<ConsultGenerationJobHistoryEvent>? History = null,
@@ -303,7 +303,7 @@ public record ConsultGenerationJobResponse(
     string? CatalogRef = null,
     string? WorkflowOutputHash = null,
     int? WorkflowOutputHashVersion = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    IReadOnlyList<ConsultItemStepDescriptor>? ItemSteps = null,
     IReadOnlyDictionary<string, ConsultGenerationNodeStatus>? NodeOutputs = null,
     // v6: the result aggregator's rendered output — the deliverable itself
     // (Completed jobs only; workflowOutputHash v2 is its digest).
@@ -320,7 +320,7 @@ public record ConsultGenerationNodeDescriptor(
     string? OutputContract = null,
     string? ForEach = null);
 
-public record ConsultSectionStepDescriptor(string Id, string Label);
+public record ConsultItemStepDescriptor(string Id, string Label);
 
 /// <summary>One chain entry: keyed "nodeId" (node level) or "nodeId:itemId" (per item).</summary>
 public record ConsultGenerationNodeStatus(
@@ -334,9 +334,9 @@ public record ConsultGenerationNodeStatus(
 
 public record ConsultGenerationJobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
-public record ConsultGenerationSectionProseProgress(
-    string SectionId,
-    string SectionName,
-    string? ProseStepStatus,
-    int CompletedProseStepCount,
-    int TotalProseStepCount);
+public record ConsultGenerationItemProgress(
+    string ItemId,
+    string ItemName,
+    string? Step,
+    int CompletedStepCount,
+    int TotalStepCount);

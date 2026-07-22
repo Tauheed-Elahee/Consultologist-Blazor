@@ -60,7 +60,7 @@ public sealed class ConsultGenerationOrchestrator
                 items,
                 input.WorkflowPackage,
                 input.EffectiveInputHash,
-                input.SectionSteps,
+                input.ItemSteps,
                 nodes,
                 input.EffectiveInputHashVersion,
                 input.CatalogRef));
@@ -74,18 +74,18 @@ public sealed class ConsultGenerationOrchestrator
             items.Count,
             nodes.Count);
 
-        var totalSectionCount = items.Count;
-        var completedSectionCount = 0;
-        var failedSectionCount = 0;
+        var totalBlockCount = items.Count;
+        var completedBlockCount = 0;
+        var failedBlockCount = 0;
         var totalNodeCount = nodes.Count;
         var completedNodeCount = 0;
 
         void PublishStatus(string status) => context.SetCustomStatus(new
         {
             status,
-            totalSectionCount,
-            completedSectionCount,
-            failedSectionCount,
+            totalBlockCount,
+            completedBlockCount,
+            failedBlockCount,
             completedNodeCount,
             totalNodeCount
         });
@@ -233,12 +233,12 @@ public sealed class ConsultGenerationOrchestrator
 
             if (!v6)
             {
-                failedSectionCount++;
+                failedBlockCount++;
 
                 await context.Entities.CallEntityAsync(
                     entityId,
-                    nameof(ConsultGenerationJobEntity.FailSection),
-                    new SectionGenerationResult(itemId, ItemName(node, itemId), false, null, error));
+                    nameof(ConsultGenerationJobEntity.FailBlock),
+                    new BlockGenerationResult(itemId, ItemName(node, itemId), false, null, error));
             }
             else
             {
@@ -249,12 +249,12 @@ public sealed class ConsultGenerationOrchestrator
                     .Where(source => source?.ForEach != null
                         && string.Equals(CollectionIdOf(source), CollectionIdOf(node), StringComparison.Ordinal)))
                 {
-                    failedSectionCount++;
+                    failedBlockCount++;
 
                     await context.Entities.CallEntityAsync(
                         entityId,
-                        nameof(ConsultGenerationJobEntity.FailSection),
-                        new SectionGenerationResult($"{source!.Id}:{itemId}", ItemName(node, itemId), false, null, error));
+                        nameof(ConsultGenerationJobEntity.FailBlock),
+                        new BlockGenerationResult($"{source!.Id}:{itemId}", ItemName(node, itemId), false, null, error));
                 }
             }
 
@@ -399,7 +399,7 @@ public sealed class ConsultGenerationOrchestrator
                 {
                     await FailNodeAsync(
                         context, entityId, node, nodes, outputs,
-                        totalSectionCount, completedSectionCount, failedSectionCount, logger);
+                        totalBlockCount, completedBlockCount, failedBlockCount, logger);
                     return;
                 }
 
@@ -416,12 +416,12 @@ public sealed class ConsultGenerationOrchestrator
                 if (v6 && resultSourceIds.Contains(nodeId))
                 {
                     // A scalar source of the result aggregator is one block.
-                    completedSectionCount++;
+                    completedBlockCount++;
 
                     await context.Entities.CallEntityAsync(
                         entityId,
-                        nameof(ConsultGenerationJobEntity.CompleteSection),
-                        new SectionGenerationResult(nodeId, node.Label, true, result.RawOutput.Trim(), null));
+                        nameof(ConsultGenerationJobEntity.CompleteBlock),
+                        new BlockGenerationResult(nodeId, node.Label, true, result.RawOutput.Trim(), null));
                 }
             }
             else
@@ -468,22 +468,22 @@ public sealed class ConsultGenerationOrchestrator
 
                 if (!v6 && nodeId == resultNodeId)
                 {
-                    completedSectionCount++;
+                    completedBlockCount++;
 
                     await context.Entities.CallEntityAsync(
                         entityId,
-                        nameof(ConsultGenerationJobEntity.CompleteSection),
-                        new SectionGenerationResult(itemId, ItemName(node, itemId), true, result.RawOutput.Trim(), null));
+                        nameof(ConsultGenerationJobEntity.CompleteBlock),
+                        new BlockGenerationResult(itemId, ItemName(node, itemId), true, result.RawOutput.Trim(), null));
                 }
                 else if (v6 && resultSourceIds.Contains(nodeId))
                 {
                     // v6 blocks stream as the result aggregator's sources complete.
-                    completedSectionCount++;
+                    completedBlockCount++;
 
                     await context.Entities.CallEntityAsync(
                         entityId,
-                        nameof(ConsultGenerationJobEntity.CompleteSection),
-                        new SectionGenerationResult($"{nodeId}:{itemId}", ItemName(node, itemId), true, result.RawOutput.Trim(), null));
+                        nameof(ConsultGenerationJobEntity.CompleteBlock),
+                        new BlockGenerationResult($"{nodeId}:{itemId}", ItemName(node, itemId), true, result.RawOutput.Trim(), null));
                 }
 
                 await MarkFullyCompletedChainNodesAsync();
@@ -526,7 +526,7 @@ public sealed class ConsultGenerationOrchestrator
         }
         else
         {
-            finalStatus = completedSectionCount > 0
+            finalStatus = completedBlockCount > 0
                 ? ConsultGenerationJobStatuses.Completed
                 : ConsultGenerationJobStatuses.Failed;
         }
@@ -535,9 +535,9 @@ public sealed class ConsultGenerationOrchestrator
             "ConsultGenerationOrchestrator completed. JobId={JobId}, Status={Status}, Completed={CompletedSectionCount}, Failed={FailedSectionCount}, Total={TotalSectionCount}",
             context.InstanceId,
             finalStatus,
-            completedSectionCount,
-            failedSectionCount,
-            totalSectionCount);
+            completedBlockCount,
+            failedBlockCount,
+            totalBlockCount);
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -582,9 +582,9 @@ public sealed class ConsultGenerationOrchestrator
         ConsultNodeDescriptor failedNode,
         IReadOnlyList<ConsultNodeDescriptor> nodes,
         IReadOnlyDictionary<string, NodeRunResult> outputs,
-        int totalSectionCount,
-        int completedSectionCount,
-        int failedSectionCount,
+        int totalBlockCount,
+        int completedBlockCount,
+        int failedBlockCount,
         ILogger logger)
     {
         // Keeps the "-failed" suffix convention the SSE failure path keys on.
@@ -601,7 +601,7 @@ public sealed class ConsultGenerationOrchestrator
         // node neither completed nor the failed one, in manifest order.
         var skippedNodes = nodes
             .Where(node => node.Id != failedNode.Id && !outputs.ContainsKey(node.Id))
-            .Select(node => new ConsultSectionStepDescriptor(node.Id, node.Label))
+            .Select(node => new ConsultItemStepDescriptor(node.Id, node.Label))
             .ToList();
 
         await context.Entities.CallEntityAsync(
@@ -612,9 +612,9 @@ public sealed class ConsultGenerationOrchestrator
         context.SetCustomStatus(new
         {
             status = ConsultGenerationJobStatuses.Failed,
-            totalSectionCount,
-            completedSectionCount,
-            failedSectionCount,
+            totalBlockCount,
+            completedBlockCount,
+            failedBlockCount,
             analysisStatus,
             analysisError
         });

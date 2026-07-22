@@ -31,9 +31,9 @@ public sealed record AccountJobSummaryResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
-    int TotalSectionCount,
-    int CompletedSectionCount,
-    int FailedSectionCount);
+    int TotalBlockCount,
+    int CompletedBlockCount,
+    int FailedBlockCount);
 
 public sealed record AccountJobsResponse(
     IReadOnlyList<AccountJobSummaryResponse> Jobs,

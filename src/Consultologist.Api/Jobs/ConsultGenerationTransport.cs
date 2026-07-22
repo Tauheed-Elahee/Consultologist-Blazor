@@ -239,7 +239,7 @@ public sealed class ConsultGenerationJobs
             // display/progress skeleton the section-prose-step events hang off.
             var sectionSteps = package.Nodes
                 .Where(node => node.ForEach != null)
-                .Select(node => new ConsultSectionStepDescriptor(node.Id, node.Label))
+                .Select(node => new ConsultItemStepDescriptor(node.Id, node.Label))
                 .ToList();
             var nodes = package.Nodes.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
@@ -292,7 +292,7 @@ public sealed class ConsultGenerationJobs
             var statusUrl = BuildStatusUrl(req, instanceId);
 
             _logger.LogInformation(
-                "Consult generation job started. JobId={JobId}, SectionCount={SectionCount}, ElapsedMs={ElapsedMs}",
+                "Consult generation job started. JobId={JobId}, BlockCount={BlockCount}, ElapsedMs={ElapsedMs}",
                 instanceId,
                 items.Count,
                 stopwatch.ElapsedMilliseconds);
@@ -542,9 +542,9 @@ public sealed class ConsultGenerationJobs
                 appUserId,
                 attemptId,
                 initialResponse.Status,
-                initialResponse.TotalSectionCount,
-                initialResponse.CompletedSectionCount,
-                initialResponse.FailedSectionCount,
+                initialResponse.TotalBlockCount,
+                initialResponse.CompletedBlockCount,
+                initialResponse.FailedBlockCount,
                 initialEventCount);
 
             if (IsTerminalJobStatus(initialResponse.Status))
@@ -824,17 +824,17 @@ public sealed class ConsultGenerationJobs
             new("failure", "Failed", runtimeFailure?.Error, DateTimeOffset.UtcNow)
         };
 
-        var finishedIds = response.GeneratedSections.Keys
-            .Concat(response.FailedSections.Keys)
+        var finishedIds = response.GeneratedBlocks.Keys
+            .Concat(response.FailedBlocks.Keys)
             .ToHashSet();
 
-        if (response.SectionProseProgress != null)
+        if (response.ItemProgress != null)
         {
-            foreach (var (_, progress) in response.SectionProseProgress
+            foreach (var (_, progress) in response.ItemProgress
                 .Where(p => !finishedIds.Contains(p.Key))
                 .OrderBy(p => p.Key, StringComparer.Ordinal))
             {
-                var name = !string.IsNullOrWhiteSpace(progress.SectionName) ? progress.SectionName : progress.SectionId;
+                var name = !string.IsNullOrWhiteSpace(progress.ItemName) ? progress.ItemName : progress.ItemId;
                 additional.Add(new JobHistoryEvent("skipped", $"Section not reached: {name}", null, DateTimeOffset.UtcNow));
             }
         }
@@ -1133,24 +1133,24 @@ public sealed class ConsultGenerationJobs
         // events were materialized while they ran and replay from the event store. The
         // node path's failure branch covers both eras via the '-failed' status suffix.
         AddNodeEventCandidates(candidates, response);
-        AddSectionProseStepEventCandidates(candidates, response);
+        AddItemStepEventCandidates(candidates, response);
 
-        foreach (var generatedSection in response.GeneratedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
+        foreach (var generatedSection in response.GeneratedBlocks.OrderBy(section => section.Key, StringComparer.Ordinal))
         {
             AddEventCandidate(
                 candidates,
-                "section-completed",
-                $"section-completed:{generatedSection.Key}",
-                new ConsultGenerationJobSectionCompletedEvent(response.JobId, generatedSection.Key, generatedSection.Value));
+                "block-completed",
+                $"block-completed:{generatedSection.Key}",
+                new ConsultGenerationJobBlockCompletedEvent(response.JobId, generatedSection.Key, generatedSection.Value));
         }
 
-        foreach (var failedSection in response.FailedSections.OrderBy(section => section.Key, StringComparer.Ordinal))
+        foreach (var failedSection in response.FailedBlocks.OrderBy(section => section.Key, StringComparer.Ordinal))
         {
             AddEventCandidate(
                 candidates,
-                "section-failed",
-                $"section-failed:{failedSection.Key}",
-                new ConsultGenerationJobSectionFailedEvent(response.JobId, failedSection.Key, failedSection.Value));
+                "block-failed",
+                $"block-failed:{failedSection.Key}",
+                new ConsultGenerationJobBlockFailedEvent(response.JobId, failedSection.Key, failedSection.Value));
         }
 
         if (IsTerminalJobStatus(response.Status))
@@ -1181,15 +1181,15 @@ public sealed class ConsultGenerationJobs
 
         if (string.IsNullOrWhiteSpace(stage))
         {
-            stage = response.FailedSections.Count > 0
-                ? "section-generation-failed"
+            stage = response.FailedBlocks.Count > 0
+                ? "block-generation-failed"
                 : ConsultGenerationRuntimeFailure.StageName;
         }
 
         if (string.IsNullOrWhiteSpace(error))
         {
-            error = response.FailedSections.Count > 0
-                ? "Consult generation failed because no sections were generated."
+            error = response.FailedBlocks.Count > 0
+                ? "Consult generation failed because no blocks were generated."
                 : "Consult generation failed while running the backend workflow. Backend workflow stopped before completion.";
         }
 
@@ -1256,20 +1256,20 @@ public sealed class ConsultGenerationJobs
         }
     }
 
-    private static void AddSectionProseStepEventCandidates(
+    private static void AddItemStepEventCandidates(
         List<ConsultGenerationJobEventCandidate> candidates,
         ConsultGenerationJobResponse response)
     {
         // Pre-milestone-3 snapshots carry no step list; their prose events were
         // materialized while they ran and replay from the event store.
-        if (response.SectionProseProgress == null || response.SectionSteps is not { Count: > 0 } steps)
+        if (response.ItemProgress == null || response.ItemSteps is not { Count: > 0 } steps)
         {
             return;
         }
 
-        foreach (var progress in response.SectionProseProgress.Values.OrderBy(section => section.SectionId, StringComparer.Ordinal))
+        foreach (var progress in response.ItemProgress.Values.OrderBy(progressRow => progressRow.ItemId, StringComparer.Ordinal))
         {
-            var completedStepCount = Math.Clamp(progress.CompletedProseStepCount, 0, steps.Count);
+            var completedStepCount = Math.Clamp(progress.CompletedStepCount, 0, steps.Count);
 
             for (var stepCount = 1; stepCount <= completedStepCount; stepCount++)
             {
@@ -1277,17 +1277,17 @@ public sealed class ConsultGenerationJobs
 
                 AddEventCandidate(
                     candidates,
-                    ConsultGenerationSectionProseSteps.EventName,
-                    $"section-prose:{progress.SectionId}:{step.Id}",
-                    new ConsultGenerationSectionProseStepEvent(
+                    ConsultGenerationItemSteps.EventName,
+                    $"item-step:{progress.ItemId}:{step.Id}",
+                    new ConsultGenerationItemStepEvent(
                         response.JobId,
-                        progress.SectionId,
-                        progress.SectionName,
+                        progress.ItemId,
+                        progress.ItemName,
                         step.Id,
                         step.Label,
                         $"{step.Label} completed.",
                         stepCount,
-                        progress.TotalProseStepCount));
+                        progress.TotalStepCount));
             }
         }
     }
@@ -1403,14 +1403,14 @@ public sealed class ConsultGenerationJobs
         string? LatestEventType);
 }
 
-public sealed record ConsultGenerationJobSectionCompletedEvent(
+public sealed record ConsultGenerationJobBlockCompletedEvent(
     string JobId,
-    string SectionId,
+    string BlockId,
     string Text);
 
-public sealed record ConsultGenerationJobSectionFailedEvent(
+public sealed record ConsultGenerationJobBlockFailedEvent(
     string JobId,
-    string SectionId,
+    string BlockId,
     string Error);
 
 public sealed record ConsultGenerationJobHeartbeatEvent(
@@ -1436,10 +1436,10 @@ public sealed record ConsultGenerationJobNodeCompletedEvent(
     int CompletedNodeCount,
     int TotalNodeCount);
 
-public sealed record ConsultGenerationSectionProseStepEvent(
+public sealed record ConsultGenerationItemStepEvent(
     string JobId,
-    string SectionId,
-    string SectionName,
+    string ItemId,
+    string ItemName,
     string Step,
     string Label,
     string Message,

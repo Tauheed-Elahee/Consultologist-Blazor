@@ -750,39 +750,39 @@
               "Consult generation SSE snapshot received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
               snapshot.JobId,
               snapshot.Status,
-              snapshot.TotalSectionCount,
-              snapshot.CompletedSectionCount,
-              snapshot.FailedSectionCount);
+              snapshot.TotalBlockCount,
+              snapshot.CompletedBlockCount,
+              snapshot.FailedBlockCount);
 
             ApplyConsultGenerationJobResponse(snapshot, GetActiveSectionSnapshots());
           }
           break;
 
-        case "section-completed":
-          var completed = JsonSerializer.Deserialize<ConsultGenerationSectionCompletedEvent>(json, SseJsonOptions);
+        case "block-completed":
+          var completed = JsonSerializer.Deserialize<ConsultGenerationBlockCompletedEvent>(json, SseJsonOptions);
           if (completed != null)
           {
             generatedSections = new Dictionary<string, string>(generatedSections)
             {
-              [completed.SectionId] = completed.Text
+              [completed.BlockId] = completed.Text
             };
             var nextFailedSections = new Dictionary<string, string>(failedSectionErrors);
-            nextFailedSections.Remove(completed.SectionId);
+            nextFailedSections.Remove(completed.BlockId);
             failedSectionErrors = nextFailedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
           }
           break;
 
-        case "section-failed":
-          var failed = JsonSerializer.Deserialize<ConsultGenerationSectionFailedEvent>(json, SseJsonOptions);
+        case "block-failed":
+          var failed = JsonSerializer.Deserialize<ConsultGenerationBlockFailedEvent>(json, SseJsonOptions);
           if (failed != null)
           {
             failedSectionErrors = new Dictionary<string, string>(failedSectionErrors)
             {
-              [failed.SectionId] = failed.Error
+              [failed.BlockId] = failed.Error
             };
             var nextGeneratedSections = new Dictionary<string, string>(generatedSections);
-            nextGeneratedSections.Remove(failed.SectionId);
+            nextGeneratedSections.Remove(failed.BlockId);
             generatedSections = nextGeneratedSections;
             completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
             UpdateFailedSectionError(GetActiveSectionSnapshots());
@@ -800,15 +800,15 @@
           }
           break;
 
-        case "section-prose-step":
-          var sectionStep = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(json, SseJsonOptions);
+        case "item-step":
+          var sectionStep = JsonSerializer.Deserialize<ConsultGenerationItemStepEvent>(json, SseJsonOptions);
           if (sectionStep != null)
           {
             var stepLabel = string.IsNullOrWhiteSpace(sectionStep.Label) ? "Generating section" : sectionStep.Label;
-            aiProgressNotice = $"{stepLabel}: {sectionStep.SectionName}";
+            aiProgressNotice = $"{stepLabel}: {sectionStep.ItemName}";
             // Step is the forEach node id that just completed for this section
             // (one event per node/section pair) — the run rail's per-group ticks.
-            completedNodeItems.Add($"{sectionStep.Step}:{sectionStep.SectionId}");
+            completedNodeItems.Add($"{sectionStep.Step}:{sectionStep.ItemId}");
           }
           break;
 
@@ -820,9 +820,9 @@
               "Consult generation SSE done received. JobId={JobId}, Status={Status}, TotalCount={TotalCount}, CompletedCount={CompletedCount}, FailedCount={FailedCount}",
               final.JobId,
               final.Status,
-              final.TotalSectionCount,
-              final.CompletedSectionCount,
-              final.FailedSectionCount);
+              final.TotalBlockCount,
+              final.CompletedBlockCount,
+              final.FailedBlockCount);
 
             ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
           }
@@ -881,16 +881,16 @@
     // done payload, or a polled response) — the rail's Setup row completes
     // on it.
     runEventSeen = true;
-    generatedSections = response.GeneratedSections;
+    generatedSections = response.GeneratedBlocks;
 
     if (response.AssembledDocument != null)
     {
       // v6 deliverable: present on Completed payloads only, kept once seen.
       assembledDocument = response.AssembledDocument;
     }
-    failedSectionErrors = response.FailedSections;
-    totalSectionCount = response.TotalSectionCount == 0 ? sectionSnapshots.Count : response.TotalSectionCount;
-    completedSectionCount = response.CompletedSectionCount + response.FailedSectionCount;
+    failedSectionErrors = response.FailedBlocks;
+    totalSectionCount = response.TotalBlockCount == 0 ? sectionSnapshots.Count : response.TotalBlockCount;
+    completedSectionCount = response.CompletedBlockCount + response.FailedBlockCount;
 
     if (response.Status != "Failed"
         && response.Nodes is { Count: > 0 }
@@ -1255,14 +1255,14 @@
     public string Standard { get; set; }
   }
 
-  private sealed record ConsultGenerationSectionCompletedEvent(
+  private sealed record ConsultGenerationBlockCompletedEvent(
     string JobId,
-    string SectionId,
+    string BlockId,
     string Text);
 
-  private sealed record ConsultGenerationSectionFailedEvent(
+  private sealed record ConsultGenerationBlockFailedEvent(
     string JobId,
-    string SectionId,
+    string BlockId,
     string Error);
 
   private sealed record ConsultGenerationNodeCompletedEvent(
@@ -1273,10 +1273,10 @@
     int CompletedNodeCount,
     int TotalNodeCount);
 
-  private sealed record ConsultGenerationSectionProseStepEvent(
+  private sealed record ConsultGenerationItemStepEvent(
     string JobId,
-    string SectionId,
-    string SectionName,
+    string ItemId,
+    string ItemName,
     string Step,
     string Label,
     string Message,
