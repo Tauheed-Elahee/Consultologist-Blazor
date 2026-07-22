@@ -58,6 +58,25 @@
                 </label>
                 @if (node.Aggregate == null)
                 {
+                    @if (AllowPromptChange)
+                    {
+                        <label class="node-field">
+                            <span>prompt</span>
+                            <select class="binding-row__select"
+                                    value="@(node.Prompt ?? string.Empty)"
+                                    @onchange="args => EmitNodeChangeAsync(node, prompt: args.Value?.ToString())"
+                                    aria-label="Node prompt">
+                                @if (node.Prompt != null && !PromptOptions.Contains(node.Prompt))
+                                {
+                                    <option value="@node.Prompt">@node.Prompt</option>
+                                }
+                                @foreach (var promptId in PromptOptions)
+                                {
+                                    <option value="@promptId">@promptId</option>
+                                }
+                            </select>
+                        </label>
+                    }
                     <label class="node-field">
                         <span>for each</span>
                         <select class="binding-row__select"
@@ -248,8 +267,8 @@
 
     public sealed record VariableAdd(string NodeId, string Variable, string From, string? As);
 
-    /// <summary>The node's full effective field tuple after one field changed (#117).</summary>
-    public sealed record NodeChange(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
+    /// <summary>The node's full effective field tuple after one field changed (#117/#170).</summary>
+    public sealed record NodeChange(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty, string? Prompt = null);
 
     /// <summary>An aggregator's full effective ordered source list after one change (#117).</summary>
     public sealed record AggregateChange(string NodeId, List<string> Sources);
@@ -259,6 +278,8 @@
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
     [Parameter] public IReadOnlyList<string> Collections { get; set; } = Array.Empty<string>();
     [Parameter] public IReadOnlyList<string> ContractOptions { get; set; } = Array.Empty<string>();
+    [Parameter] public IReadOnlyList<string> PromptOptions { get; set; } = Array.Empty<string>();
+    [Parameter] public bool AllowPromptChange { get; set; }
     [Parameter] public string? Only { get; set; }
     [Parameter] public Func<string, bool>? NodeModified { get; set; }
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> RemovedNodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
@@ -309,7 +330,8 @@
         string? label = null,
         string? forEach = null,
         string? outputSchema = null,
-        string? failIfEmpty = null)
+        string? failIfEmpty = null,
+        string? prompt = null)
     {
         var effectiveLabel = label ?? node.Label;
         var effectiveForEach = forEach != null ? (forEach.Length == 0 ? null : forEach) : node.ForEach;
@@ -317,6 +339,7 @@
         var effectiveFailIfEmpty = failIfEmpty != null
             ? (failIfEmpty.Length == 0 ? null : failIfEmpty)
             : node.FailIfEmpty;
+        var effectivePrompt = string.IsNullOrEmpty(prompt) ? node.Prompt : prompt;
 
         // Dropping the contract drops its empty-output message too.
         if (effectiveSchema is null)
@@ -324,7 +347,7 @@
             effectiveFailIfEmpty = null;
         }
 
-        await OnNodeChanged.InvokeAsync(new NodeChange(node.Id, effectiveLabel, effectiveForEach, effectiveSchema, effectiveFailIfEmpty));
+        await OnNodeChanged.InvokeAsync(new NodeChange(node.Id, effectiveLabel, effectiveForEach, effectiveSchema, effectiveFailIfEmpty, effectivePrompt));
     }
 
     private sealed class AddForm

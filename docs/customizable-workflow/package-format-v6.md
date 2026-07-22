@@ -79,10 +79,11 @@ v2** (SHA-256 of the document's UTF-8 bytes; v1 remains for v5 jobs).
 ## The v6 closure set
 
 Kept from v5: schema-catalog match; cross-collection item edges closed; one
-`result`; no conditionals/loops/expressions; orphan prompts are errors and
-each prompt is referenced by exactly one node; acyclicity (aggregate edges
-included); binding/variable set equality; per-item renderer rules;
-templating gates.
+`result`; no conditionals/loops/expressions; orphan prompts are errors —
+each prompt must be referenced by **at least one** node (v6 relaxes v5's
+exactly-one rule: a prompt may be shared by several nodes, each binding the
+prompt's variables itself); acyclicity (aggregate edges included);
+binding/variable set equality; per-item renderer rules; templating gates.
 
 New in v6:
 

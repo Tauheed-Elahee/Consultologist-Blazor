@@ -342,9 +342,14 @@ public static class WorkflowPackageValidator
             errors.Add($"Prompt '{orphan}' is not referenced by any node.");
         }
 
-        foreach (var overused in promptReferenceCounts.Where(pair => pair.Value > 1).Select(pair => pair.Key))
+        // specVersion 6 allows prompt sharing — each using node binds the
+        // prompt's variables itself. v5's published 1:1 rule stays frozen.
+        if (!v6)
         {
-            errors.Add($"Prompt '{overused}' is referenced by more than one node.");
+            foreach (var overused in promptReferenceCounts.Where(pair => pair.Value > 1).Select(pair => pair.Key))
+            {
+                errors.Add($"Prompt '{overused}' is referenced by more than one node.");
+            }
         }
 
         if (!v6)
