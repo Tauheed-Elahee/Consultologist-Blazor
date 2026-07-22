@@ -39,6 +39,12 @@
                     }
                 </p>
             </div>
+            @if (Editable && !node.IsResult && OnNodeRemoved.HasDelegate)
+            {
+                <button type="button" class="add-variable__submit" @onclick="() => OnNodeRemoved.InvokeAsync(node.Id)">
+                    Remove node
+                </button>
+            }
         </div>
         @if (Editable)
         {
@@ -148,7 +154,7 @@
             }
         </ul>
         }
-        @if (Editable && node.Prompt != null)
+        @if (Editable && node.Prompt != null && OnVariableAdded.HasDelegate)
         {
             var form = FormFor(node.Id);
             <details class="add-variable">
@@ -180,6 +186,21 @@
     </article>
 }
 
+@foreach (var removedNode in (Only == null ? RemovedNodes : RemovedNodes.Where(n => n.Id == Only)))
+{
+    <article class="template-section template-section--removed">
+        <div class="template-section__header">
+            <div>
+                <h3 class="panel-title"><span class="node-strike">@removedNode.Label</span> <span class="muted-text">— removed</span></h3>
+                <p class="muted-text">@removedNode.Id · its prompt is removed with it</p>
+            </div>
+            <button type="button" class="add-variable__submit" @onclick="() => OnNodeRestored.InvokeAsync(removedNode.Id)">
+                Restore
+            </button>
+        </div>
+    </article>
+}
+
 @code {
     /// <summary>One effective binding row: current values plus the manifest's originals (null for pending-added variables).</summary>
     public sealed record BindingRow(string Variable, string From, string? As, string? OriginalFrom, string? OriginalAs, bool IsNew);
@@ -198,6 +219,9 @@
     [Parameter] public IReadOnlyList<string> ContractOptions { get; set; } = Array.Empty<string>();
     [Parameter] public string? Only { get; set; }
     [Parameter] public Func<string, bool>? NodeModified { get; set; }
+    [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> RemovedNodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
+    [Parameter] public EventCallback<string> OnNodeRemoved { get; set; }
+    [Parameter] public EventCallback<string> OnNodeRestored { get; set; }
     [Parameter] public Func<WorkflowManifestReader.NodeView, IReadOnlyList<BindingRow>>? RowsFor { get; set; }
     [Parameter] public Func<WorkflowManifestReader.NodeView, string, string?>? ValidateVariableName { get; set; }
     [Parameter] public EventCallback<BindingChange> OnBindingChanged { get; set; }
