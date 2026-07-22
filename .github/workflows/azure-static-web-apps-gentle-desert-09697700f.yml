@@ -16,6 +16,14 @@ on:
       - main
   workflow_dispatch:
 
+# One run per branch at a time, newest wins. The close-event run is always
+# the newest in its group, so a superseded in-flight PR build can never
+# finish after the close and re-create the staging environment (#156 — the
+# leak was exactly that race, not a close-job failure).
+concurrency:
+  group: swa-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build_and_deploy_job:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')

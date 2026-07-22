@@ -146,3 +146,26 @@ via `appsettings.Development.json`), not by environment variables:
   and `ConsultGenerationUrl` were removed with their legacy endpoints in milestone 3.)
 - `AzureFunction:TimeoutSeconds` — HTTP client timeout for AI calls (default 240 when
   absent; shipped value 300).
+
+## Static Web App staging environments (#156)
+
+Every PR gets a staging environment on the SWA (`consultologist-blazor`);
+the workflow's close job removes it when the PR closes. The historical
+leak was a race, not a close failure: a still-in-flight PR build could
+finish *after* the close job and re-create the environment. The workflow's
+`concurrency` group (one run per branch, newest wins, superseded builds
+canceled) makes that impossible — the close-event run is always the
+newest in its branch group.
+
+Manual sweep, should anything ever slip through (also mind the
+10-environment cap):
+
+```bash
+az staticwebapp environment list -n consultologist-blazor \
+  --query "[].{name:name, source:sourceBranch}" -o table
+az staticwebapp environment delete -n consultologist-blazor \
+  --environment-name <name> --yes
+```
+
+An automated no-open-PR sweep becomes a trivial scheduled job once #16
+establishes GitHub→Azure OIDC for CI.
