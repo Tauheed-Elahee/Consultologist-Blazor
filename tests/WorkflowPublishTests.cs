@@ -236,6 +236,33 @@ public class WorkflowPackagePublisherTests
     }
 
     [Fact]
+    public async Task Publish_AcceptsAggregateEditAndFlippedResult_TheEditorShape()
+    {
+        // Aggregator authoring (#117), v6: a second aggregator over reordered
+        // sources becomes the deliverable; the old result aggregator joins its
+        // sources so reachability holds.
+        var (publisher, writer, _) = CreatePublisher();
+        var manifest = V6Fixtures.MultiCollection();
+        manifest = manifest with
+        {
+            Nodes = manifest.Nodes!
+                .Append(new WorkflowNodeSpec("assemble-alt", "Alternate assembly",
+                    Aggregate: new List<string> { "node:contextualize", "node:assemble-note" }))
+                .ToList(),
+            Result = "node:assemble-alt"
+        };
+
+        var result = await publisher.PublishAsync(OwnerId, new WorkflowPackagePublishRequest(SourceRef, manifest, V6Fixtures.Files(manifest)), CancellationToken.None);
+
+        Assert.True(result.Succeeded, string.Join(" | ", result.Errors));
+        var stored = writer.ReadManifest(AccountName, "v2026.07.1");
+        Assert.Equal("node:assemble-alt", stored.Result);
+        Assert.Equal(
+            new[] { "node:contextualize", "node:assemble-note" },
+            stored.Nodes!.Single(n => n.Id == "assemble-alt").Aggregate);
+    }
+
+    [Fact]
     public async Task Publish_AcceptsAnAddedNodeWithItsPrompt_TheEditorShape()
     {
         // Node authoring (#117): a new forEach node born with its 1:1 prompt

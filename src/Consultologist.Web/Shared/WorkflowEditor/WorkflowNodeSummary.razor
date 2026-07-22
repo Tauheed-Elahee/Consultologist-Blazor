@@ -108,17 +108,56 @@
         }
         @if (node.Aggregate != null)
         {
-            @* Deterministic aggregation: sources in declared order (v6). *@
-            <ul class="binding-list">
-                @foreach (var sourceRef in node.Aggregate)
-                {
-                    <li class="binding-row muted-text">
-                        <code>@sourceRef</code>
-                        <span aria-hidden="true">→</span>
-                        <span>collected in order</span>
-                    </li>
-                }
-            </ul>
+            @* Deterministic aggregation: sources in declared order (v6) — the
+               order is the assembled document's order. *@
+            @if (Editable && OnAggregateChanged.HasDelegate)
+            {
+                <ul class="binding-list">
+                    @for (var i = 0; i < node.Aggregate.Count; i++)
+                    {
+                        var index = i;
+                        var currentNode = node;
+                        <li class="binding-row">
+                            <span class="muted-text">@(index + 1).</span>
+                            <code>@node.Aggregate[index]</code>
+                            <button type="button" class="aggregate-row__button" title="Move up"
+                                    disabled="@(index == 0)"
+                                    @onclick="() => MoveAggregateSourceAsync(currentNode, index, -1)">↑</button>
+                            <button type="button" class="aggregate-row__button" title="Move down"
+                                    disabled="@(index == node.Aggregate.Count - 1)"
+                                    @onclick="() => MoveAggregateSourceAsync(currentNode, index, +1)">↓</button>
+                            <button type="button" class="aggregate-row__button" title="Remove source"
+                                    disabled="@(node.Aggregate.Count == 1)"
+                                    @onclick="() => RemoveAggregateSourceAsync(currentNode, index)">×</button>
+                        </li>
+                    }
+                </ul>
+                <div class="add-variable__form">
+                    <select class="binding-row__select"
+                            value=""
+                            @onchange="args => AppendAggregateSourceAsync(node, args.Value?.ToString())"
+                            aria-label="Add aggregate source">
+                        <option value="">+ add source…</option>
+                        @foreach (var candidate in Nodes.Where(other => other.Id != node.Id && !node.Aggregate.Contains($"node:{other.Id}")))
+                        {
+                            <option value="@($"node:{candidate.Id}")">node:@candidate.Id</option>
+                        }
+                    </select>
+                </div>
+            }
+            else
+            {
+                <ul class="binding-list">
+                    @foreach (var sourceRef in node.Aggregate)
+                    {
+                        <li class="binding-row muted-text">
+                            <code>@sourceRef</code>
+                            <span aria-hidden="true">→</span>
+                            <span>collected in order</span>
+                        </li>
+                    }
+                </ul>
+            }
         }
         else
         {
@@ -212,6 +251,9 @@
     /// <summary>The node's full effective field tuple after one field changed (#117).</summary>
     public sealed record NodeChange(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
 
+    /// <summary>An aggregator's full effective ordered source list after one change (#117).</summary>
+    public sealed record AggregateChange(string NodeId, List<string> Sources);
+
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
     [Parameter] public bool Editable { get; set; }
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
@@ -227,6 +269,33 @@
     [Parameter] public EventCallback<BindingChange> OnBindingChanged { get; set; }
     [Parameter] public EventCallback<VariableAdd> OnVariableAdded { get; set; }
     [Parameter] public EventCallback<NodeChange> OnNodeChanged { get; set; }
+    [Parameter] public EventCallback<AggregateChange> OnAggregateChanged { get; set; }
+
+    private async Task MoveAggregateSourceAsync(WorkflowManifestReader.NodeView node, int index, int delta)
+    {
+        var sources = node.Aggregate!.ToList();
+        (sources[index], sources[index + delta]) = (sources[index + delta], sources[index]);
+        await OnAggregateChanged.InvokeAsync(new AggregateChange(node.Id, sources));
+    }
+
+    private async Task RemoveAggregateSourceAsync(WorkflowManifestReader.NodeView node, int index)
+    {
+        var sources = node.Aggregate!.ToList();
+        sources.RemoveAt(index);
+        await OnAggregateChanged.InvokeAsync(new AggregateChange(node.Id, sources));
+    }
+
+    private async Task AppendAggregateSourceAsync(WorkflowManifestReader.NodeView node, string? sourceRef)
+    {
+        if (string.IsNullOrEmpty(sourceRef) || node.Aggregate!.Contains(sourceRef))
+        {
+            return;
+        }
+
+        var sources = node.Aggregate!.ToList();
+        sources.Add(sourceRef);
+        await OnAggregateChanged.InvokeAsync(new AggregateChange(node.Id, sources));
+    }
 
     private static string ForEachCollectionId(string forEach) =>
         forEach.StartsWith("data:", StringComparison.Ordinal) ? forEach["data:".Length..] : forEach;
