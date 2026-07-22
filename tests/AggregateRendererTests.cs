@@ -127,27 +127,29 @@ public class AssembledDocumentEntityTests
     }
 
     [Fact]
-    public void ToResponse_TotalCount_IsTheDeliverableBlockCount_NotTheSectionDictSize()
+    public void ToResponse_SeparatesBlocksFromItemProgress()
     {
         var (entity, state) = CreateEntity();
-        // A v6 run adds per-item PROGRESS sections under plain item ids beside
-        // the block sections created up front — the total must stay the block
-        // count from the stored scalar.
-        state().GetOrAddSection("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
-        state().GetOrAddSection("item-1", "Block one").Status = ConsultGenerationSectionStatuses.Running;
+        // The split model (#175): blocks carry the deliverable, item progress
+        // carries the prose ticks — neither leaks into the other's response
+        // fields, and the total is the block count from the stored scalar.
+        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
+        state().GetOrAddItemProgress("item-1", "Item one").CompletedProseStepCount = 2;
 
         var response = state().ToResponse();
 
         Assert.Equal(1, response.TotalSectionCount);
         Assert.Equal(1, response.CompletedSectionCount);
+        Assert.Equal(new[] { "b1" }, response.GeneratedSections.Keys.ToArray());
+        Assert.Equal(new[] { "item-1" }, response.SectionProseProgress!.Keys.ToArray());
     }
 
     [Fact]
     public void ToResponse_CompletedV5Job_KeepsHashV1()
     {
         var (entity, state) = CreateEntity();
-        state().GetOrAddSection("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
-        state().GetOrAddSection("b1", "Block one").GeneratedText = "text";
+        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
+        state().GetOrAddBlock("b1", "Block one").GeneratedText = "text";
         state().Status = ConsultGenerationJobStatuses.Completed;
 
         var response = state().ToResponse();
