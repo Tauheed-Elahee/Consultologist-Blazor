@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Azure;
+using Azure.Core;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 
@@ -25,21 +26,10 @@ internal sealed class TableConsultGenerationJobIndexStore : IConsultGenerationJo
     private readonly SemaphoreSlim _ensureTableLock = new(1, 1);
     private bool _tableEnsured;
 
-    public TableConsultGenerationJobIndexStore(IConfiguration configuration)
+    public TableConsultGenerationJobIndexStore(IConfiguration configuration, TokenCredential credential)
     {
-        var connectionStringName = configuration["ConsultGenerationJobIndexStorage:ConnectionStringName"]
-            ?? configuration["AccountStorage:ConnectionStringName"]
-            ?? "AzureWebJobsStorage";
-        var connectionString = configuration[connectionStringName]
-            ?? Environment.GetEnvironmentVariable(connectionStringName);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                $"{connectionStringName} is not configured for consult generation job index storage.");
-        }
-
-        _index = new TableClient(connectionString, IndexTableName);
+        _index = StorageTables.CreateClient(
+            configuration, credential, IndexTableName, "ConsultGenerationJobIndexStorage", "AccountStorage");
     }
 
     public async Task UpsertAsync(ConsultGenerationJobIndexEntry entry, CancellationToken cancellationToken)

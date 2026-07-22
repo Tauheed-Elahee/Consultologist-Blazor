@@ -21,6 +21,15 @@ Name: AzureWebJobsStorage
 Value: <storage account connection string>
 ```
 
+> **Production note (#10):** the deployed app uses the *identity-based* form
+> instead of a connection string — `AzureWebJobsStorage__accountName`,
+> `__blobServiceUri`, `__queueServiceUri`, `__tableServiceUri`,
+> `__credential=managedidentity`, and `__clientId` (the user-assigned
+> identity). The identity needs Storage Blob Data Owner, Storage Queue Data
+> Contributor, and Storage Table Data Contributor on the account; shared-key
+> access is disabled on `consultologistjobqueue`. The connection-string form
+> below remains for local development (Azurite).
+
 4. For non-Flex Consumption Function Apps, also confirm this setting exists:
 
 ```text

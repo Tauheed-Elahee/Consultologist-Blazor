@@ -103,20 +103,24 @@ disagreement, not transient.
 
 ## Storage stores (Azure Tables)
 
-Each store reads a setting *name*, then resolves that named setting as the connection
-string. All default to `AzureWebJobsStorage`.
+Entra ID first (#10, mirroring the workflow-package registry): when a
+`…__TableServiceUri` setting is present the store authenticates as the app's
+managed identity (the `AZURE_CLIENT_ID` user-assigned identity needs
+**Storage Table Data Contributor** on the account). The named connection
+string remains only as the local-dev (Azurite) fallback.
 
 | Variable | Read in |
 |---|---|
-| `AccountStorage__ConnectionStringName` | `Auth/AccountStore.cs`, `Auth/AccountSettingsStore.cs` (also the fallback name for the two below) |
-| `ConsultGenerationJobEventStorage__ConnectionStringName` | `Jobs/ConsultGenerationJobEventStore.cs` |
-| `ConsultGenerationJobIndexStorage__ConnectionStringName` | `Jobs/ConsultGenerationJobIndexStore.cs` |
+| `AccountStorage__TableServiceUri` | `Auth/AccountStore.cs`, `Auth/AccountSettingsStore.cs` (also the fallback URI for the two below). Production: `https://consultologistjobqueue.table.core.windows.net` |
+| `ConsultGenerationJobEventStorage__TableServiceUri` | `Jobs/ConsultGenerationJobEventStore.cs` (optional override) |
+| `ConsultGenerationJobIndexStorage__TableServiceUri` | `Jobs/ConsultGenerationJobIndexStore.cs` (optional override) |
+| `AccountStorage__ConnectionStringName` | Local-dev fallback name (default `AzureWebJobsStorage`); same chain as before for the two job stores |
 
 ## Platform / runtime (not set by application code)
 
 | Variable | Notes |
 |---|---|
-| `AzureWebJobsStorage` | Storage connection string; required by the Functions host and Durable Functions, and the default for every store above. Locally: `UseDevelopmentStorage=true` (Azurite). |
+| `AzureWebJobsStorage` | Local-dev only (`UseDevelopmentStorage=true`, Azurite). In production the host and Durable Functions use the identity-based form instead: `AzureWebJobsStorage__accountName` + `__blobServiceUri`/`__queueServiceUri`/`__tableServiceUri` + `__credential=managedidentity` + `__clientId` (the user-assigned identity, which needs Storage Blob Data Owner, Queue Data Contributor, and Table Data Contributor on the account). Shared-key access is disabled on `consultologistjobqueue` (#10). |
 | `FUNCTIONS_WORKER_RUNTIME` | Must be `dotnet-isolated`. |
 | `WEBSITE_INSTANCE_ID` | Provided by Azure; the code only reads it to detect "running in Azure". Never set manually. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Telemetry destination. |
