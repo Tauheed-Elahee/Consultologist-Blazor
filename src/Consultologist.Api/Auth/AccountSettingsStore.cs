@@ -1,4 +1,5 @@
 using Azure;
+using Azure.Core;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 
@@ -16,18 +17,9 @@ public sealed class AccountSettingsStore : IAccountSettingsStore
     private const string AccountSettingsTableName = "AccountSettings";
     private readonly TableClient _settings;
 
-    public AccountSettingsStore(IConfiguration configuration)
+    public AccountSettingsStore(IConfiguration configuration, TokenCredential credential)
     {
-        var connectionStringName = configuration["AccountStorage:ConnectionStringName"] ?? "AzureWebJobsStorage";
-        var connectionString = configuration[connectionStringName]
-            ?? Environment.GetEnvironmentVariable(connectionStringName);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException($"{connectionStringName} is not configured for account settings storage.");
-        }
-
-        _settings = new TableClient(connectionString, AccountSettingsTableName);
+        _settings = StorageTables.CreateClient(configuration, credential, AccountSettingsTableName, "AccountStorage");
     }
 
     public async Task<AccountSetting?> GetAsync(string appUserId, string key, CancellationToken cancellationToken)

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Azure;
+using Azure.Core;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -22,21 +23,12 @@ public sealed class AccountStore : IAccountStore
     private readonly TableClient _userIdentityLinks;
     private readonly ILogger<AccountStore> _logger;
 
-    public AccountStore(IConfiguration configuration, ILogger<AccountStore> logger)
+    public AccountStore(IConfiguration configuration, TokenCredential credential, ILogger<AccountStore> logger)
     {
         _logger = logger;
-        var connectionStringName = configuration["AccountStorage:ConnectionStringName"] ?? "AzureWebJobsStorage";
-        var connectionString = configuration[connectionStringName]
-            ?? Environment.GetEnvironmentVariable(connectionStringName);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException($"{connectionStringName} is not configured for account storage.");
-        }
-
-        _appUsers = new TableClient(connectionString, AppUsersTableName);
-        _identityLinks = new TableClient(connectionString, IdentityLinksTableName);
-        _userIdentityLinks = new TableClient(connectionString, UserIdentityLinksTableName);
+        _appUsers = StorageTables.CreateClient(configuration, credential, AppUsersTableName, "AccountStorage");
+        _identityLinks = StorageTables.CreateClient(configuration, credential, IdentityLinksTableName, "AccountStorage");
+        _userIdentityLinks = StorageTables.CreateClient(configuration, credential, UserIdentityLinksTableName, "AccountStorage");
     }
 
     public async Task<AppAccount> ResolveOrCreateAsync(AuthenticatedUser user, CancellationToken cancellationToken)

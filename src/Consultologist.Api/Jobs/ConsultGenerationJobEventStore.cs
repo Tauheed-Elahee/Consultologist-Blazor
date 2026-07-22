@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Azure;
+using Azure.Core;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -37,21 +38,12 @@ internal sealed class TableConsultGenerationJobEventStore : IConsultGenerationJo
 
     public TableConsultGenerationJobEventStore(
         IConfiguration configuration,
+        TokenCredential credential,
         ILogger<TableConsultGenerationJobEventStore> logger)
     {
         _logger = logger;
-        var connectionStringName = configuration["ConsultGenerationJobEventStorage:ConnectionStringName"]
-            ?? configuration["AccountStorage:ConnectionStringName"]
-            ?? "AzureWebJobsStorage";
-        var connectionString = configuration[connectionStringName]
-            ?? Environment.GetEnvironmentVariable(connectionStringName);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException($"{connectionStringName} is not configured for consult generation job event storage.");
-        }
-
-        _events = new TableClient(connectionString, EventsTableName);
+        _events = StorageTables.CreateClient(
+            configuration, credential, EventsTableName, "ConsultGenerationJobEventStorage", "AccountStorage");
     }
 
     public async Task<IReadOnlyList<ConsultGenerationJobStoredEvent>> AppendAsync(
