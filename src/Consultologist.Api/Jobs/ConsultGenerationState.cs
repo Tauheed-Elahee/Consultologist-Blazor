@@ -44,9 +44,9 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
                 State.CreatedAtUtc = DateTimeOffset.UtcNow;
             }
 
-            if (State.TotalSectionCount == 0)
+            if (State.TotalBlockCount == 0)
             {
-                State.TotalSectionCount = input.Items.Count;
+                State.TotalBlockCount = input.Items.Count;
             }
 
             foreach (var item in input.Items)
@@ -57,7 +57,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
 
         State.WorkflowPackage ??= input.WorkflowPackage;
         State.EffectiveInputHash ??= input.EffectiveInputHash;
-        State.SectionSteps ??= input.SectionSteps?.ToList();
+        State.ItemSteps ??= input.ItemSteps?.ToList();
         State.Nodes ??= input.Nodes?.ToList();
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
         State.CatalogRef ??= input.CatalogRef;
@@ -75,15 +75,15 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public async Task CompleteSection(SectionGenerationResult result)
+    public async Task CompleteBlock(BlockGenerationResult result)
     {
         var state = EnsureState();
-        var block = state.GetOrAddBlock(result.SectionId, result.SectionName);
-        block.Status = ConsultGenerationSectionStatuses.Completed;
+        var block = state.GetOrAddBlock(result.BlockId, result.BlockName);
+        block.Status = ConsultGenerationBlockStatuses.Completed;
         block.GeneratedText = result.GeneratedText ?? string.Empty;
         block.Error = null;
         block.CompletedAtUtc = DateTimeOffset.UtcNow;
-        state.History.Add(new JobHistoryEvent("success", $"Section completed: {result.SectionName}", null, DateTimeOffset.UtcNow));
+        state.History.Add(new JobHistoryEvent("success", $"Section completed: {result.BlockName}", null, DateTimeOffset.UtcNow));
         State = state;
 
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
@@ -104,15 +104,15 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
-    public async Task FailSection(SectionGenerationResult result)
+    public async Task FailBlock(BlockGenerationResult result)
     {
         var state = EnsureState();
-        var block = state.GetOrAddBlock(result.SectionId, result.SectionName);
-        block.Status = ConsultGenerationSectionStatuses.Failed;
+        var block = state.GetOrAddBlock(result.BlockId, result.BlockName);
+        block.Status = ConsultGenerationBlockStatuses.Failed;
         block.GeneratedText = null;
         block.Error = string.IsNullOrWhiteSpace(result.Error) ? "Section generation failed." : result.Error;
         block.CompletedAtUtc = DateTimeOffset.UtcNow;
-        state.History.Add(new JobHistoryEvent("failure", $"Section failed: {result.SectionName}", block.Error, DateTimeOffset.UtcNow));
+        state.History.Add(new JobHistoryEvent("failure", $"Section failed: {result.BlockName}", block.Error, DateTimeOffset.UtcNow));
         State = state;
 
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
@@ -138,9 +138,9 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         output.CompletedAtUtc = DateTimeOffset.UtcNow;
 
         var progress = state.GetOrAddItemProgress(input.ItemId, input.ItemName);
-        progress.ProseStepStatus = input.NodeId;
-        progress.CompletedProseStepCount = input.CompletedChainCount;
-        progress.TotalProseStepCount = input.TotalChainCount;
+        progress.Step = input.NodeId;
+        progress.CompletedStepCount = input.CompletedChainCount;
+        progress.TotalStepCount = input.TotalChainCount;
         State = state;
     }
 
@@ -228,7 +228,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
             state.History.Add(new JobHistoryEvent("failure", "Failed", input.Error, DateTimeOffset.UtcNow));
 
             foreach (var block in state.Blocks.Values
-                .Where(b => b.Status is not (ConsultGenerationSectionStatuses.Completed or ConsultGenerationSectionStatuses.Failed))
+                .Where(b => b.Status is not (ConsultGenerationBlockStatuses.Completed or ConsultGenerationBlockStatuses.Failed))
                 .OrderBy(b => b.Id, StringComparer.Ordinal))
             {
                 state.History.Add(new JobHistoryEvent("skipped", $"Section not reached: {block.Name}", null, DateTimeOffset.UtcNow));
@@ -258,7 +258,7 @@ public sealed record ConsultGenerationOrchestrationInput(
     string AppUserId,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    IReadOnlyList<ConsultItemStepDescriptor>? ItemSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     string? ResultNodeId = null,
     IReadOnlyList<IReadOnlyDictionary<string, string>>? Items = null,
@@ -277,7 +277,7 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<IReadOnlyDictionary<string, string>> Items,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    IReadOnlyList<ConsultItemStepDescriptor>? ItemSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     int EffectiveInputHashVersion = 2,
     string? CatalogRef = null);
@@ -296,7 +296,7 @@ public sealed record ConsultGenerationNodeFailure(
     string Label,
     string Status,
     string Error,
-    IReadOnlyList<ConsultSectionStepDescriptor> SkippedNodes);
+    IReadOnlyList<ConsultItemStepDescriptor> SkippedNodes);
 
 public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
 
@@ -323,7 +323,7 @@ public sealed class ConsultGenerationJobState
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
-    public int TotalSectionCount { get; set; }
+    public int TotalBlockCount { get; set; }
     public int SchemaVersion { get; set; } = 2;
     public string? AnalysisStatus { get; set; }
     public string? AnalysisError { get; set; }
@@ -356,7 +356,7 @@ public sealed class ConsultGenerationJobState
     // (output-contracts@vYYYY.MM.N) — the registry artifact resolving every
     // agentVersions entry (#93; docs/customizable-workflow/provenance.md).
     public string? CatalogRef { get; set; }
-    public List<ConsultSectionStepDescriptor>? SectionSteps { get; set; }
+    public List<ConsultItemStepDescriptor>? ItemSteps { get; set; }
     public List<ConsultNodeDescriptor>? Nodes { get; set; }
     public Dictionary<string, ConsultNodeOutputState>? NodeOutputs { get; set; }
 
@@ -375,14 +375,14 @@ public sealed class ConsultGenerationJobState
             AppUserId = appUserId,
             Status = ConsultGenerationJobStatuses.Queued,
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            TotalSectionCount = items.Count,
+            TotalBlockCount = items.Count,
             Blocks = items.ToDictionary(
                 item => item["id"],
                 item => new ConsultGenerationBlockState
                 {
                     Id = item["id"],
                     Name = item.GetValueOrDefault("name", item["id"]),
-                    Status = ConsultGenerationSectionStatuses.Pending
+                    Status = ConsultGenerationBlockStatuses.Pending
                 })
         };
     }
@@ -396,9 +396,9 @@ public sealed class ConsultGenerationJobState
             CreatedAtUtc,
             StartedAtUtc,
             CompletedAtUtc,
-            TotalSectionCount,
-            Blocks.Values.Count(b => b.Status == ConsultGenerationSectionStatuses.Completed),
-            Blocks.Values.Count(b => b.Status == ConsultGenerationSectionStatuses.Failed));
+            TotalBlockCount,
+            Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Completed),
+            Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Failed));
     }
 
     public ConsultNodeOutputState GetOrAddNodeOutput(string nodeId, string label)
@@ -422,7 +422,7 @@ public sealed class ConsultGenerationJobState
             {
                 Id = blockId,
                 Name = blockName,
-                Status = ConsultGenerationSectionStatuses.Pending
+                Status = ConsultGenerationBlockStatuses.Pending
             };
 
             Blocks[blockId] = block;
@@ -445,22 +445,22 @@ public sealed class ConsultGenerationJobState
     public ConsultGenerationJobResponse ToResponse()
     {
         var completedSections = Blocks.Values
-            .Where(block => block.Status == ConsultGenerationSectionStatuses.Completed)
+            .Where(block => block.Status == ConsultGenerationBlockStatuses.Completed)
             .ToDictionary(block => block.Id, block => block.GeneratedText ?? string.Empty);
 
         var failedSections = Blocks.Values
-            .Where(block => block.Status == ConsultGenerationSectionStatuses.Failed)
+            .Where(block => block.Status == ConsultGenerationBlockStatuses.Failed)
             .ToDictionary(block => block.Id, block => block.Error ?? "Section generation failed.");
 
-        var sectionProseProgress = ItemProgress.Values
+        var itemProgress = ItemProgress.Values
             .ToDictionary(
                 progress => progress.Id,
-                progress => new ConsultGenerationSectionProseProgress(
+                progress => new ConsultGenerationItemProgress(
                     progress.Id,
                     progress.Name,
-                    progress.ProseStepStatus,
-                    progress.CompletedProseStepCount,
-                    progress.TotalProseStepCount));
+                    progress.Step,
+                    progress.CompletedStepCount,
+                    progress.TotalStepCount));
 
         return new ConsultGenerationJobResponse(
             JobId,
@@ -468,7 +468,7 @@ public sealed class ConsultGenerationJobState
             Status,
             // The stored scalar (the phase-7 decision), with the block count as
             // the seed-time fallback.
-            TotalSectionCount > 0 ? TotalSectionCount : Blocks.Count,
+            TotalBlockCount > 0 ? TotalBlockCount : Blocks.Count,
             completedSections.Count,
             failedSections.Count,
             completedSections,
@@ -479,7 +479,7 @@ public sealed class ConsultGenerationJobState
             AnalysisError,
             CompletedStageCount,
             TotalStageCount,
-            sectionProseProgress,
+            itemProgress,
             CreatedAtUtc: CreatedAtUtc,
             StartedAtUtc: StartedAtUtc,
             CompletedAtUtc: CompletedAtUtc,
@@ -487,7 +487,7 @@ public sealed class ConsultGenerationJobState
             History: History.Count > 0 ? History.AsReadOnly() : null,
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
-            SectionSteps: SectionSteps,
+            ItemSteps: ItemSteps,
             Nodes: Nodes,
             NodeOutputs: NodeOutputs?.ToDictionary(
                 pair => pair.Key,
@@ -523,7 +523,7 @@ public sealed class ConsultGenerationBlockState
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string Status { get; set; } = ConsultGenerationSectionStatuses.Pending;
+    public string Status { get; set; } = ConsultGenerationBlockStatuses.Pending;
     public string? GeneratedText { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
@@ -534,9 +534,9 @@ public sealed class ConsultGenerationItemProgressState
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string? ProseStepStatus { get; set; }
-    public int CompletedProseStepCount { get; set; }
-    public int TotalProseStepCount { get; set; } = ConsultGenerationSectionProseSteps.TotalStepCount;
+    public string? Step { get; set; }
+    public int CompletedStepCount { get; set; }
+    public int TotalStepCount { get; set; } = ConsultGenerationItemSteps.TotalStepCount;
 }
 
 /// <summary>Per-node run state: status, concepts (for JSON nodes), and provenance hashes.</summary>
@@ -576,16 +576,16 @@ public static class ConsultGenerationActivityNames
     public const string RunPromptNode = "run-prompt-node";
 }
 
-public static class ConsultGenerationSectionProseSteps
+public static class ConsultGenerationItemSteps
 {
     /// <summary>The single SSE event name for every prose step; the payload carries the step id and label.</summary>
-    public const string EventName = "section-prose-step";
+    public const string EventName = "item-step";
 
     /// <summary>Deserialization default for pre-milestone-3 job snapshots without a step list.</summary>
     public const int TotalStepCount = 3;
 }
 
-public static class ConsultGenerationSectionStatuses
+public static class ConsultGenerationBlockStatuses
 {
     public const string Pending = "Pending";
     public const string Running = "Running";

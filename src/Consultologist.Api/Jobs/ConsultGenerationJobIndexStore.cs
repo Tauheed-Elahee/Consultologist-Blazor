@@ -113,9 +113,9 @@ internal sealed class TableConsultGenerationJobIndexStore : IConsultGenerationJo
             CreatedAtUtc = entry.CreatedAtUtc,
             StartedAtUtc = entry.StartedAtUtc,
             CompletedAtUtc = entry.CompletedAtUtc,
-            TotalSectionCount = entry.TotalSectionCount,
-            CompletedSectionCount = entry.CompletedSectionCount,
-            FailedSectionCount = entry.FailedSectionCount
+            TotalBlockCount = entry.TotalBlockCount,
+            CompletedBlockCount = entry.CompletedBlockCount,
+            FailedBlockCount = entry.FailedBlockCount
         };
     }
 
@@ -128,9 +128,9 @@ internal sealed class TableConsultGenerationJobIndexStore : IConsultGenerationJo
             entity.CreatedAtUtc,
             entity.StartedAtUtc,
             entity.CompletedAtUtc,
-            entity.TotalSectionCount,
-            entity.CompletedSectionCount,
-            entity.FailedSectionCount);
+            entity.TotalBlockCount,
+            entity.CompletedBlockCount,
+            entity.FailedBlockCount);
     }
 
     private static string FormatRowKey(DateTimeOffset createdAtUtc, string jobId)
@@ -175,9 +175,9 @@ public sealed record ConsultGenerationJobIndexEntry(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
-    int TotalSectionCount,
-    int CompletedSectionCount,
-    int FailedSectionCount);
+    int TotalBlockCount,
+    int CompletedBlockCount,
+    int FailedBlockCount);
 
 internal sealed class ConsultGenerationJobIndexEntity : ITableEntity
 {
@@ -190,7 +190,7 @@ internal sealed class ConsultGenerationJobIndexEntity : ITableEntity
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
-    public int TotalSectionCount { get; set; }
-    public int CompletedSectionCount { get; set; }
-    public int FailedSectionCount { get; set; }
+    public int TotalBlockCount { get; set; }
+    public int CompletedBlockCount { get; set; }
+    public int FailedBlockCount { get; set; }
 }

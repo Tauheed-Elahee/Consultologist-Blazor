@@ -133,22 +133,22 @@ public class AssembledDocumentEntityTests
         // The split model (#175): blocks carry the deliverable, item progress
         // carries the prose ticks — neither leaks into the other's response
         // fields, and the total is the block count from the stored scalar.
-        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
-        state().GetOrAddItemProgress("item-1", "Item one").CompletedProseStepCount = 2;
+        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationBlockStatuses.Completed;
+        state().GetOrAddItemProgress("item-1", "Item one").CompletedStepCount = 2;
 
         var response = state().ToResponse();
 
-        Assert.Equal(1, response.TotalSectionCount);
-        Assert.Equal(1, response.CompletedSectionCount);
-        Assert.Equal(new[] { "b1" }, response.GeneratedSections.Keys.ToArray());
-        Assert.Equal(new[] { "item-1" }, response.SectionProseProgress!.Keys.ToArray());
+        Assert.Equal(1, response.TotalBlockCount);
+        Assert.Equal(1, response.CompletedBlockCount);
+        Assert.Equal(new[] { "b1" }, response.GeneratedBlocks.Keys.ToArray());
+        Assert.Equal(new[] { "item-1" }, response.ItemProgress!.Keys.ToArray());
     }
 
     [Fact]
     public void ToResponse_CompletedV5Job_KeepsHashV1()
     {
         var (entity, state) = CreateEntity();
-        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationSectionStatuses.Completed;
+        state().GetOrAddBlock("b1", "Block one").Status = ConsultGenerationBlockStatuses.Completed;
         state().GetOrAddBlock("b1", "Block one").GeneratedText = "text";
         state().Status = ConsultGenerationJobStatuses.Completed;
 

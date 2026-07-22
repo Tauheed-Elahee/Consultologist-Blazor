@@ -330,9 +330,9 @@ public class ConsultGenerationNodeEntityTests
         Assert.Equal("hash-out", output.OutputHash);
 
         var progress = s.ItemProgress["hpi"];
-        Assert.Equal("standard-section-draft", progress.ProseStepStatus);
-        Assert.Equal(1, progress.CompletedProseStepCount);
-        Assert.Equal(3, progress.TotalProseStepCount);
+        Assert.Equal("standard-section-draft", progress.Step);
+        Assert.Equal(1, progress.CompletedStepCount);
+        Assert.Equal(3, progress.TotalStepCount);
 
         // The per-item entry surfaces on the response under its composite key.
         var response = s.ToResponse();
@@ -349,8 +349,8 @@ public class ConsultGenerationNodeEntityTests
             "identify-problem-failed", "No valid disease or problem concept was identified.",
             new[]
             {
-                new ConsultSectionStepDescriptor("create-typical-trajectory", "Building reference trajectory"),
-                new ConsultSectionStepDescriptor("sections", "Generating sections")
+                new ConsultItemStepDescriptor("create-typical-trajectory", "Building reference trajectory"),
+                new ConsultItemStepDescriptor("sections", "Generating sections")
             })).GetAwaiter().GetResult();
 
         var s = state();
@@ -366,7 +366,7 @@ public class ConsultGenerationNodeEntityTests
     public void WorkflowOutputHash_PinnedDefinition_AndOnlyOnCompletedJobs()
     {
         // Definition v1 pin: sha256 of canonical {sectionId: sha256(text)} with
-        // ordinal-sorted keys — recomputable by anyone from GeneratedSections.
+        // ordinal-sorted keys — recomputable by anyone from GeneratedBlocks.
         Assert.Equal(
             "6f52afd079adaed357b430559c22864adb46a075e6ca0d6922201230cfd50a73",
             ConsultGenerationProvenance.ComputeWorkflowOutputHash(new Dictionary<string, string>
@@ -382,14 +382,14 @@ public class ConsultGenerationNodeEntityTests
 
         Assert.Null(state().ToResponse().WorkflowOutputHash);
 
-        entity.CompleteSection(new SectionGenerationResult("hpi", "History of Present Illness", true, "alpha", null)).GetAwaiter().GetResult();
+        entity.CompleteBlock(new BlockGenerationResult("hpi", "History of Present Illness", true, "alpha", null)).GetAwaiter().GetResult();
         entity.FinalizeJob(new ConsultGenerationJobFinalize(ConsultGenerationJobStatuses.Completed)).GetAwaiter().GetResult();
 
         var response = state().ToResponse();
         Assert.NotNull(response.WorkflowOutputHash);
         Assert.Equal(ConsultGenerationProvenance.WorkflowOutputHashVersion, response.WorkflowOutputHashVersion);
         Assert.Equal(
-            ConsultGenerationProvenance.ComputeWorkflowOutputHash(response.GeneratedSections),
+            ConsultGenerationProvenance.ComputeWorkflowOutputHash(response.GeneratedBlocks),
             response.WorkflowOutputHash);
     }
 
@@ -645,7 +645,7 @@ public class ForEachInstanceResolutionTests
 public class SectionProseStepEventTests
 {
     private static ConsultGenerationJobResponse Response(
-        IReadOnlyList<ConsultSectionStepDescriptor>? sectionSteps,
+        IReadOnlyList<ConsultItemStepDescriptor>? sectionSteps,
         int completedStepCount,
         int totalStepCount)
     {
@@ -659,11 +659,11 @@ public class SectionProseStepEventTests
             new Dictionary<string, string>(),
             new Dictionary<string, string>(),
             false,
-            SectionProseProgress: new Dictionary<string, ConsultGenerationSectionProseProgress>
+            ItemProgress: new Dictionary<string, ConsultGenerationItemProgress>
             {
                 ["hpi"] = new("hpi", "History of Present Illness", null, completedStepCount, totalStepCount)
             },
-            SectionSteps: sectionSteps);
+            ItemSteps: sectionSteps);
     }
 
     [Fact]
@@ -671,19 +671,19 @@ public class SectionProseStepEventTests
     {
         var steps = new[]
         {
-            new ConsultSectionStepDescriptor("draft", "Drafting section"),
-            new ConsultSectionStepDescriptor("tighten", "Tightening prose")
+            new ConsultItemStepDescriptor("draft", "Drafting section"),
+            new ConsultItemStepDescriptor("tighten", "Tightening prose")
         };
 
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(Response(steps, 2, 2))
-            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .Where(candidate => candidate.EventType == ConsultGenerationItemSteps.EventName)
             .ToList();
 
         Assert.Equal(2, candidates.Count);
-        Assert.Equal("section-prose:hpi:draft", candidates[0].EventKey);
-        Assert.Equal("section-prose:hpi:tighten", candidates[1].EventKey);
+        Assert.Equal("item-step:hpi:draft", candidates[0].EventKey);
+        Assert.Equal("item-step:hpi:tighten", candidates[1].EventKey);
 
-        var payload = JsonSerializer.Deserialize<ConsultGenerationSectionProseStepEvent>(
+        var payload = JsonSerializer.Deserialize<ConsultGenerationItemStepEvent>(
             candidates[1].PayloadJson,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         Assert.Equal("tighten", payload.Step);
@@ -700,7 +700,7 @@ public class SectionProseStepEventTests
         // materialized while they ran and replay from the event store.
         var candidates = ConsultGenerationJobs.CreateSemanticEventCandidates(
                 Response(sectionSteps: null, completedStepCount: 2, totalStepCount: 3))
-            .Where(candidate => candidate.EventType == ConsultGenerationSectionProseSteps.EventName)
+            .Where(candidate => candidate.EventType == ConsultGenerationItemSteps.EventName)
             .ToList();
 
         Assert.Empty(candidates);

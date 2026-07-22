@@ -14,18 +14,18 @@ public record ConsultGenerationJobResponse(
     string JobId,
     string AppUserId,
     string Status,
-    int TotalSectionCount,
-    int CompletedSectionCount,
-    int FailedSectionCount,
-    Dictionary<string, string> GeneratedSections,
-    Dictionary<string, string> FailedSections,
+    int TotalBlockCount,
+    int CompletedBlockCount,
+    int FailedBlockCount,
+    Dictionary<string, string> GeneratedBlocks,
+    Dictionary<string, string> FailedBlocks,
     bool Success,
     int? SchemaVersion = null,
     string? AnalysisStatus = null,
     string? AnalysisError = null,
     int? CompletedStageCount = null,
     int? TotalStageCount = null,
-    IReadOnlyDictionary<string, ConsultGenerationSectionProseProgress>? SectionProseProgress = null,
+    IReadOnlyDictionary<string, ConsultGenerationItemProgress>? ItemProgress = null,
     string? RuntimeFailureStage = null,
     string? RuntimeFailureError = null,
     DateTimeOffset? CreatedAtUtc = null,
@@ -34,7 +34,7 @@ public record ConsultGenerationJobResponse(
     IReadOnlyList<JobHistoryEvent>? History = null,
     string? WorkflowPackage = null,
     string? EffectiveInputHash = null,
-    IReadOnlyList<ConsultSectionStepDescriptor>? SectionSteps = null,
+    IReadOnlyList<ConsultItemStepDescriptor>? ItemSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     IReadOnlyDictionary<string, ConsultGenerationNodeStatusResponse>? NodeOutputs = null,
     IReadOnlyDictionary<string, string>? AgentVersions = null,
@@ -47,10 +47,10 @@ public record ConsultGenerationJobResponse(
     string? AssembledDocument = null);
 
 /// <summary>
-/// The identity and display label of one per-section prose step, snapshotted from the
+/// The identity and display label of one per-item chain step, snapshotted from the
 /// job's workflow package at start.
 /// </summary>
-public sealed record ConsultSectionStepDescriptor(string Id, string Label);
+public sealed record ConsultItemStepDescriptor(string Id, string Label);
 
 /// <summary>
 /// One node of the job's workflow DAG, snapshotted from the pinned package at start —
@@ -86,9 +86,9 @@ public sealed record ConsultGenerationNodeStatusResponse(
 
 public record JobHistoryEvent(string Kind, string Label, string? Detail, DateTimeOffset OccurredAt);
 
-public record SectionGenerationResult(
-    string SectionId,
-    string SectionName,
+public record BlockGenerationResult(
+    string BlockId,
+    string BlockName,
     bool Success,
     string? GeneratedText,
     string? Error);
@@ -102,9 +102,9 @@ public sealed record ClinicalConcept(
     string Source,
     string? Support = null);
 
-public sealed record ConsultGenerationSectionProseProgress(
-    string SectionId,
-    string SectionName,
-    string? ProseStepStatus,
-    int CompletedProseStepCount,
-    int TotalProseStepCount);
+public sealed record ConsultGenerationItemProgress(
+    string ItemId,
+    string ItemName,
+    string? Step,
+    int CompletedStepCount,
+    int TotalStepCount);

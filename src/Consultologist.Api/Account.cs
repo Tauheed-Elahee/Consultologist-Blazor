@@ -115,9 +115,9 @@ public sealed class Account
                     j.CreatedAtUtc,
                     j.StartedAtUtc,
                     j.CompletedAtUtc,
-                    j.TotalSectionCount,
-                    j.CompletedSectionCount,
-                    j.FailedSectionCount)).ToArray(),
+                    j.TotalBlockCount,
+                    j.CompletedBlockCount,
+                    j.FailedBlockCount)).ToArray(),
                 nextToken),
             cancellationToken);
 
@@ -353,9 +353,9 @@ public sealed record AccountJobSummaryResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
-    int TotalSectionCount,
-    int CompletedSectionCount,
-    int FailedSectionCount);
+    int TotalBlockCount,
+    int CompletedBlockCount,
+    int FailedBlockCount);
 
 public sealed record AccountJobsResponse(
     IReadOnlyList<AccountJobSummaryResponse> Jobs,
