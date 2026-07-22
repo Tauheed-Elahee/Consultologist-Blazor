@@ -301,7 +301,7 @@ public class ConsultGenerationNodeEntityTests
             "hash-in", "hash-out", 1, 5));
 
         var node = state().NodeOutputs!["extract-patient-concepts"];
-        Assert.Equal(5, state().SchemaVersion);
+        Assert.Equal(6, state().SchemaVersion);
         Assert.Equal(ConsultGenerationNodeStatuses.Completed, node.Status);
         Assert.Equal("hash-in", node.InputHash);
         Assert.Equal("hash-out", node.OutputHash);
@@ -321,7 +321,7 @@ public class ConsultGenerationNodeEntityTests
             null, "hash-in", "hash-out", 1, 3));
 
         var s = state();
-        Assert.Equal(5, s.SchemaVersion);
+        Assert.Equal(6, s.SchemaVersion);
         var output = s.NodeOutputs!["standard-section-draft:hpi"];
         Assert.Equal("standard-section-draft", output.NodeId);
         Assert.Equal("hpi", output.ItemId);
@@ -329,11 +329,10 @@ public class ConsultGenerationNodeEntityTests
         Assert.Equal("hash-in", output.InputHash);
         Assert.Equal("hash-out", output.OutputHash);
 
-        var section = s.Sections["hpi"];
-        Assert.Equal(ConsultGenerationSectionStatuses.Running, section.Status);
-        Assert.Equal("standard-section-draft", section.ProseStepStatus);
-        Assert.Equal(1, section.CompletedProseStepCount);
-        Assert.Equal(3, section.TotalProseStepCount);
+        var progress = s.ItemProgress["hpi"];
+        Assert.Equal("standard-section-draft", progress.ProseStepStatus);
+        Assert.Equal(1, progress.CompletedProseStepCount);
+        Assert.Equal(3, progress.TotalProseStepCount);
 
         // The per-item entry surfaces on the response under its composite key.
         var response = s.ToResponse();
@@ -461,55 +460,9 @@ public class ConsultGenerationNodeEntityTests
     }
 }
 
-public class LegacySnapshotToleranceTests
-{
-    // A trimmed pre-rebase entity snapshot carrying fields the v5-only purge deleted
-    // (pre-DAG concept lists, scalar agent versions). Old job records must keep
-    // deserializing — unknown JSON fields are ignored — and ToResponse must not throw.
-    private const string Fixture = """
-        {
-          "JobId": "legacy-job",
-          "AppUserId": "user-1",
-          "Status": "Completed",
-          "SchemaVersion": 2,
-          "AnalysisStatus": "section-generation-started",
-          "CompletedStageCount": 6,
-          "TotalStageCount": 6,
-          "PatientConcepts": [
-            { "Term": "Malignant neoplasm of breast", "Type": "disorder", "Id": "254837009",
-              "IsSnomedConcept": true, "IsActive": true, "Source": "patient", "Support": null }
-          ],
-          "Sections": {
-            "hpi": { "Id": "hpi", "Name": "History of Present Illness", "Status": "Completed",
-                     "GeneratedText": "Prose.", "ProseStepStatus": "section-instructions",
-                     "CompletedProseStepCount": 3, "TotalProseStepCount": 3 }
-          },
-          "History": [ { "Kind": "success", "Label": "Concepts extracted", "Detail": null, "OccurredAt": "2026-07-13T13:07:08+00:00" } ],
-          "WorkflowPackage": "general@v2026.07.4",
-          "EffectiveInputHash": "703f1b53",
-          "AgentVersion": "47",
-          "ConceptAgentVersion": "1"
-        }
-        """;
-
-    [Fact]
-    public void LegacySnapshot_DeserializesAndToResponseDoesNotThrow()
-    {
-        var state = JsonSerializer.Deserialize<ConsultGenerationJobState>(Fixture)!;
-
-        Assert.Equal(2, state.SchemaVersion);
-        Assert.Null(state.NodeOutputs);
-        Assert.Null(state.Nodes);
-
-        var response = state.ToResponse();
-
-        Assert.Equal("Prose.", response.GeneratedSections["hpi"]);
-        Assert.Null(response.NodeOutputs);
-        Assert.Contains(
-            ConsultGenerationJobs.CreateSemanticEventCandidates(response),
-            c => c.EventType == "snapshot");
-    }
-}
+// The pre-rebase legacy-snapshot tolerance tests retired with #175: all stored
+// job records were wiped (prerelease), so no old-shape state survives to
+// deserialize — the split Blocks/ItemProgress model is the only shape.
 
 public class NodeEventCandidateTests
 {
