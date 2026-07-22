@@ -106,12 +106,12 @@
             <div class="editor-layout">
                 <nav class="editor-nav" aria-label="Package contents">
                     <span class="editor-nav__group">Prompts</span>
-                    @foreach (var prompt in prompts)
+                    @foreach (var prompt in EffectivePrompts)
                     {
                         <button type="button"
                                 class="editor-nav__item @(selectedKey == prompt.File ? "editor-nav__item--selected" : "")"
                                 @onclick="() => Select(prompt.File)">
-                            <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) || HasVariableEdits(prompt.Id) ? "●" : "")</span>
+                            <span class="editor-nav__dot">@(edits.ContainsKey(prompt.File) || HasVariableEdits(prompt.Id) || AddedNodeForPromptFile(prompt.File) != null ? "●" : "")</span>
                             <span>@prompt.Id</span>
                         </button>
                     }
@@ -197,6 +197,20 @@
                             <span>@navNode.Label</span>
                         </button>
                     }
+                    @foreach (var removedNode in RemovedNodes)
+                    {
+                        <div class="editor-nav__item editor-nav__item--nested editor-nav__item--removed">
+                            <span class="editor-nav__dot"></span>
+                            <span class="editor-nav__strike">@removedNode.Label</span>
+                            <button type="button" class="editor-nav__restore" @onclick="() => RestoreNodeAsync(removedNode.Id)">(restore)</button>
+                        </div>
+                    }
+                    <button type="button"
+                            class="editor-nav__item editor-nav__item--nested editor-nav__add @(selectedKey == AddNodeKey ? "editor-nav__item--selected" : "")"
+                            @onclick="() => Select(AddNodeKey)">
+                        <span class="editor-nav__dot"></span>
+                        <span>+ Node</span>
+                    </button>
                 </nav>
 
                 <section class="content-card editor-pane">
@@ -311,18 +325,76 @@
                             <p class="muted-text">Pending edits not shown — Refresh to preview them.</p>
                         }
                         <WorkflowDagView Diagram="@diagramText" />
-                        <h2 class="panel-title">Node details</h2>
+                        <div class="pane-header">
+                            <h2 class="panel-title">Node details</h2>
+                            <button type="button" class="variable-chips__add" @onclick="() => Select(AddNodeKey)">+ Node</button>
+                        </div>
                         <WorkflowNodeSummary Nodes="@EffectiveNodes"
                                              Editable="true"
                                              Scalars="@scalars"
                                              Collections="@CollectionIds"
                                              ContractOptions="@ContractOptions"
                                              NodeModified="@(id => nodeEdits.ContainsKey(id))"
+                                             RemovedNodes="@RemovedNodes"
                                              RowsFor="@RowsFor"
                                              ValidateVariableName="@ValidateVariableNameForNode"
                                              OnBindingChanged="OnBindingChangedAsync"
                                              OnVariableAdded="OnVariableAddedAsync"
-                                             OnNodeChanged="OnNodeChangedAsync" />
+                                             OnNodeChanged="OnNodeChangedAsync"
+                                             OnNodeRemoved="RemoveNodeAsync"
+                                             OnNodeRestored="RestoreNodeAsync" />
+                    }
+                    else if (selectedKey == AddNodeKey)
+                    {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">New node</h3>
+                                <p class="muted-text">
+                                    Creates the node and its prompt together (they are one-to-one). The
+                                    prompt's text is written under Prompts; variables and bindings follow
+                                    on the node's card.
+                                </p>
+                            </div>
+                        </div>
+                        @if (newNodeError != null)
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@newNodeError</FluentMessageBar>
+                        }
+                        <div class="new-item-fields">
+                            <label class="input-field">
+                                <span>id (lowercase, letters/digits/-/_)</span>
+                                <FluentTextField @bind-Value="newNodeId" Placeholder="summarize-guidelines" />
+                            </label>
+                            <label class="input-field">
+                                <span>label</span>
+                                <FluentTextField @bind-Value="newNodeLabel" Placeholder="Summarizing guidelines" />
+                            </label>
+                            <label class="input-field">
+                                <span>for each</span>
+                                <select class="binding-row__select" @bind="newNodeForEach">
+                                    <option value="">— runs once —</option>
+                                    @foreach (var collectionId in CollectionIds)
+                                    {
+                                        <option value="@($"data:{collectionId}")">data:@collectionId</option>
+                                    }
+                                </select>
+                            </label>
+                            <label class="input-field">
+                                <span>output</span>
+                                <select class="binding-row__select" @bind="newNodeOutput">
+                                    <option value="">prose (text)</option>
+                                    @foreach (var contract in ContractOptions)
+                                    {
+                                        <option value="@contract">@contract</option>
+                                    }
+                                </select>
+                            </label>
+                        </div>
+                        <div class="action-row">
+                            <FluentButton Appearance="Appearance.Accent" @onclick="AddNodeAsync">
+                                Create node
+                            </FluentButton>
+                        </div>
                     }
                     else if (SelectedNode() is { } selectedNode)
                     {
@@ -343,7 +415,8 @@
                                              ValidateVariableName="@ValidateVariableNameForNode"
                                              OnBindingChanged="OnBindingChangedAsync"
                                              OnVariableAdded="OnVariableAddedAsync"
-                                             OnNodeChanged="OnNodeChangedAsync" />
+                                             OnNodeChanged="OnNodeChangedAsync"
+                                             OnNodeRemoved="RemoveNodeAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
                     {
@@ -371,7 +444,7 @@
                                             Subtitle="@prompt.File"
                                             EditLabel="Prompt text"
                                             Text="@GetText(prompt.File)"
-                                            Modified="@edits.ContainsKey(prompt.File)"
+                                            Modified="@(edits.ContainsKey(prompt.File) || AddedNodeForPromptFile(prompt.File) != null)"
                                             TextChanged="@(value => OnTextChangedAsync(prompt.File, value))">
                             <div class="prompt-variables">
                                 <span class="muted-text">Variables</span>
@@ -464,6 +537,7 @@
     private const string NewKeyPrefix = "new:";
     private const string AddCollectionKey = "add-collection";
     private const string NodeKeyPrefix = "node:";
+    private const string AddNodeKey = "add-node";
 
     // Membership changes (#115): pending until publish, mirrored to the draft.
     private sealed class AddedItem
@@ -498,7 +572,8 @@
         new("^[a-z0-9][a-z0-9-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + removedFiles.Count
-        + bindingEdits.Count + nodeEdits.Count + VariableAddCount + VariableRemovalCount;
+        + bindingEdits.Count + nodeEdits.Count + addedNodes.Count + removedNodeIds.Count
+        + VariableAddCount + VariableRemovalCount;
 
     private string PendingSummary()
     {
@@ -514,6 +589,8 @@
         if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
         if (bindingEdits.Count > 0) parts.Add($"{bindingEdits.Count} rebound");
         if (nodeEdits.Count > 0) parts.Add($"{nodeEdits.Count} node{(nodeEdits.Count == 1 ? "" : "s")}");
+        if (addedNodes.Count > 0) parts.Add($"+{addedNodes.Count} node{(addedNodes.Count == 1 ? "" : "s")}");
+        if (removedNodeIds.Count > 0) parts.Add($"−{removedNodeIds.Count} node{(removedNodeIds.Count == 1 ? "" : "s")}");
         if (VariableAddCount > 0) parts.Add($"+{VariableAddCount} var");
         if (VariableRemovalCount > 0) parts.Add($"−{VariableRemovalCount} var");
         return $" ({string.Join(" · ", parts)})";
@@ -679,20 +756,73 @@
     private readonly Dictionary<string, WorkflowNodeSummary.NodeChange> nodeEdits = new(StringComparer.Ordinal);
     private IReadOnlyList<string> schemaIds = Array.Empty<string>();
 
-    // The manifest's nodes with pending field edits applied — the single list
-    // every editing surface (Graph cards, sidebar panes, source dropdowns)
-    // reads, so a pending forEach change immediately reshapes valid sources.
+    // Pending new nodes (#117): each carries its 1:1 prompt's text — a prompt
+    // is only publishable referenced by exactly one node, so node and prompt
+    // are born and die together.
+    private sealed class AddedNode
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public string? ForEach { get; set; }
+        public string? OutputSchema { get; set; }
+        public string? FailIfEmpty { get; set; }
+        public string PromptText { get; set; } = string.Empty;
+    }
+
+    private readonly List<AddedNode> addedNodes = new();
+    private readonly HashSet<string> removedNodeIds = new(StringComparer.Ordinal);
+    private string? newNodeId;
+    private string? newNodeLabel;
+    private string newNodeForEach = string.Empty;
+    private string newNodeOutput = string.Empty;
+    private string? newNodeError;
+
+    private static string AddedPromptFile(string nodeId) => $"prompts/{nodeId}.md";
+
+    private AddedNode? AddedNodeForPromptFile(string path) =>
+        addedNodes.FirstOrDefault(a => AddedPromptFile(a.Id) == path);
+
+    private static WorkflowManifestReader.NodeView AddedNodeView(AddedNode added) => new(
+        added.Id,
+        added.Label,
+        added.Id,
+        added.ForEach,
+        Array.Empty<WorkflowManifestReader.BindingView>(),
+        IsResult: false,
+        HasOutput: added.OutputSchema != null,
+        Aggregate: null,
+        OutputSchema: added.OutputSchema,
+        FailIfEmpty: added.FailIfEmpty);
+
+    // The manifest's nodes minus removals, with pending field edits applied,
+    // plus pending new nodes — the single list every editing surface (Graph
+    // cards, sidebar panes, source dropdowns) reads, so a pending forEach
+    // change immediately reshapes valid sources.
     private IReadOnlyList<WorkflowManifestReader.NodeView> EffectiveNodes =>
-        nodes.Select(n => nodeEdits.TryGetValue(n.Id, out var edit)
-            ? n with
-            {
-                Label = edit.Label,
-                ForEach = edit.ForEach,
-                OutputSchema = edit.OutputSchema,
-                FailIfEmpty = edit.FailIfEmpty,
-                HasOutput = edit.OutputSchema != null
-            }
-            : n).ToList();
+        nodes.Where(n => !removedNodeIds.Contains(n.Id))
+            .Select(n => nodeEdits.TryGetValue(n.Id, out var edit)
+                ? n with
+                {
+                    Label = edit.Label,
+                    ForEach = edit.ForEach,
+                    OutputSchema = edit.OutputSchema,
+                    FailIfEmpty = edit.FailIfEmpty,
+                    HasOutput = edit.OutputSchema != null
+                }
+                : n)
+            .Concat(addedNodes.Select(AddedNodeView))
+            .ToList();
+
+    private IReadOnlyList<WorkflowManifestReader.NodeView> RemovedNodes =>
+        nodes.Where(n => removedNodeIds.Contains(n.Id)).ToList();
+
+    // Loaded prompts minus those owned by removed nodes, plus each pending
+    // node's prompt (variables arrive via the chips, like any added variable).
+    private IReadOnlyList<WorkflowManifestReader.PromptView> EffectivePrompts =>
+        prompts.Where(p => !nodes.Any(n => n.Prompt == p.Id && removedNodeIds.Contains(n.Id)))
+            .Concat(addedNodes.Select(a => new WorkflowManifestReader.PromptView(
+                a.Id, AddedPromptFile(a.Id), Array.Empty<string>(), null)))
+            .ToList();
 
     private IReadOnlyList<string> CollectionIds => EffectiveCollections.Select(c => c.Id).ToList();
 
@@ -709,11 +839,115 @@
 
     private bool NodeHasPending(WorkflowManifestReader.NodeView node) =>
         nodeEdits.ContainsKey(node.Id)
+        || addedNodes.Any(a => a.Id == node.Id)
         || bindingEdits.Keys.Any(key => key.StartsWith(node.Id + "\n", StringComparison.Ordinal))
         || (node.Prompt != null && HasVariableEdits(node.Prompt));
 
+    private async Task AddNodeAsync()
+    {
+        var id = newNodeId?.Trim() ?? string.Empty;
+        var label = newNodeLabel?.Trim() ?? string.Empty;
+
+        if (!ItemIdPattern.IsMatch(id))
+        {
+            newNodeError = "Node ids are lowercase letters, digits, '-' or '_', starting with a letter or digit.";
+            return;
+        }
+
+        if (nodes.Any(n => n.Id == id) || addedNodes.Any(a => a.Id == id) || EffectivePrompts.Any(p => p.Id == id))
+        {
+            newNodeError = $"A node or prompt named '{id}' already exists.";
+            return;
+        }
+
+        if (label.Length == 0)
+        {
+            newNodeError = "A label is required.";
+            return;
+        }
+
+        addedNodes.Add(new AddedNode
+        {
+            Id = id,
+            Label = label,
+            ForEach = newNodeForEach.Length == 0 ? null : newNodeForEach,
+            OutputSchema = newNodeOutput.Length == 0 ? null : newNodeOutput
+        });
+        newNodeId = newNodeLabel = null;
+        newNodeForEach = string.Empty;
+        newNodeOutput = string.Empty;
+        newNodeError = null;
+        publishSuccess = null;
+        // Land on the new prompt — writing its text is the next step.
+        selectedKey = AddedPromptFile(id);
+        await PersistDraftAsync();
+    }
+
+    private async Task RemoveNodeAsync(string nodeId)
+    {
+        publishSuccess = null;
+        var added = addedNodes.FirstOrDefault(a => a.Id == nodeId);
+        var promptId = added?.Id ?? nodes.FirstOrDefault(n => n.Id == nodeId)?.Prompt;
+
+        if (added != null)
+        {
+            addedNodes.Remove(added);
+        }
+        else if (nodes.Any(n => n.Id == nodeId))
+        {
+            removedNodeIds.Add(nodeId);
+            nodeEdits.Remove(nodeId);
+        }
+        else
+        {
+            return;
+        }
+
+        // The node's pending binding and variable edits go with it.
+        foreach (var key in bindingEdits.Keys.Where(k => k.StartsWith(nodeId + "\n", StringComparison.Ordinal)).ToList())
+        {
+            bindingEdits.Remove(key);
+        }
+
+        if (promptId != null)
+        {
+            variableAdds.Remove(promptId);
+            variableRemovals.Remove(promptId);
+        }
+
+        if (selectedKey == NodeKeyFor(nodeId)
+            || (promptId != null && selectedKey == prompts.FirstOrDefault(p => p.Id == promptId)?.File)
+            || selectedKey == AddedPromptFile(nodeId))
+        {
+            selectedKey = GraphKey;
+        }
+
+        await PersistDraftAsync();
+    }
+
+    private async Task RestoreNodeAsync(string nodeId)
+    {
+        removedNodeIds.Remove(nodeId);
+        publishSuccess = null;
+        await PersistDraftAsync();
+    }
+
     private async Task OnNodeChangedAsync(WorkflowNodeSummary.NodeChange change)
     {
+        // Field edits on a pending node mutate it directly — there is no
+        // manifest original to diff against.
+        if (addedNodes.FirstOrDefault(a => a.Id == change.NodeId) is { } addedNode
+            && !string.IsNullOrWhiteSpace(change.Label))
+        {
+            addedNode.Label = change.Label;
+            addedNode.ForEach = change.ForEach;
+            addedNode.OutputSchema = change.OutputSchema;
+            addedNode.FailIfEmpty = change.FailIfEmpty;
+            publishSuccess = null;
+            await PersistDraftAsync();
+            return;
+        }
+
         var original = nodes.FirstOrDefault(n => n.Id == change.NodeId);
 
         if (original == null)
@@ -776,7 +1010,7 @@
             @"\{\{\s*" + System.Text.RegularExpressions.Regex.Escape(variable) + @"\s*\}\}");
 
     private IEnumerable<WorkflowManifestReader.NodeView> NodesUsingPrompt(string promptId) =>
-        nodes.Where(n => string.Equals(n.Prompt, promptId, StringComparison.Ordinal));
+        EffectiveNodes.Where(n => string.Equals(n.Prompt, promptId, StringComparison.Ordinal));
 
     private string? TryDeclareVariable(string promptId, string rawName, out string name)
     {
@@ -787,7 +1021,7 @@
             return "Variable names are lowercase: letters, digits, underscores, starting with a letter.";
         }
 
-        var prompt = prompts.FirstOrDefault(p => p.Id == promptId);
+        var prompt = EffectivePrompts.FirstOrDefault(p => p.Id == promptId);
 
         if (prompt == null)
         {
@@ -952,7 +1186,7 @@
     private async Task OnVariableAddedAsync(WorkflowNodeSummary.VariableAdd add)
     {
         publishSuccess = null;
-        var node = nodes.FirstOrDefault(n => n.Id == add.NodeId);
+        var node = EffectiveNodes.FirstOrDefault(n => n.Id == add.NodeId);
 
         if (node?.Prompt == null || TryDeclareVariable(node.Prompt, add.Variable, out var name) != null)
         {
@@ -1009,7 +1243,9 @@
     private bool diagramIncludesPending;
     private bool isDiagramRefreshing;
 
-    private bool HasManifestEdits => bindingEdits.Count > 0 || nodeEdits.Count > 0 || VariableAddCount > 0 || VariableRemovalCount > 0;
+    private bool HasManifestEdits => bindingEdits.Count > 0 || nodeEdits.Count > 0
+        || addedNodes.Count > 0 || removedNodeIds.Count > 0
+        || VariableAddCount > 0 || VariableRemovalCount > 0;
 
     private void Select(string key)
     {
@@ -1046,7 +1282,7 @@
                 if (diagram != null)
                 {
                     var (changed, removedEdges, pendingNodes) = CollectDiagramChanges();
-                    diagramText = DecoratePendingDiagram(diagram, changed, removedEdges, pendingNodes);
+                    diagramText = DecoratePendingDiagram(diagram, changed, removedEdges, pendingNodes, removedNodeIds.ToList());
                     diagramIncludesPending = true;
                 }
             }
@@ -1113,10 +1349,19 @@
             }
         }
 
-        // Field-edited nodes (#117) keep the blue outline too.
-        foreach (var nodeId in nodeEdits.Keys.Where(id => !pendingNodes.Contains(id)))
+        // Field-edited and freshly added nodes (#117) keep the blue outline.
+        foreach (var nodeId in nodeEdits.Keys.Concat(addedNodes.Select(a => a.Id)).Where(id => !pendingNodes.Contains(id)))
         {
             pendingNodes.Add(nodeId);
+        }
+
+        // A removed node's own bindings are edges that go away with it.
+        foreach (var removedNode in RemovedNodes)
+        {
+            foreach (var binding in removedNode.Bindings.Where(b => IsEdgeSource(b.From)))
+            {
+                removed.Add((binding.From, removedNode.Id, binding.Variable, false));
+            }
         }
 
         return (changed, removed, pendingNodes);
@@ -1132,7 +1377,8 @@
         string diagram,
         IReadOnlyList<(string NodeId, string Variable)> changed,
         IReadOnlyList<(string From, string NodeId, string Variable, bool Rebound)> removed,
-        IReadOnlyList<string> pendingNodeIds)
+        IReadOnlyList<string> pendingNodeIds,
+        IReadOnlyList<string>? removedNodes = null)
     {
         var sb = new System.Text.StringBuilder(diagram);
 
@@ -1199,6 +1445,19 @@
             }
         }
 
+        // Whole removed nodes (#117): red whether their box survives in the
+        // effective text (a dependent still binds them) or only exists through
+        // the appended dashed edges.
+        foreach (var removedNodeId in removedNodes ?? Array.Empty<string>())
+        {
+            var sanitized = SanitizeMermaidId(removedNodeId);
+
+            if (!redNodeIds.Contains(sanitized))
+            {
+                redNodeIds.Add(sanitized);
+            }
+        }
+
         if (pendingNodeIds.Count > 0)
         {
             sb.Append("    classDef pending stroke:#0067b8,stroke-width:2.5px\n");
@@ -1231,10 +1490,12 @@
         collections.SelectMany(c => c.Items).FirstOrDefault(item => item.File == selectedKey);
 
     private WorkflowManifestReader.PromptView? SelectedPrompt() =>
-        prompts.FirstOrDefault(prompt => prompt.File == selectedKey);
+        EffectivePrompts.FirstOrDefault(prompt => prompt.File == selectedKey);
 
     private string GetText(string path) =>
-        edits.TryGetValue(path, out var edited) ? edited : content!.Files.GetValueOrDefault(path, string.Empty);
+        AddedNodeForPromptFile(path) is { } addedNode
+            ? addedNode.PromptText
+            : edits.TryGetValue(path, out var edited) ? edited : content!.Files.GetValueOrDefault(path, string.Empty);
 
     private async Task LoadAsync()
     {
@@ -1246,6 +1507,8 @@
         removedFiles.Clear();
         bindingEdits.Clear();
         nodeEdits.Clear();
+        addedNodes.Clear();
+        removedNodeIds.Clear();
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -1254,6 +1517,10 @@
         newItemError = null;
         newCollectionId = null;
         newCollectionError = null;
+        newNodeId = newNodeLabel = null;
+        newNodeForEach = string.Empty;
+        newNodeOutput = string.Empty;
+        newNodeError = null;
 
         // The diagram belongs to the loaded version: drop it so package
         // switches and post-publish reloads never show a stale graph.
@@ -1311,6 +1578,8 @@
 
     private sealed record DraftNodeEdit(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
 
+    private sealed record DraftAddedNode(string Id, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty, string PromptText);
+
     private sealed record DraftPayload(
         int Version,
         Dictionary<string, string>? Edits,
@@ -1320,7 +1589,9 @@
         Dictionary<string, List<string>>? VariableAdds = null,
         Dictionary<string, List<string>>? VariableRemovals = null,
         List<string>? AddedCollections = null,
-        List<DraftNodeEdit>? NodeEdits = null);
+        List<DraftNodeEdit>? NodeEdits = null,
+        List<DraftAddedNode>? AddedNodes = null,
+        List<string>? RemovedNodes = null);
 
     private async Task RestoreDraftAsync()
     {
@@ -1339,6 +1610,8 @@
         Dictionary<string, List<string>>? draftVariableRemovals = null;
         List<string>? draftAddedCollections = null;
         List<DraftNodeEdit>? draftNodeEdits = null;
+        List<DraftAddedNode>? draftAddedNodes = null;
+        List<string>? draftRemovedNodes = null;
 
         try
         {
@@ -1354,6 +1627,8 @@
                 draftVariableRemovals = payload?.VariableRemovals;
                 draftAddedCollections = payload?.AddedCollections;
                 draftNodeEdits = payload?.NodeEdits;
+                draftAddedNodes = payload?.AddedNodes;
+                draftRemovedNodes = payload?.RemovedNodes;
             }
             else
             {
@@ -1442,6 +1717,37 @@
             }
         }
 
+        // Added nodes before variables and bindings — their prompts must exist
+        // for the later buckets to reconcile against. A node whose id now
+        // exists in the loaded package is dropped.
+        foreach (var draftAddedNode in draftAddedNodes ?? new List<DraftAddedNode>())
+        {
+            if (!string.IsNullOrWhiteSpace(draftAddedNode.Id)
+                && !string.IsNullOrWhiteSpace(draftAddedNode.Label)
+                && nodes.All(n => n.Id != draftAddedNode.Id)
+                && prompts.All(p => p.Id != draftAddedNode.Id)
+                && addedNodes.All(a => a.Id != draftAddedNode.Id))
+            {
+                addedNodes.Add(new AddedNode
+                {
+                    Id = draftAddedNode.Id,
+                    Label = draftAddedNode.Label,
+                    ForEach = draftAddedNode.ForEach,
+                    OutputSchema = draftAddedNode.OutputSchema,
+                    FailIfEmpty = draftAddedNode.FailIfEmpty,
+                    PromptText = draftAddedNode.PromptText
+                });
+            }
+        }
+
+        foreach (var removedNodeId in draftRemovedNodes ?? new List<string>())
+        {
+            if (nodes.Any(n => n.Id == removedNodeId && !n.IsResult))
+            {
+                removedNodeIds.Add(removedNodeId);
+            }
+        }
+
         // Node-field edits: kept only when the node still exists and the
         // tuple still differs from the loaded version.
         foreach (var draftNodeEdit in draftNodeEdits ?? new List<DraftNodeEdit>())
@@ -1465,8 +1771,9 @@
         foreach (var draftBinding in bindings ?? new List<DraftBinding>())
         {
             // Keep rebinds whose node/variable still exists and still differs —
-            // or which bind a restored added variable (no original to differ from).
-            var node = nodes.FirstOrDefault(n => n.Id == draftBinding.NodeId);
+            // or which bind a restored added variable (no original to differ
+            // from; effective nodes cover restored pending nodes too).
+            var node = EffectiveNodes.FirstOrDefault(n => n.Id == draftBinding.NodeId);
             var original = node?.Bindings.FirstOrDefault(b => b.Variable == draftBinding.Variable);
 
             if (original != null && (original.From != draftBinding.From || original.As != draftBinding.As))
@@ -1491,7 +1798,7 @@
         }
 
         var payload = new DraftPayload(
-            6,
+            7,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -1503,13 +1810,23 @@
             variableAdds.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
             variableRemovals.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
             addedCollections.ToList(),
-            nodeEdits.Values.Select(edit => new DraftNodeEdit(edit.NodeId, edit.Label, edit.ForEach, edit.OutputSchema, edit.FailIfEmpty)).ToList());
+            nodeEdits.Values.Select(edit => new DraftNodeEdit(edit.NodeId, edit.Label, edit.ForEach, edit.OutputSchema, edit.FailIfEmpty)).ToList(),
+            addedNodes.Select(a => new DraftAddedNode(a.Id, a.Label, a.ForEach, a.OutputSchema, a.FailIfEmpty, a.PromptText)).ToList(),
+            removedNodeIds.ToList());
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
     private async Task OnTextChangedAsync(string path, string value)
     {
         publishSuccess = null;
+
+        // A pending node's prompt text lives on the node draft, not in edits.
+        if (AddedNodeForPromptFile(path) is { } addedNode)
+        {
+            addedNode.PromptText = value;
+            await PersistDraftAsync();
+            return;
+        }
 
         if (content!.Files.TryGetValue(path, out var original) && string.Equals(original, value, StringComparison.Ordinal))
         {
@@ -1585,7 +1902,15 @@
                 }
             }
 
-            foreach (var prompt in prompts)
+            foreach (var addedNode in addedNodes)
+            {
+                if (string.IsNullOrWhiteSpace(addedNode.PromptText))
+                {
+                    unbound.Add($"Node '{addedNode.Id}' has no prompt text yet — write it under Prompts.");
+                }
+            }
+
+            foreach (var prompt in EffectivePrompts)
             {
                 foreach (var variable in AddedVariables(prompt.Id))
                 {
@@ -1619,6 +1944,24 @@
             foreach (var added in addedItems)
             {
                 files[AddedPath(added)] = added.Content;
+            }
+
+            // Pending nodes bring their prompt files; removed nodes take
+            // theirs away (1:1 — no other node may reference them).
+            foreach (var addedNode in addedNodes)
+            {
+                files[AddedPromptFile(addedNode.Id)] = addedNode.PromptText;
+            }
+
+            foreach (var removedNodeId in removedNodeIds)
+            {
+                var promptId = nodes.FirstOrDefault(n => n.Id == removedNodeId)?.Prompt;
+                var promptFile = promptId != null ? prompts.FirstOrDefault(p => p.Id == promptId)?.File : null;
+
+                if (promptFile != null)
+                {
+                    files.Remove(promptFile);
+                }
             }
 
             // Membership changed => the collection's index.json is recomposed
@@ -1673,6 +2016,8 @@
         removedFiles.Clear();
         bindingEdits.Clear();
         nodeEdits.Clear();
+        addedNodes.Clear();
+        removedNodeIds.Clear();
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -1682,6 +2027,10 @@
         newItemError = null;
         newCollectionId = null;
         newCollectionError = null;
+        newNodeId = newNodeLabel = null;
+        newNodeForEach = string.Empty;
+        newNodeOutput = string.Empty;
+        newNodeError = null;
         publishErrors = new List<string>();
         publishSuccess = null;
         await JS.InvokeVoidAsync("localStorage.removeItem", DraftKey);
@@ -1695,7 +2044,8 @@
     private JsonElement ComposeManifest()
     {
         if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0
-            && addedCollections.Count == 0 && nodeEdits.Count == 0)
+            && addedCollections.Count == 0 && nodeEdits.Count == 0
+            && addedNodes.Count == 0 && removedNodeIds.Count == 0)
         {
             return content!.Manifest;
         }
@@ -1763,11 +2113,78 @@
                     ? bindingsObject
                     : null;
 
+        // Pending new nodes (#117): the node object and its 1:1 prompt entry.
+        // Bindings start empty here — the generic rebind loop below fills them
+        // from bindingEdits like any other node's.
+        foreach (var addedNode in addedNodes)
+        {
+            if ((root["prompts"] ?? root["Prompts"]) is System.Text.Json.Nodes.JsonArray promptsArrayForAdd)
+            {
+                promptsArrayForAdd.Add(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["id"] = addedNode.Id,
+                    ["file"] = AddedPromptFile(addedNode.Id),
+                    ["variables"] = new System.Text.Json.Nodes.JsonArray(
+                        AddedVariables(addedNode.Id)
+                            .Select(v => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(v))
+                            .ToArray())
+                });
+            }
+
+            var newNodeObject = new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = addedNode.Id,
+                ["label"] = addedNode.Label,
+                ["prompt"] = addedNode.Id,
+                ["bindings"] = new System.Text.Json.Nodes.JsonObject()
+            };
+
+            if (addedNode.ForEach != null)
+            {
+                newNodeObject["forEach"] = addedNode.ForEach;
+            }
+
+            if (addedNode.OutputSchema != null)
+            {
+                var newOutputObject = new System.Text.Json.Nodes.JsonObject { ["schema"] = addedNode.OutputSchema };
+
+                if (!string.IsNullOrWhiteSpace(addedNode.FailIfEmpty))
+                {
+                    newOutputObject["failIfEmpty"] = addedNode.FailIfEmpty;
+                }
+
+                newNodeObject["output"] = newOutputObject;
+            }
+
+            nodesArray.Add(newNodeObject);
+        }
+
+        // Removed nodes lose their node object and their prompt entry.
+        foreach (var removedNodeId in removedNodeIds)
+        {
+            if (NodeFor(removedNodeId) is { } removedNodeObject)
+            {
+                nodesArray.Remove(removedNodeObject);
+            }
+
+            var removedPromptId = nodes.FirstOrDefault(n => n.Id == removedNodeId)?.Prompt;
+
+            if (removedPromptId != null
+                && (root["prompts"] ?? root["Prompts"]) is System.Text.Json.Nodes.JsonArray promptsArrayForRemove
+                && promptsArrayForRemove
+                    .OfType<System.Text.Json.Nodes.JsonObject>()
+                    .FirstOrDefault(p => (p["id"] ?? p["Id"])?.GetValue<string>() == removedPromptId) is { } removedPromptObject)
+            {
+                promptsArrayForRemove.Remove(removedPromptObject);
+            }
+        }
+
         // Node-field edits (#117): label always written; forEach and output
-        // written or removed to match the effective tuple.
+        // written or removed to match the effective tuple. Removed nodes'
+        // stale edits are skipped.
         foreach (var pair in nodeEdits)
         {
-            if (NodeFor(pair.Key) is not { } nodeObject)
+            if (removedNodeIds.Contains(pair.Key) || NodeFor(pair.Key) is not { } nodeObject)
             {
                 continue;
             }
