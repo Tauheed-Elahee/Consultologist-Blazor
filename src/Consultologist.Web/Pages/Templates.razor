@@ -325,22 +325,48 @@
                             <p class="muted-text">Pending edits not shown — Refresh to preview them.</p>
                         }
                         <WorkflowDagView Diagram="@diagramText" />
+                        @if (UnreachableNodeLabels() is { Count: > 0 } unreachable)
+                        {
+                            <p class="muted-text">
+                                ⚠ Not feeding the deliverable yet (publish will fail):
+                                @string.Join(", ", unreachable) — connect them through bindings or an aggregator.
+                            </p>
+                        }
                         <div class="pane-header">
                             <h2 class="panel-title">Node details</h2>
-                            <button type="button" class="variable-chips__add" @onclick="() => Select(AddNodeKey)">+ Node</button>
+                            <div class="result-selector">
+                                <label class="node-field">
+                                    <span>deliverable</span>
+                                    <select class="binding-row__select"
+                                            value="@(EffectiveResultRef ?? string.Empty)"
+                                            @onchange="OnResultChangedAsync"
+                                            aria-label="Deliverable node">
+                                        @foreach (var candidate in DeliverableCandidates)
+                                        {
+                                            <option value="@($"node:{candidate.Id}")">@candidate.Label</option>
+                                        }
+                                    </select>
+                                    @if (resultEdit != null)
+                                    {
+                                        <span class="binding-row__pending" title="Pending change">●</span>
+                                    }
+                                </label>
+                                <button type="button" class="variable-chips__add" @onclick="() => Select(AddNodeKey)">+ Node</button>
+                            </div>
                         </div>
                         <WorkflowNodeSummary Nodes="@EffectiveNodes"
                                              Editable="true"
                                              Scalars="@scalars"
                                              Collections="@CollectionIds"
                                              ContractOptions="@ContractOptions"
-                                             NodeModified="@(id => nodeEdits.ContainsKey(id))"
+                                             NodeModified="@(id => nodeEdits.ContainsKey(id) || aggregateEdits.ContainsKey(id))"
                                              RemovedNodes="@RemovedNodes"
                                              RowsFor="@RowsFor"
                                              ValidateVariableName="@ValidateVariableNameForNode"
                                              OnBindingChanged="OnBindingChangedAsync"
                                              OnVariableAdded="OnVariableAddedAsync"
                                              OnNodeChanged="OnNodeChangedAsync"
+                                             OnAggregateChanged="OnAggregateChangedAsync"
                                              OnNodeRemoved="RemoveNodeAsync"
                                              OnNodeRestored="RestoreNodeAsync" />
                     }
@@ -350,9 +376,9 @@
                             <div>
                                 <h3 class="panel-title">New node</h3>
                                 <p class="muted-text">
-                                    Creates the node and its prompt together (they are one-to-one). The
-                                    prompt's text is written under Prompts; variables and bindings follow
-                                    on the node's card.
+                                    @(newNodeKind == "aggregator"
+                                        ? "A deterministic aggregator: collects other nodes' outputs in order, no prompt."
+                                        : "Creates the node and its prompt together (they are one-to-one). The prompt's text is written under Prompts; variables and bindings follow on the node's card.")
                                 </p>
                             </div>
                         </div>
@@ -362,6 +388,16 @@
                         }
                         <div class="new-item-fields">
                             <label class="input-field">
+                                <span>kind</span>
+                                <select class="binding-row__select" @bind="newNodeKind">
+                                    <option value="prompt">prompt node</option>
+                                    @if (content?.SpecVersion == 6)
+                                    {
+                                        <option value="aggregator">aggregator</option>
+                                    }
+                                </select>
+                            </label>
+                            <label class="input-field">
                                 <span>id (lowercase, letters/digits/-/_)</span>
                                 <FluentTextField @bind-Value="newNodeId" Placeholder="summarize-guidelines" />
                             </label>
@@ -369,26 +405,29 @@
                                 <span>label</span>
                                 <FluentTextField @bind-Value="newNodeLabel" Placeholder="Summarizing guidelines" />
                             </label>
-                            <label class="input-field">
-                                <span>for each</span>
-                                <select class="binding-row__select" @bind="newNodeForEach">
-                                    <option value="">— runs once —</option>
-                                    @foreach (var collectionId in CollectionIds)
-                                    {
-                                        <option value="@($"data:{collectionId}")">data:@collectionId</option>
-                                    }
-                                </select>
-                            </label>
-                            <label class="input-field">
-                                <span>output</span>
-                                <select class="binding-row__select" @bind="newNodeOutput">
-                                    <option value="">prose (text)</option>
-                                    @foreach (var contract in ContractOptions)
-                                    {
-                                        <option value="@contract">@contract</option>
-                                    }
-                                </select>
-                            </label>
+                            @if (newNodeKind != "aggregator")
+                            {
+                                <label class="input-field">
+                                    <span>for each</span>
+                                    <select class="binding-row__select" @bind="newNodeForEach">
+                                        <option value="">— runs once —</option>
+                                        @foreach (var collectionId in CollectionIds)
+                                        {
+                                            <option value="@($"data:{collectionId}")">data:@collectionId</option>
+                                        }
+                                    </select>
+                                </label>
+                                <label class="input-field">
+                                    <span>output</span>
+                                    <select class="binding-row__select" @bind="newNodeOutput">
+                                        <option value="">prose (text)</option>
+                                        @foreach (var contract in ContractOptions)
+                                        {
+                                            <option value="@contract">@contract</option>
+                                        }
+                                    </select>
+                                </label>
+                            }
                         </div>
                         <div class="action-row">
                             <FluentButton Appearance="Appearance.Accent" @onclick="AddNodeAsync">
@@ -410,12 +449,13 @@
                                              Scalars="@scalars"
                                              Collections="@CollectionIds"
                                              ContractOptions="@ContractOptions"
-                                             NodeModified="@(id => nodeEdits.ContainsKey(id))"
+                                             NodeModified="@(id => nodeEdits.ContainsKey(id) || aggregateEdits.ContainsKey(id))"
                                              RowsFor="@RowsFor"
                                              ValidateVariableName="@ValidateVariableNameForNode"
                                              OnBindingChanged="OnBindingChangedAsync"
                                              OnVariableAdded="OnVariableAddedAsync"
                                              OnNodeChanged="OnNodeChangedAsync"
+                                             OnAggregateChanged="OnAggregateChangedAsync"
                                              OnNodeRemoved="RemoveNodeAsync" />
                     }
                     else if (SelectedStandard() is { } standard)
@@ -573,6 +613,7 @@
 
     private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + removedFiles.Count
         + bindingEdits.Count + nodeEdits.Count + addedNodes.Count + removedNodeIds.Count
+        + aggregateEdits.Count + (resultEdit != null ? 1 : 0)
         + VariableAddCount + VariableRemovalCount;
 
     private string PendingSummary()
@@ -591,6 +632,8 @@
         if (nodeEdits.Count > 0) parts.Add($"{nodeEdits.Count} node{(nodeEdits.Count == 1 ? "" : "s")}");
         if (addedNodes.Count > 0) parts.Add($"+{addedNodes.Count} node{(addedNodes.Count == 1 ? "" : "s")}");
         if (removedNodeIds.Count > 0) parts.Add($"−{removedNodeIds.Count} node{(removedNodeIds.Count == 1 ? "" : "s")}");
+        if (aggregateEdits.Count > 0) parts.Add($"{aggregateEdits.Count} aggregate");
+        if (resultEdit != null) parts.Add("deliverable");
         if (VariableAddCount > 0) parts.Add($"+{VariableAddCount} var");
         if (VariableRemovalCount > 0) parts.Add($"−{VariableRemovalCount} var");
         return $" ({string.Join(" · ", parts)})";
@@ -756,9 +799,10 @@
     private readonly Dictionary<string, WorkflowNodeSummary.NodeChange> nodeEdits = new(StringComparer.Ordinal);
     private IReadOnlyList<string> schemaIds = Array.Empty<string>();
 
-    // Pending new nodes (#117): each carries its 1:1 prompt's text — a prompt
-    // is only publishable referenced by exactly one node, so node and prompt
-    // are born and die together.
+    // Pending new nodes (#117): a prompt node carries its 1:1 prompt's text —
+    // a prompt is only publishable referenced by exactly one node, so node and
+    // prompt are born and die together. An aggregator (Aggregate non-null) has
+    // no prompt at all.
     private sealed class AddedNode
     {
         public string Id { get; set; } = string.Empty;
@@ -767,7 +811,15 @@
         public string? OutputSchema { get; set; }
         public string? FailIfEmpty { get; set; }
         public string PromptText { get; set; } = string.Empty;
+        public List<string>? Aggregate { get; set; }
     }
+
+    // Pending aggregator source lists (#117), keyed by node id — the full
+    // ordered list; one equal to the manifest removes itself.
+    private readonly Dictionary<string, List<string>> aggregateEdits = new(StringComparer.Ordinal);
+
+    // Pending deliverable selection ("node:x"); null when unchanged.
+    private string? resultEdit;
 
     private readonly List<AddedNode> addedNodes = new();
     private readonly HashSet<string> removedNodeIds = new(StringComparer.Ordinal);
@@ -775,6 +827,7 @@
     private string? newNodeLabel;
     private string newNodeForEach = string.Empty;
     private string newNodeOutput = string.Empty;
+    private string newNodeKind = "prompt";
     private string? newNodeError;
 
     private static string AddedPromptFile(string nodeId) => $"prompts/{nodeId}.md";
@@ -782,34 +835,49 @@
     private AddedNode? AddedNodeForPromptFile(string path) =>
         addedNodes.FirstOrDefault(a => AddedPromptFile(a.Id) == path);
 
-    private static WorkflowManifestReader.NodeView AddedNodeView(AddedNode added) => new(
+    private WorkflowManifestReader.NodeView AddedNodeView(AddedNode added) => new(
         added.Id,
         added.Label,
-        added.Id,
+        added.Aggregate != null ? null : added.Id,
         added.ForEach,
         Array.Empty<WorkflowManifestReader.BindingView>(),
-        IsResult: false,
+        IsResult: EffectiveResultRef == $"node:{added.Id}",
         HasOutput: added.OutputSchema != null,
-        Aggregate: null,
+        Aggregate: added.Aggregate,
         OutputSchema: added.OutputSchema,
         FailIfEmpty: added.FailIfEmpty);
 
-    // The manifest's nodes minus removals, with pending field edits applied,
-    // plus pending new nodes — the single list every editing surface (Graph
-    // cards, sidebar panes, source dropdowns) reads, so a pending forEach
-    // change immediately reshapes valid sources.
+    // The pending deliverable wins over the manifest's result.
+    private string? EffectiveResultRef =>
+        resultEdit ?? (content != null ? WorkflowManifestReader.ReadResultRef(content.Manifest) : null);
+
+    // The manifest's nodes minus removals, with pending field and aggregate
+    // edits applied, plus pending new nodes — the single list every editing
+    // surface (Graph cards, sidebar panes, source dropdowns) reads, so a
+    // pending forEach change immediately reshapes valid sources.
     private IReadOnlyList<WorkflowManifestReader.NodeView> EffectiveNodes =>
         nodes.Where(n => !removedNodeIds.Contains(n.Id))
-            .Select(n => nodeEdits.TryGetValue(n.Id, out var edit)
-                ? n with
+            .Select(n =>
+            {
+                if (nodeEdits.TryGetValue(n.Id, out var edit))
                 {
-                    Label = edit.Label,
-                    ForEach = edit.ForEach,
-                    OutputSchema = edit.OutputSchema,
-                    FailIfEmpty = edit.FailIfEmpty,
-                    HasOutput = edit.OutputSchema != null
+                    n = n with
+                    {
+                        Label = edit.Label,
+                        ForEach = edit.ForEach,
+                        OutputSchema = edit.OutputSchema,
+                        FailIfEmpty = edit.FailIfEmpty,
+                        HasOutput = edit.OutputSchema != null
+                    };
                 }
-                : n)
+
+                if (aggregateEdits.TryGetValue(n.Id, out var sources))
+                {
+                    n = n with { Aggregate = sources };
+                }
+
+                return n with { IsResult = EffectiveResultRef == $"node:{n.Id}" };
+            })
             .Concat(addedNodes.Select(AddedNodeView))
             .ToList();
 
@@ -817,12 +885,120 @@
         nodes.Where(n => removedNodeIds.Contains(n.Id)).ToList();
 
     // Loaded prompts minus those owned by removed nodes, plus each pending
-    // node's prompt (variables arrive via the chips, like any added variable).
+    // prompt node's prompt (variables arrive via the chips, like any added
+    // variable). Aggregators have none.
     private IReadOnlyList<WorkflowManifestReader.PromptView> EffectivePrompts =>
         prompts.Where(p => !nodes.Any(n => n.Prompt == p.Id && removedNodeIds.Contains(n.Id)))
-            .Concat(addedNodes.Select(a => new WorkflowManifestReader.PromptView(
+            .Concat(addedNodes.Where(a => a.Aggregate == null).Select(a => new WorkflowManifestReader.PromptView(
                 a.Id, AddedPromptFile(a.Id), Array.Empty<string>(), null)))
             .ToList();
+
+    // Deliverable candidates by spec version: v6 aggregators, v5 forEach nodes.
+    private IReadOnlyList<WorkflowManifestReader.NodeView> DeliverableCandidates =>
+        (content?.SpecVersion == 6
+            ? EffectiveNodes.Where(n => n.Aggregate != null)
+            : EffectiveNodes.Where(n => n.ForEach != null)).ToList();
+
+    private async Task OnAggregateChangedAsync(WorkflowNodeSummary.AggregateChange change)
+    {
+        publishSuccess = null;
+
+        if (addedNodes.FirstOrDefault(a => a.Id == change.NodeId) is { } addedAggregator)
+        {
+            addedAggregator.Aggregate = change.Sources;
+            await PersistDraftAsync();
+            return;
+        }
+
+        var original = nodes.FirstOrDefault(n => n.Id == change.NodeId)?.Aggregate;
+
+        if (original != null && original.SequenceEqual(change.Sources, StringComparer.Ordinal))
+        {
+            aggregateEdits.Remove(change.NodeId);
+        }
+        else if (original != null)
+        {
+            aggregateEdits[change.NodeId] = change.Sources;
+        }
+
+        await PersistDraftAsync();
+    }
+
+    private async Task OnResultChangedAsync(ChangeEventArgs args)
+    {
+        var selected = args.Value?.ToString();
+
+        if (string.IsNullOrEmpty(selected))
+        {
+            return;
+        }
+
+        publishSuccess = null;
+        resultEdit = selected == WorkflowManifestReader.ReadResultRef(content!.Manifest) ? null : selected;
+        await PersistDraftAsync();
+    }
+
+    // The v6 live guardrail: reverse BFS from the effective deliverable over
+    // effective binding + aggregate edges. Informational — the server's
+    // reachability rule is the authority at publish.
+    private IReadOnlyList<string> UnreachableNodeLabels()
+    {
+        if (content?.SpecVersion != 6 || EffectiveResultRef is not { } resultRef
+            || !resultRef.StartsWith("node:", StringComparison.Ordinal))
+        {
+            return Array.Empty<string>();
+        }
+
+        var effective = EffectiveNodes;
+        var byId = effective.ToDictionary(n => n.Id, StringComparer.Ordinal);
+        var incoming = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        foreach (var node in effective)
+        {
+            var sources = new List<string>();
+
+            foreach (var row in RowsFor(node))
+            {
+                if (row.From.StartsWith("node:", StringComparison.Ordinal))
+                {
+                    sources.Add(row.From["node:".Length..]);
+                }
+            }
+
+            foreach (var sourceRef in node.Aggregate ?? Array.Empty<string>())
+            {
+                if (sourceRef.StartsWith("node:", StringComparison.Ordinal))
+                {
+                    sources.Add(sourceRef["node:".Length..]);
+                }
+            }
+
+            incoming[node.Id] = sources;
+        }
+
+        var resultId = resultRef["node:".Length..];
+        var reached = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+
+        if (byId.ContainsKey(resultId))
+        {
+            reached.Add(resultId);
+            queue.Enqueue(resultId);
+        }
+
+        while (queue.Count > 0)
+        {
+            foreach (var sourceId in incoming.GetValueOrDefault(queue.Dequeue()) ?? new List<string>())
+            {
+                if (byId.ContainsKey(sourceId) && reached.Add(sourceId))
+                {
+                    queue.Enqueue(sourceId);
+                }
+            }
+        }
+
+        return effective.Where(n => !reached.Contains(n.Id)).Select(n => n.Label).ToList();
+    }
 
     private IReadOnlyList<string> CollectionIds => EffectiveCollections.Select(c => c.Id).ToList();
 
@@ -839,6 +1015,7 @@
 
     private bool NodeHasPending(WorkflowManifestReader.NodeView node) =>
         nodeEdits.ContainsKey(node.Id)
+        || aggregateEdits.ContainsKey(node.Id)
         || addedNodes.Any(a => a.Id == node.Id)
         || bindingEdits.Keys.Any(key => key.StartsWith(node.Id + "\n", StringComparison.Ordinal))
         || (node.Prompt != null && HasVariableEdits(node.Prompt));
@@ -866,20 +1043,24 @@
             return;
         }
 
+        var aggregator = newNodeKind == "aggregator";
         addedNodes.Add(new AddedNode
         {
             Id = id,
             Label = label,
-            ForEach = newNodeForEach.Length == 0 ? null : newNodeForEach,
-            OutputSchema = newNodeOutput.Length == 0 ? null : newNodeOutput
+            ForEach = aggregator || newNodeForEach.Length == 0 ? null : newNodeForEach,
+            OutputSchema = aggregator || newNodeOutput.Length == 0 ? null : newNodeOutput,
+            Aggregate = aggregator ? new List<string>() : null
         });
         newNodeId = newNodeLabel = null;
         newNodeForEach = string.Empty;
         newNodeOutput = string.Empty;
+        newNodeKind = "prompt";
         newNodeError = null;
         publishSuccess = null;
-        // Land on the new prompt — writing its text is the next step.
-        selectedKey = AddedPromptFile(id);
+        // Land on the next step: the aggregator's source list on its card, or
+        // the new prompt's text.
+        selectedKey = aggregator ? NodeKeyFor(id) : AddedPromptFile(id);
         await PersistDraftAsync();
     }
 
@@ -897,6 +1078,7 @@
         {
             removedNodeIds.Add(nodeId);
             nodeEdits.Remove(nodeId);
+            aggregateEdits.Remove(nodeId);
         }
         else
         {
@@ -1245,6 +1427,7 @@
 
     private bool HasManifestEdits => bindingEdits.Count > 0 || nodeEdits.Count > 0
         || addedNodes.Count > 0 || removedNodeIds.Count > 0
+        || aggregateEdits.Count > 0 || resultEdit != null
         || VariableAddCount > 0 || VariableRemovalCount > 0;
 
     private void Select(string key)
@@ -1349,10 +1532,31 @@
             }
         }
 
-        // Field-edited and freshly added nodes (#117) keep the blue outline.
-        foreach (var nodeId in nodeEdits.Keys.Concat(addedNodes.Select(a => a.Id)).Where(id => !pendingNodes.Contains(id)))
+        // Field-edited, aggregate-edited, and freshly added nodes (#117) keep
+        // the blue outline; so does a pending deliverable's new target.
+        var blueIds = nodeEdits.Keys
+            .Concat(aggregateEdits.Keys)
+            .Concat(addedNodes.Select(a => a.Id));
+
+        if (resultEdit != null && resultEdit.StartsWith("node:", StringComparison.Ordinal))
+        {
+            blueIds = blueIds.Append(resultEdit["node:".Length..]);
+        }
+
+        foreach (var nodeId in blueIds.Where(id => !pendingNodes.Contains(id)))
         {
             pendingNodes.Add(nodeId);
+        }
+
+        // Sources dropped from an aggregate list are edges that go away.
+        foreach (var (aggregatorId, sources) in aggregateEdits)
+        {
+            var original = nodes.FirstOrDefault(n => n.Id == aggregatorId)?.Aggregate ?? Array.Empty<string>();
+
+            foreach (var droppedSource in original.Where(s => !sources.Contains(s)))
+            {
+                removed.Add((droppedSource, aggregatorId, "aggregate", false));
+            }
         }
 
         // A removed node's own bindings are edges that go away with it.
@@ -1509,6 +1713,8 @@
         nodeEdits.Clear();
         addedNodes.Clear();
         removedNodeIds.Clear();
+        aggregateEdits.Clear();
+        resultEdit = null;
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -1520,6 +1726,7 @@
         newNodeId = newNodeLabel = null;
         newNodeForEach = string.Empty;
         newNodeOutput = string.Empty;
+        newNodeKind = "prompt";
         newNodeError = null;
 
         // The diagram belongs to the loaded version: drop it so package
@@ -1578,7 +1785,7 @@
 
     private sealed record DraftNodeEdit(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
 
-    private sealed record DraftAddedNode(string Id, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty, string PromptText);
+    private sealed record DraftAddedNode(string Id, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty, string PromptText, List<string>? Aggregate = null);
 
     private sealed record DraftPayload(
         int Version,
@@ -1591,7 +1798,9 @@
         List<string>? AddedCollections = null,
         List<DraftNodeEdit>? NodeEdits = null,
         List<DraftAddedNode>? AddedNodes = null,
-        List<string>? RemovedNodes = null);
+        List<string>? RemovedNodes = null,
+        Dictionary<string, List<string>>? AggregateEdits = null,
+        string? ResultEdit = null);
 
     private async Task RestoreDraftAsync()
     {
@@ -1612,6 +1821,8 @@
         List<DraftNodeEdit>? draftNodeEdits = null;
         List<DraftAddedNode>? draftAddedNodes = null;
         List<string>? draftRemovedNodes = null;
+        Dictionary<string, List<string>>? draftAggregateEdits = null;
+        string? draftResultEdit = null;
 
         try
         {
@@ -1629,6 +1840,8 @@
                 draftNodeEdits = payload?.NodeEdits;
                 draftAddedNodes = payload?.AddedNodes;
                 draftRemovedNodes = payload?.RemovedNodes;
+                draftAggregateEdits = payload?.AggregateEdits;
+                draftResultEdit = payload?.ResultEdit;
             }
             else
             {
@@ -1735,7 +1948,8 @@
                     ForEach = draftAddedNode.ForEach,
                     OutputSchema = draftAddedNode.OutputSchema,
                     FailIfEmpty = draftAddedNode.FailIfEmpty,
-                    PromptText = draftAddedNode.PromptText
+                    PromptText = draftAddedNode.PromptText,
+                    Aggregate = draftAddedNode.Aggregate
                 });
             }
         }
@@ -1746,6 +1960,28 @@
             {
                 removedNodeIds.Add(removedNodeId);
             }
+        }
+
+        // Aggregate-list edits: kept when the aggregator still exists and the
+        // list still differs; the deliverable selection when it still differs
+        // and its target still exists.
+        foreach (var (aggregatorId, sources) in draftAggregateEdits ?? new Dictionary<string, List<string>>())
+        {
+            var original = nodes.FirstOrDefault(n => n.Id == aggregatorId)?.Aggregate;
+
+            if (original != null && sources is { Count: > 0 }
+                && !original.SequenceEqual(sources, StringComparer.Ordinal))
+            {
+                aggregateEdits[aggregatorId] = sources;
+            }
+        }
+
+        if (draftResultEdit != null
+            && draftResultEdit != WorkflowManifestReader.ReadResultRef(content!.Manifest)
+            && draftResultEdit.StartsWith("node:", StringComparison.Ordinal)
+            && EffectiveNodes.Any(n => n.Id == draftResultEdit["node:".Length..]))
+        {
+            resultEdit = draftResultEdit;
         }
 
         // Node-field edits: kept only when the node still exists and the
@@ -1798,7 +2034,7 @@
         }
 
         var payload = new DraftPayload(
-            7,
+            8,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -1811,8 +2047,10 @@
             variableRemovals.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
             addedCollections.ToList(),
             nodeEdits.Values.Select(edit => new DraftNodeEdit(edit.NodeId, edit.Label, edit.ForEach, edit.OutputSchema, edit.FailIfEmpty)).ToList(),
-            addedNodes.Select(a => new DraftAddedNode(a.Id, a.Label, a.ForEach, a.OutputSchema, a.FailIfEmpty, a.PromptText)).ToList(),
-            removedNodeIds.ToList());
+            addedNodes.Select(a => new DraftAddedNode(a.Id, a.Label, a.ForEach, a.OutputSchema, a.FailIfEmpty, a.PromptText, a.Aggregate)).ToList(),
+            removedNodeIds.ToList(),
+            aggregateEdits.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
+            resultEdit);
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
@@ -1904,7 +2142,14 @@
 
             foreach (var addedNode in addedNodes)
             {
-                if (string.IsNullOrWhiteSpace(addedNode.PromptText))
+                if (addedNode.Aggregate != null)
+                {
+                    if (addedNode.Aggregate.Count == 0)
+                    {
+                        unbound.Add($"Aggregator '{addedNode.Id}' has no sources yet — add at least one on its card.");
+                    }
+                }
+                else if (string.IsNullOrWhiteSpace(addedNode.PromptText))
                 {
                     unbound.Add($"Node '{addedNode.Id}' has no prompt text yet — write it under Prompts.");
                 }
@@ -1946,9 +2191,9 @@
                 files[AddedPath(added)] = added.Content;
             }
 
-            // Pending nodes bring their prompt files; removed nodes take
-            // theirs away (1:1 — no other node may reference them).
-            foreach (var addedNode in addedNodes)
+            // Pending prompt nodes bring their prompt files; removed nodes
+            // take theirs away (1:1 — no other node may reference them).
+            foreach (var addedNode in addedNodes.Where(a => a.Aggregate == null))
             {
                 files[AddedPromptFile(addedNode.Id)] = addedNode.PromptText;
             }
@@ -2018,6 +2263,8 @@
         nodeEdits.Clear();
         addedNodes.Clear();
         removedNodeIds.Clear();
+        aggregateEdits.Clear();
+        resultEdit = null;
         variableAdds.Clear();
         variableRemovals.Clear();
         newVariableName = null;
@@ -2030,6 +2277,7 @@
         newNodeId = newNodeLabel = null;
         newNodeForEach = string.Empty;
         newNodeOutput = string.Empty;
+        newNodeKind = "prompt";
         newNodeError = null;
         publishErrors = new List<string>();
         publishSuccess = null;
@@ -2045,7 +2293,8 @@
     {
         if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0
             && addedCollections.Count == 0 && nodeEdits.Count == 0
-            && addedNodes.Count == 0 && removedNodeIds.Count == 0)
+            && addedNodes.Count == 0 && removedNodeIds.Count == 0
+            && aggregateEdits.Count == 0 && resultEdit == null)
         {
             return content!.Manifest;
         }
@@ -2113,11 +2362,26 @@
                     ? bindingsObject
                     : null;
 
-        // Pending new nodes (#117): the node object and its 1:1 prompt entry.
-        // Bindings start empty here — the generic rebind loop below fills them
-        // from bindingEdits like any other node's.
+        // Pending new nodes (#117): the node object and — for prompt nodes —
+        // its 1:1 prompt entry. Bindings start empty here; the generic rebind
+        // loop below fills them from bindingEdits like any other node's.
+        // Aggregators carry only their ordered source list.
         foreach (var addedNode in addedNodes)
         {
+            if (addedNode.Aggregate != null)
+            {
+                nodesArray.Add(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["id"] = addedNode.Id,
+                    ["label"] = addedNode.Label,
+                    ["aggregate"] = new System.Text.Json.Nodes.JsonArray(
+                        addedNode.Aggregate
+                            .Select(s => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(s))
+                            .ToArray())
+                });
+                continue;
+            }
+
             if ((root["prompts"] ?? root["Prompts"]) is System.Text.Json.Nodes.JsonArray promptsArrayForAdd)
             {
                 promptsArrayForAdd.Add(new System.Text.Json.Nodes.JsonObject
@@ -2157,6 +2421,25 @@
             }
 
             nodesArray.Add(newNodeObject);
+        }
+
+        // Aggregate-list edits on existing aggregators (#117).
+        foreach (var pair in aggregateEdits)
+        {
+            if (!removedNodeIds.Contains(pair.Key) && NodeFor(pair.Key) is { } aggregatorObject)
+            {
+                aggregatorObject[aggregatorObject.ContainsKey("Aggregate") ? "Aggregate" : "aggregate"] =
+                    new System.Text.Json.Nodes.JsonArray(
+                        pair.Value
+                            .Select(s => (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(s))
+                            .ToArray());
+            }
+        }
+
+        // The pending deliverable selection.
+        if (resultEdit != null)
+        {
+            root[root["Result"] is not null ? "Result" : "result"] = resultEdit;
         }
 
         // Removed nodes lose their node object and their prompt entry.
