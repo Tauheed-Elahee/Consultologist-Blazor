@@ -63,6 +63,14 @@
 	font-family: inherit;
 }
 
+.template-section--removed {
+	opacity: 0.65;
+}
+
+.node-strike {
+	text-decoration: line-through;
+}
+
 .binding-row__hint {
 	font-size: 0.75rem;
 }
