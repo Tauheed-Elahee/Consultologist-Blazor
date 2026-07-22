@@ -30,6 +30,12 @@ repo-owned refs resolve from the public container, `acct-*` from the private
 one. When `WorkflowPackages__PublicBlobServiceUri` is unset (local dev),
 everything routes private, as before the split.
 
+Since #10, `consultologistjobqueue` is **RBAC-only** — shared-key access is
+disabled, so every path (the app's identity, `az` with `--auth-mode login`,
+tooling) authenticates through Entra ID data-plane roles. Account keys no
+longer work there. (`consultologistpublic` keeps shared-key until #16 moves
+publishing to CI OIDC.)
+
 - **Layout** (one package shown; identical in both containers):
 
 ```
