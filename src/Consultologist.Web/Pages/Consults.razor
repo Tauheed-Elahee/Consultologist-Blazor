@@ -47,16 +47,16 @@
                                             Rows="16" />
                         </label>
 
-                        @if (isStandardsLoading)
+                        @if (isBlocksLoading)
                         {
                             <div class="loading-state">
                                 <FluentProgressRing />
                                 <span>Loading section standards...</span>
                             </div>
                         }
-                        else if (!string.IsNullOrEmpty(standardsLoadError))
+                        else if (!string.IsNullOrEmpty(blocksLoadError))
                         {
-                            <FluentMessageBar Intent="MessageIntent.Error">@standardsLoadError</FluentMessageBar>
+                            <FluentMessageBar Intent="MessageIntent.Error">@blocksLoadError</FluentMessageBar>
                             @* Escape hatch: a pin to an unloadable package must stay
                                correctable from here — the picker loads independently. *@
                             <div class="setup-context">
@@ -66,7 +66,7 @@
                                 </span>
                             </div>
                         }
-                        else if (sectionStandards.Count > 0)
+                        else if (packageBlocks.Count > 0)
                         {
                             <div class="setup-context">
                                 <span class="setup-context__line">
@@ -74,12 +74,12 @@
                                     <WorkflowPackagePicker @key="workflowPackageRef"
                                                            Disabled="@isAiRequestLoading"
                                                            OnPinned="OnPackagePinnedAsync" />
-                                    <span class="muted-text">· @sectionStandards.Count sections</span>
+                                    <span class="muted-text">· @packageBlocks.Count sections</span>
                                 </span>
                                 <details class="setup-sections">
                                     <summary>Sections it will generate</summary>
                                     <ul>
-                                        @foreach (var standard in sectionStandards)
+                                        @foreach (var standard in packageBlocks)
                                         {
                                             <li>@standard.Name</li>
                                         }
@@ -94,7 +94,7 @@
                         }
 
                         <div class="action-row">
-                            @if (totalSectionCount > 0)
+                            @if (totalBlockCount > 0)
                             {
                                 <FluentButton Appearance="Appearance.Neutral" @onclick="BackToRun">
                                     Back to consult
@@ -102,7 +102,7 @@
                             }
                             <FluentButton Appearance="Appearance.Accent"
                                           @onclick="CreateConsultAsync"
-                                          Disabled="@(isStandardsLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || sectionStandards.Count == 0)">
+                                          Disabled="@(isBlocksLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || packageBlocks.Count == 0)">
                                 Create consult
                             </FluentButton>
                         </div>
@@ -150,14 +150,14 @@
                                 </article>
                             </div>
                         }
-                        else if (generatedSections.Count > 0)
+                        else if (generatedBlocks.Count > 0)
                         {
                             <div>
                                 <div class="result-header">
                                     <h2 class="panel-title">Consultation note</h2>
                                     <div class="result-header__actions">
                                         <FluentBadge Appearance="Appearance.Accent">
-                                            @generatedSections.Count sections
+                                            @generatedBlocks.Count sections
                                         </FluentBadge>
                                         @if (!isAiRequestLoading || runTerminalStatus != null)
                                         {
@@ -169,9 +169,9 @@
                                 </div>
 
                                 <article class="note-preview generated-note">
-                                    @foreach (var standard in sectionStandards)
+                                    @foreach (var standard in packageBlocks)
                                     {
-                                        if (generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+                                        if (generatedBlocks.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
                                         {
                                             <section class="note-section">
                                                 <h3>@standard.Name</h3>
@@ -282,12 +282,12 @@
                                                     <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
                                                     <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
                                                     <span class="node-row__label">@GetStageChecklistLabel(stepNum)</span>
-                                                    <span class="node-row__count muted-text">@completedSectionCount/@totalSectionCount</span>
+                                                    <span class="node-row__count muted-text">@completedBlockCount/@totalBlockCount</span>
                                                 </summary>
-                                                @foreach (var sec in sectionStandards)
+                                                @foreach (var sec in packageBlocks)
                                                 {
-                                                    var sectionStatus = generatedSections.ContainsKey(sec.Id) ? "Completed"
-                                                        : failedSectionErrors.ContainsKey(sec.Id) ? "Failed"
+                                                    var sectionStatus = generatedBlocks.ContainsKey(sec.Id) ? "Completed"
+                                                        : failedBlockErrors.ContainsKey(sec.Id) ? "Failed"
                                                         : current ? "Running" : null;
                                                     <div class="node-row node-row--item">
                                                         <span class="node-row__chevron" aria-hidden="true"></span>
@@ -321,7 +321,7 @@
                                     <span class="node-row__label">@(doneStatus == "Failed" ? "Failed" : "Done")</span>
                                     @if (doneStatus != null)
                                     {
-                                        <span class="node-row__count muted-text">@generatedSections.Count/@totalSectionCount sections</span>
+                                        <span class="node-row__count muted-text">@generatedBlocks.Count/@totalBlockCount sections</span>
                                     }
                                 </div>
                             </div>
@@ -352,32 +352,32 @@
   private string? copyFeedback;
   private int copyFeedbackToken;
   private string? assembledDocument;
-  private List<SectionStandard> sectionStandards = new();
+  private List<PackageBlock> packageBlocks = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
   private IReadOnlyList<WorkflowManifestReader.CollectionView> workflowCollections = Array.Empty<WorkflowManifestReader.CollectionView>();
   private HashSet<string> completedNodeItems = new();
-  private Dictionary<string, string> generatedSections = new();
-  private Dictionary<string, string> failedSectionErrors = new();
-  private bool isStandardsLoading;
-  private string? standardsLoadError;
+  private Dictionary<string, string> generatedBlocks = new();
+  private Dictionary<string, string> failedBlockErrors = new();
+  private bool isBlocksLoading;
+  private string? blocksLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
   private string? aiProgressNotice;
-  private int completedSectionCount;
-  private int totalSectionCount;
+  private int completedBlockCount;
+  private int totalBlockCount;
   private int completedAnalysisStageCount;
   private int totalAnalysisStageCount;
   private List<string>? nodeLabels;
   private CancellationTokenSource? activeEventStreamCancellationTokenSource;
   private string? activeEventStreamCancellationReason;
   private SseAttemptState? activeSseAttempt;
-  private IReadOnlyList<SectionStandard> activeSectionSnapshots = Array.Empty<SectionStandard>();
+  private IReadOnlyList<PackageBlock> activeBlockSnapshots = Array.Empty<PackageBlock>();
 
   protected override async Task OnInitializedAsync()
   {
     Navigation.LocationChanged += HandleLocationChanged;
-    await LoadSectionStandardsAsync();
+    await LoadPackageBlocksAsync();
     await LoadWorkflowNodesAsync();
   }
 
@@ -417,13 +417,13 @@
 
     return collection != null
       ? collection.Items.Select(item => (item.Id, item.Name)).ToList()
-      : sectionStandards.Select(sec => (sec.Id, sec.Name)).ToList();
+      : packageBlocks.Select(sec => (sec.Id, sec.Name)).ToList();
   }
 
-  private async Task LoadSectionStandardsAsync()
+  private async Task LoadPackageBlocksAsync()
   {
-    isStandardsLoading = true;
-    standardsLoadError = null;
+    isBlocksLoading = true;
+    blocksLoadError = null;
 
     try
     {
@@ -433,8 +433,8 @@
       var package = await WorkflowService.GetCurrentPackageAsync();
       workflowPackageRef = package.Ref;
 
-      sectionStandards = (package.Sections ?? Array.Empty<WorkflowPackageSectionResponse>())
-        .Select(section => new SectionStandard(section.Id, section.Name, section.Content))
+      packageBlocks = (package.Blocks ?? Array.Empty<WorkflowPackageBlockResponse>())
+        .Select(block => new PackageBlock(block.Id, block.Name))
         .ToList();
     }
     catch (AccessTokenNotAvailableException exception)
@@ -443,12 +443,12 @@
     }
     catch (Exception ex)
     {
-      sectionStandards = new();
-      standardsLoadError = $"Unable to load section standards: {ex.Message}";
+      packageBlocks = new();
+      blocksLoadError = $"Unable to load section standards: {ex.Message}";
     }
     finally
     {
-      isStandardsLoading = false;
+      isBlocksLoading = false;
     }
   }
 
@@ -461,10 +461,10 @@
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
-    generatedSections = new();
-    failedSectionErrors = new();
-    completedSectionCount = 0;
-    totalSectionCount = 0;
+    generatedBlocks = new();
+    failedBlockErrors = new();
+    completedBlockCount = 0;
+    totalBlockCount = 0;
     completedAnalysisStageCount = 0;
     totalAnalysisStageCount = 0;
     nodeLabels = null;
@@ -475,7 +475,7 @@
       return;
     }
 
-    if (sectionStandards.Count == 0)
+    if (packageBlocks.Count == 0)
     {
       aiRequestError = "No section standards are available.";
       return;
@@ -485,28 +485,28 @@
     {
       isAiRequestLoading = true;
       var draftSnapshot = consultDraft;
-      var sectionSnapshots = sectionStandards.ToList();
-      totalSectionCount = sectionSnapshots.Count;
+      var blockSnapshots = packageBlocks.ToList();
+      totalBlockCount = blockSnapshots.Count;
       await InvokeAsync(StateHasChanged);
 
       // Sections are package data resolved server-side; the request carries only
       // the draft (and the resolved package ref).
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, workflowPackageRef);
-      var streamResult = await StreamConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+      var streamResult = await StreamConsultGenerationJobAsync(job.JobId, blockSnapshots);
 
       if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
       {
         Logger.LogWarning(
           "Consult generation falling back to polling. JobId={JobId}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, TotalCount={TotalCount}",
           job.JobId,
-          generatedSections.Count,
-          failedSectionErrors.Count,
-          totalSectionCount);
+          generatedBlocks.Count,
+          failedBlockErrors.Count,
+          totalBlockCount);
 
         aiProgressNotice = "Live updates paused; checking status periodically.";
         MarkPollingFallbackStarted();
         await InvokeAsync(StateHasChanged);
-        await PollConsultGenerationJobAsync(job.JobId, sectionSnapshots);
+        await PollConsultGenerationJobAsync(job.JobId, blockSnapshots);
       }
     }
     catch (Exception ex)
@@ -523,9 +523,9 @@
 
   private async Task<ConsultGenerationStreamResult> StreamConsultGenerationJobAsync(
     string jobId,
-    IReadOnlyList<SectionStandard> sectionSnapshots)
+    IReadOnlyList<PackageBlock> blockSnapshots)
   {
-    activeSectionSnapshots = sectionSnapshots;
+    activeBlockSnapshots = blockSnapshots;
     var stream = new SseStreamState(jobId);
 
     try
@@ -538,7 +538,7 @@
 
         var attemptResult = await StreamOneSseAttemptAsync(
           jobId,
-          sectionSnapshots,
+          blockSnapshots,
           stream,
           attempt,
           reconnectAttempt,
@@ -575,13 +575,13 @@
     }
     finally
     {
-      activeSectionSnapshots = Array.Empty<SectionStandard>();
+      activeBlockSnapshots = Array.Empty<PackageBlock>();
     }
   }
 
   private async Task<ConsultGenerationAttemptResult> StreamOneSseAttemptAsync(
     string jobId,
-    IReadOnlyList<SectionStandard> sectionSnapshots,
+    IReadOnlyList<PackageBlock> blockSnapshots,
     SseStreamState stream,
     SseAttemptState attempt,
     int reconnectAttempt,
@@ -602,7 +602,7 @@
         "Opening consult generation SSE stream. JobId={JobId}, AttemptId={AttemptId}, SectionCount={SectionCount}, ReconnectAttempt={ReconnectAttempt}, ResumeCursorPresent={ResumeCursorPresent}",
         jobId,
         attempt.AttemptId,
-        sectionSnapshots.Count,
+        blockSnapshots.Count,
         reconnectAttempt,
         !string.IsNullOrWhiteSpace(lastEventId));
 
@@ -707,7 +707,7 @@
     }
   }
 
-  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<SectionStandard> sectionSnapshots)
+  private async Task PollConsultGenerationJobAsync(string jobId, IReadOnlyList<PackageBlock> blockSnapshots)
   {
     try
     {
@@ -715,7 +715,7 @@
       {
         var response = await AIService.GetConsultGenerationJobAsync(jobId);
 
-        ApplyConsultGenerationJobResponse(response, sectionSnapshots);
+        ApplyConsultGenerationJobResponse(response, blockSnapshots);
         await InvokeAsync(StateHasChanged);
 
         if (response.Status is "Completed" or "Failed")
@@ -754,7 +754,7 @@
               snapshot.CompletedBlockCount,
               snapshot.FailedBlockCount);
 
-            ApplyConsultGenerationJobResponse(snapshot, GetActiveSectionSnapshots());
+            ApplyConsultGenerationJobResponse(snapshot, GetActiveBlockSnapshots());
           }
           break;
 
@@ -762,14 +762,14 @@
           var completed = JsonSerializer.Deserialize<ConsultGenerationBlockCompletedEvent>(json, SseJsonOptions);
           if (completed != null)
           {
-            generatedSections = new Dictionary<string, string>(generatedSections)
+            generatedBlocks = new Dictionary<string, string>(generatedBlocks)
             {
               [completed.BlockId] = completed.Text
             };
-            var nextFailedSections = new Dictionary<string, string>(failedSectionErrors);
+            var nextFailedSections = new Dictionary<string, string>(failedBlockErrors);
             nextFailedSections.Remove(completed.BlockId);
-            failedSectionErrors = nextFailedSections;
-            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
+            failedBlockErrors = nextFailedSections;
+            completedBlockCount = generatedBlocks.Count + failedBlockErrors.Count;
           }
           break;
 
@@ -777,15 +777,15 @@
           var failed = JsonSerializer.Deserialize<ConsultGenerationBlockFailedEvent>(json, SseJsonOptions);
           if (failed != null)
           {
-            failedSectionErrors = new Dictionary<string, string>(failedSectionErrors)
+            failedBlockErrors = new Dictionary<string, string>(failedBlockErrors)
             {
               [failed.BlockId] = failed.Error
             };
-            var nextGeneratedSections = new Dictionary<string, string>(generatedSections);
+            var nextGeneratedSections = new Dictionary<string, string>(generatedBlocks);
             nextGeneratedSections.Remove(failed.BlockId);
-            generatedSections = nextGeneratedSections;
-            completedSectionCount = generatedSections.Count + failedSectionErrors.Count;
-            UpdateFailedSectionError(GetActiveSectionSnapshots());
+            generatedBlocks = nextGeneratedSections;
+            completedBlockCount = generatedBlocks.Count + failedBlockErrors.Count;
+            UpdateFailedBlockError(GetActiveBlockSnapshots());
           }
           break;
 
@@ -824,7 +824,7 @@
               final.CompletedBlockCount,
               final.FailedBlockCount);
 
-            ApplyConsultGenerationJobResponse(final, GetActiveSectionSnapshots());
+            ApplyConsultGenerationJobResponse(final, GetActiveBlockSnapshots());
           }
 
           runTerminalStatus = final?.Status ?? "Completed";
@@ -875,22 +875,22 @@
 
   private void ApplyConsultGenerationJobResponse(
     ConsultGenerationJobResponse response,
-    IReadOnlyList<SectionStandard> sectionSnapshots)
+    IReadOnlyList<PackageBlock> blockSnapshots)
   {
     // Every payload applied here is snapshot-shaped (the snapshot event, a
     // done payload, or a polled response) — the rail's Setup row completes
     // on it.
     runEventSeen = true;
-    generatedSections = response.GeneratedBlocks;
+    generatedBlocks = response.GeneratedBlocks;
 
     if (response.AssembledDocument != null)
     {
       // v6 deliverable: present on Completed payloads only, kept once seen.
       assembledDocument = response.AssembledDocument;
     }
-    failedSectionErrors = response.FailedBlocks;
-    totalSectionCount = response.TotalBlockCount == 0 ? sectionSnapshots.Count : response.TotalBlockCount;
-    completedSectionCount = response.CompletedBlockCount + response.FailedBlockCount;
+    failedBlockErrors = response.FailedBlocks;
+    totalBlockCount = response.TotalBlockCount == 0 ? blockSnapshots.Count : response.TotalBlockCount;
+    completedBlockCount = response.CompletedBlockCount + response.FailedBlockCount;
 
     if (response.Status != "Failed"
         && response.Nodes is { Count: > 0 }
@@ -922,7 +922,7 @@
       return;
     }
 
-    UpdateFailedSectionError(sectionSnapshots);
+    UpdateFailedBlockError(blockSnapshots);
   }
 
   private static bool IsPreprocessingFailureStage(string? stage)
@@ -931,7 +931,7 @@
       && stage.EndsWith("-failed", StringComparison.Ordinal);
   }
 
-  private bool IsRunPhase => !editingDraft && (isAiRequestLoading || totalSectionCount > 0);
+  private bool IsRunPhase => !editingDraft && (isAiRequestLoading || totalBlockCount > 0);
 
   private string DraftSnippet
   {
@@ -959,9 +959,9 @@
   // blank line between (v5).
   private async Task CopyNoteAsync()
   {
-    var text = assembledDocument ?? string.Join("\n\n", sectionStandards
-      .Where(standard => generatedSections.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
-      .Select(standard => $"{standard.Name}\n{generatedSections[standard.Id].Trim()}"));
+    var text = assembledDocument ?? string.Join("\n\n", packageBlocks
+      .Where(standard => generatedBlocks.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
+      .Select(standard => $"{standard.Name}\n{generatedBlocks[standard.Id].Trim()}"));
 
     try
     {
@@ -987,7 +987,7 @@
   // node map from it.
   private async Task OnPackagePinnedAsync()
   {
-    await LoadSectionStandardsAsync();
+    await LoadPackageBlocksAsync();
     await LoadWorkflowNodesAsync();
   }
 
@@ -1014,12 +1014,12 @@
   {
     if (completedNodeItems.Contains($"{node.Id}:{ItemPart(itemId)}")
         || completedNodeItems.Contains($"{node.Id}:{itemId}")
-        || (node.IsResult && generatedSections.ContainsKey(itemId)))
+        || (node.IsResult && generatedBlocks.ContainsKey(itemId)))
     {
       return "Completed";
     }
 
-    if (failedSectionErrors.Keys.Any(key => key == itemId || ItemPart(key) == itemId))
+    if (failedBlockErrors.Keys.Any(key => key == itemId || ItemPart(key) == itemId))
     {
       return "Failed";
     }
@@ -1086,9 +1086,9 @@
     return $"Stage {stepNum}";
   }
 
-  private void UpdateFailedSectionError(IReadOnlyList<SectionStandard> sectionSnapshots)
+  private void UpdateFailedBlockError(IReadOnlyList<PackageBlock> blockSnapshots)
   {
-    if (failedSectionErrors.Count == 0)
+    if (failedBlockErrors.Count == 0)
     {
       if (aiRequestError?.StartsWith("Unable to generate:", StringComparison.Ordinal) == true)
       {
@@ -1098,8 +1098,8 @@
       return;
     }
 
-    var failedSectionNames = sectionSnapshots
-      .Where(section => failedSectionErrors.ContainsKey(section.Id))
+    var failedSectionNames = blockSnapshots
+      .Where(section => failedBlockErrors.ContainsKey(section.Id))
       .Select(section => section.Name);
 
     aiRequestError = $"Unable to generate: {string.Join(", ", failedSectionNames)}.";
@@ -1234,26 +1234,16 @@
     };
   }
 
-  private IReadOnlyList<SectionStandard> GetActiveSectionSnapshots()
+  private IReadOnlyList<PackageBlock> GetActiveBlockSnapshots()
   {
-    return activeSectionSnapshots.Count > 0
-      ? activeSectionSnapshots
-      : sectionStandards;
+    return activeBlockSnapshots.Count > 0
+      ? activeBlockSnapshots
+      : packageBlocks;
   }
 
-  private sealed class SectionStandard
-  {
-    public SectionStandard(string id, string name, string standard)
-    {
-      Id = id;
-      Name = name;
-      Standard = standard;
-    }
-
-    public string Id { get; }
-    public string Name { get; }
-    public string Standard { get; set; }
-  }
+  // One deliverable block of the pinned package (v5: a section; v6: the
+  // result aggregator's expansion) — the note-stream and tally roster.
+  private sealed record PackageBlock(string Id, string Name);
 
   private sealed record ConsultGenerationBlockCompletedEvent(
     string JobId,

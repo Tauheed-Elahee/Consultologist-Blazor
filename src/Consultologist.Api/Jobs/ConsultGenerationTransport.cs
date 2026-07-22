@@ -203,7 +203,7 @@ public sealed class ConsultGenerationJobs
 
             if (package.Manifest.SpecVersion == 6)
             {
-                items = WorkflowPackageSections.ResolveBlocks(package)
+                items = WorkflowPackageBlocks.ResolveBlocks(package)
                     .Select(block => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["id"] = block.Id,
@@ -226,7 +226,7 @@ public sealed class ConsultGenerationJobs
             }
             else
             {
-                var collection = WorkflowPackageSections.ResolveCollection(package);
+                var collection = WorkflowPackageBlocks.ResolveCollection(package);
                 items = collection.Items
                     .Select(item => (IReadOnlyDictionary<string, string>)item.Fields)
                     .ToList();

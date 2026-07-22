@@ -158,13 +158,13 @@ public sealed record WorkflowPackage(
     public bool HasPrompts => Prompts is { Count: > 0 };
 }
 
-public sealed record WorkflowPackageSectionResponse(string Id, string Name, string Content);
+public sealed record WorkflowPackageBlockResponse(string Id, string Name);
 
 public sealed record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null);
+    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null);
 
 /// <summary>
 /// The pin-resolved package's full editable content: the typed manifest (the

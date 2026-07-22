@@ -48,13 +48,13 @@ public record PublicCatalogView(Dictionary<string, PublicContractView>? Contract
 
 public record PublicContractView(string? AgentName);
 
-public record WorkflowPackageSectionResponse(string Id, string Name, string Content);
+public record WorkflowPackageBlockResponse(string Id, string Name);
 
 public record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    IReadOnlyList<WorkflowPackageSectionResponse>? Sections = null)
+    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null)
 {
     public string Ref => $"{Name}@{Version}";
 }
