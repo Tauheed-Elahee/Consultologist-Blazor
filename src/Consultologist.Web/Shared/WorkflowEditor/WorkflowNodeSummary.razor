@@ -1,11 +1,13 @@
-@* The Graph pane's node cards. Read-only by default; with Editable set, each
-   binding row becomes a source dropdown (+ renderer for node sources) over
-   the valid v5 source space (#138), rows come from the host's effective
-   model (declared + pending-added variables, #140), and each card offers a
-   "+ variable" form. The server validator remains the authority on publish. *@
+@* The node cards, shared by the Graph pane (all nodes) and the sidebar's
+   single-node panes (Only set). Read-only by default; with Editable set, the
+   node's own fields (label, forEach, output contract, failIfEmpty) become
+   inputs (#117), each binding row becomes a source dropdown (+ renderer for
+   node sources, #138), rows come from the host's effective model (declared +
+   pending-added variables, #140), and each card offers a "+ variable" form.
+   The server validator remains the authority on publish. *@
 @using Consultologist.Web.Services.Workflow
 
-@foreach (var node in Nodes)
+@foreach (var node in (Only == null ? Nodes : Nodes.Where(n => n.Id == Only)))
 {
     <article class="template-section">
         <div class="template-section__header">
@@ -31,9 +33,73 @@
                     {
                         <span> · aggregator</span>
                     }
+                    @if (NodeModified?.Invoke(node.Id) == true)
+                    {
+                        <span class="binding-row__pending" title="Pending change"> ●</span>
+                    }
                 </p>
             </div>
         </div>
+        @if (Editable)
+        {
+            <div class="node-fields">
+                <label class="node-field">
+                    <span>label</span>
+                    <input class="binding-row__select node-field__input"
+                           value="@node.Label"
+                           @onchange="args => EmitNodeChangeAsync(node, label: args.Value?.ToString() ?? string.Empty)"
+                           aria-label="Node label" />
+                </label>
+                @if (node.Aggregate == null)
+                {
+                    <label class="node-field">
+                        <span>for each</span>
+                        <select class="binding-row__select"
+                                value="@(node.ForEach ?? string.Empty)"
+                                @onchange="args => EmitNodeChangeAsync(node, forEach: args.Value?.ToString())"
+                                aria-label="Node forEach collection">
+                            <option value="">— runs once —</option>
+                            @if (node.ForEach != null && !Collections.Contains(ForEachCollectionId(node.ForEach)))
+                            {
+                                <option value="@node.ForEach">@node.ForEach</option>
+                            }
+                            @foreach (var collectionId in Collections)
+                            {
+                                <option value="@($"data:{collectionId}")">data:@collectionId</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="node-field">
+                        <span>output</span>
+                        <select class="binding-row__select"
+                                value="@(node.OutputSchema ?? string.Empty)"
+                                @onchange="args => EmitNodeChangeAsync(node, outputSchema: args.Value?.ToString())"
+                                aria-label="Node output contract">
+                            <option value="">prose (text)</option>
+                            @if (node.OutputSchema != null && !ContractOptions.Contains(node.OutputSchema))
+                            {
+                                <option value="@node.OutputSchema">@node.OutputSchema</option>
+                            }
+                            @foreach (var contract in ContractOptions)
+                            {
+                                <option value="@contract">@contract</option>
+                            }
+                        </select>
+                    </label>
+                    @if (node.OutputSchema != null)
+                    {
+                        <label class="node-field node-field--wide">
+                            <span>fail if empty</span>
+                            <input class="binding-row__select node-field__input"
+                                   value="@(node.FailIfEmpty ?? string.Empty)"
+                                   placeholder="optional — error shown when the output is empty"
+                                   @onchange="args => EmitNodeChangeAsync(node, failIfEmpty: args.Value?.ToString())"
+                                   aria-label="Node fail-if-empty message" />
+                        </label>
+                    }
+                }
+            </div>
+        }
         @if (node.Aggregate != null)
         {
             @* Deterministic aggregation: sources in declared order (v6). *@
@@ -122,13 +188,51 @@
 
     public sealed record VariableAdd(string NodeId, string Variable, string From, string? As);
 
+    /// <summary>The node's full effective field tuple after one field changed (#117).</summary>
+    public sealed record NodeChange(string NodeId, string Label, string? ForEach, string? OutputSchema, string? FailIfEmpty);
+
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
     [Parameter] public bool Editable { get; set; }
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
+    [Parameter] public IReadOnlyList<string> Collections { get; set; } = Array.Empty<string>();
+    [Parameter] public IReadOnlyList<string> ContractOptions { get; set; } = Array.Empty<string>();
+    [Parameter] public string? Only { get; set; }
+    [Parameter] public Func<string, bool>? NodeModified { get; set; }
     [Parameter] public Func<WorkflowManifestReader.NodeView, IReadOnlyList<BindingRow>>? RowsFor { get; set; }
     [Parameter] public Func<WorkflowManifestReader.NodeView, string, string?>? ValidateVariableName { get; set; }
     [Parameter] public EventCallback<BindingChange> OnBindingChanged { get; set; }
     [Parameter] public EventCallback<VariableAdd> OnVariableAdded { get; set; }
+    [Parameter] public EventCallback<NodeChange> OnNodeChanged { get; set; }
+
+    private static string ForEachCollectionId(string forEach) =>
+        forEach.StartsWith("data:", StringComparison.Ordinal) ? forEach["data:".Length..] : forEach;
+
+    // Each field edit emits the node's complete effective tuple; the host
+    // compares it against the manifest original (self-removing edits, like
+    // binding rows). Selecting a value equal to the current one still emits —
+    // harmlessly resolving to "no change" host-side.
+    private async Task EmitNodeChangeAsync(
+        WorkflowManifestReader.NodeView node,
+        string? label = null,
+        string? forEach = null,
+        string? outputSchema = null,
+        string? failIfEmpty = null)
+    {
+        var effectiveLabel = label ?? node.Label;
+        var effectiveForEach = forEach != null ? (forEach.Length == 0 ? null : forEach) : node.ForEach;
+        var effectiveSchema = outputSchema != null ? (outputSchema.Length == 0 ? null : outputSchema) : node.OutputSchema;
+        var effectiveFailIfEmpty = failIfEmpty != null
+            ? (failIfEmpty.Length == 0 ? null : failIfEmpty)
+            : node.FailIfEmpty;
+
+        // Dropping the contract drops its empty-output message too.
+        if (effectiveSchema is null)
+        {
+            effectiveFailIfEmpty = null;
+        }
+
+        await OnNodeChanged.InvokeAsync(new NodeChange(node.Id, effectiveLabel, effectiveForEach, effectiveSchema, effectiveFailIfEmpty));
+    }
 
     private sealed class AddForm
     {

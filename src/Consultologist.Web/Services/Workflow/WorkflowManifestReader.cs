@@ -23,7 +23,9 @@ public static class WorkflowManifestReader
         IReadOnlyList<BindingView> Bindings,
         bool IsResult,
         bool HasOutput,
-        IReadOnlyList<string>? Aggregate = null);
+        IReadOnlyList<string>? Aggregate = null,
+        string? OutputSchema = null,
+        string? FailIfEmpty = null);
 
     public sealed record DataItemView(string Id, string Name, string File);
 
@@ -90,6 +92,7 @@ public static class WorkflowManifestReader
             }
 
             var id = ReadString(node, "id") ?? string.Empty;
+            var hasOutput = TryGetProperty(node, "output", out var output) && output.ValueKind == JsonValueKind.Object;
             nodes.Add(new NodeView(
                 id,
                 ReadString(node, "label") ?? id,
@@ -97,11 +100,24 @@ public static class WorkflowManifestReader
                 ReadString(node, "forEach"),
                 bindings,
                 string.Equals(id, resultNodeId, StringComparison.Ordinal),
-                TryGetProperty(node, "output", out var output) && output.ValueKind == JsonValueKind.Object,
-                aggregate));
+                hasOutput,
+                aggregate,
+                hasOutput ? ReadString(output, "schema") : null,
+                hasOutput ? ReadString(output, "failIfEmpty") : null));
         }
 
         return nodes;
+    }
+
+    /// <summary>The manifest's schema ids — the package's output-contract choices.</summary>
+    public static IReadOnlyList<string> ReadSchemaIds(JsonElement manifest)
+    {
+        if (!TryGetProperty(manifest, "schemas", out var schemas) || schemas.ValueKind != JsonValueKind.Object)
+        {
+            return Array.Empty<string>();
+        }
+
+        return schemas.EnumerateObject().Select(entry => entry.Name).ToList();
     }
 
     /// <summary>Scalar data entries: values of the data map that are not directories.</summary>
@@ -186,6 +202,9 @@ public static class WorkflowManifestReader
 
     /// <summary>The fork's parent ref, or null for root packages.</summary>
     public static string? ReadDerivedFrom(JsonElement manifest) => ReadString(manifest, "derivedFrom");
+
+    /// <summary>The raw result reference ("node:x"), for the deliverable selector.</summary>
+    public static string? ReadResultRef(JsonElement manifest) => ReadString(manifest, "result");
 
     private static string? ReadResultNodeId(JsonElement manifest)
     {
