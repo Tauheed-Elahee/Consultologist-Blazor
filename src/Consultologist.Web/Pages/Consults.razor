@@ -228,21 +228,22 @@
 
                                         if (node.ForEach != null)
                                         {
-                                            var doneItems = sectionStandards.Count(sec => NodeItemStatus(node, done, current, sec.Id) == "Completed");
+                                            var nodeItems = ItemsFor(node);
+                                            var doneItems = nodeItems.Count(item => NodeItemStatus(node, done, current, item.Id) == "Completed");
                                             <details class="node-group" open>
                                                 <summary class="node-row">
                                                     <span class="node-row__chevron" aria-hidden="true">&#x203A;</span>
                                                     <span class="node-row__status @RunStatusCss(stageStatus)">@RunStatusGlyph(stageStatus)</span>
                                                     <span class="node-row__label">@node.Label</span>
-                                                    <span class="node-row__count muted-text">@doneItems/@sectionStandards.Count</span>
+                                                    <span class="node-row__count muted-text">@doneItems/@nodeItems.Count</span>
                                                 </summary>
-                                                @foreach (var sec in sectionStandards)
+                                                @foreach (var item in nodeItems)
                                                 {
-                                                    var itemStatus = NodeItemStatus(node, done, current, sec.Id);
+                                                    var itemStatus = NodeItemStatus(node, done, current, item.Id);
                                                     <div class="node-row node-row--item">
                                                         <span class="node-row__chevron" aria-hidden="true"></span>
                                                         <span class="node-row__status @RunStatusCss(itemStatus)">@RunStatusGlyph(itemStatus)</span>
-                                                        <span class="node-row__label">@sec.Name</span>
+                                                        <span class="node-row__label">@item.Name</span>
                                                     </div>
                                                 }
                                             </details>
@@ -354,6 +355,7 @@
   private List<SectionStandard> sectionStandards = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
+  private IReadOnlyList<WorkflowManifestReader.CollectionView> workflowCollections = Array.Empty<WorkflowManifestReader.CollectionView>();
   private HashSet<string> completedNodeItems = new();
   private Dictionary<string, string> generatedSections = new();
   private Dictionary<string, string> failedSectionErrors = new();
@@ -380,13 +382,17 @@
   }
 
   // The full node map is display enrichment for the run rail; failures fall
-  // back to the event-fed labels.
+  // back to the event-fed labels. Collections ride along so each forEach
+  // group lists its own collection's items — the package's Sections are the
+  // deliverable's BLOCKS in v6 (they can include scalar aggregate sources),
+  // not any collection's item list.
   private async Task LoadWorkflowNodesAsync()
   {
     try
     {
       var content = await WorkflowService.GetCurrentPackageContentAsync();
       workflowNodes = WorkflowManifestReader.ReadNodes(content.Manifest);
+      workflowCollections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -395,7 +401,23 @@
     catch
     {
       workflowNodes = null;
+      workflowCollections = Array.Empty<WorkflowManifestReader.CollectionView>();
     }
+  }
+
+  // A forEach node's rail items are its own collection's; the blocks list is
+  // the fallback only when the collection cannot be resolved.
+  private IReadOnlyList<(string Id, string Name)> ItemsFor(WorkflowManifestReader.NodeView node)
+  {
+    const string dataPrefix = "data:";
+    var collectionId = node.ForEach != null && node.ForEach.StartsWith(dataPrefix, StringComparison.Ordinal)
+      ? node.ForEach[dataPrefix.Length..]
+      : node.ForEach;
+    var collection = workflowCollections.FirstOrDefault(c => c.Id == collectionId);
+
+    return collection != null
+      ? collection.Items.Select(item => (item.Id, item.Name)).ToList()
+      : sectionStandards.Select(sec => (sec.Id, sec.Name)).ToList();
   }
 
   private async Task LoadSectionStandardsAsync()
@@ -984,19 +1006,20 @@
     return separator < 0 ? sectionId : sectionId[(separator + 1)..];
   }
 
-  // Per-item status under one forEach node. Pair ticks come from the
-  // section-prose-step events; a done node covers items whose events were
-  // missed (polling fallback), and failed sections skip their remaining steps.
-  private string? NodeItemStatus(WorkflowManifestReader.NodeView node, bool nodeDone, bool nodeCurrent, string sectionId)
+  // Per-item status under one forEach node, keyed by the plain item id (the
+  // prose-step events' currency). Pair ticks come from those events; a done
+  // node covers items whose events were missed (polling fallback), and failed
+  // sections — keyed by composite block ids in v6 — skip their remaining steps.
+  private string? NodeItemStatus(WorkflowManifestReader.NodeView node, bool nodeDone, bool nodeCurrent, string itemId)
   {
-    if (completedNodeItems.Contains($"{node.Id}:{ItemPart(sectionId)}")
-        || completedNodeItems.Contains($"{node.Id}:{sectionId}")
-        || (node.IsResult && generatedSections.ContainsKey(sectionId)))
+    if (completedNodeItems.Contains($"{node.Id}:{ItemPart(itemId)}")
+        || completedNodeItems.Contains($"{node.Id}:{itemId}")
+        || (node.IsResult && generatedSections.ContainsKey(itemId)))
     {
       return "Completed";
     }
 
-    if (failedSectionErrors.ContainsKey(sectionId))
+    if (failedSectionErrors.Keys.Any(key => key == itemId || ItemPart(key) == itemId))
     {
       return "Failed";
     }
