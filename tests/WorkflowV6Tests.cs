@@ -120,6 +120,33 @@ public class WorkflowV6ValidationTests
     }
 
     [Fact]
+    public void SharedPrompt_IsValid_InV6()
+    {
+        // v6 relaxes v5's one-node-per-prompt rule (#170): a second forEach
+        // node reuses summarize-guideline with its own full bindings, joined
+        // into the result so reachability holds.
+        var manifest = V6Fixtures.MultiCollection();
+        var nodes = manifest.Nodes!.ToList();
+        nodes.Insert(nodes.Count - 1, new WorkflowNodeSpec("summarize-standard", "Summarizing standard",
+            Prompt: "summarize-guideline",
+            Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+            {
+                ["guideline_text"] = new("item:content")
+            },
+            ForEach: "data:standards"));
+        var resultIndex = nodes.FindIndex(n => n.Id == "assemble-note");
+        nodes[resultIndex] = nodes[resultIndex] with
+        {
+            Aggregate = new List<string>(nodes[resultIndex].Aggregate!) { "node:summarize-standard" }
+        };
+        manifest = manifest with { Nodes = nodes };
+
+        var result = V6Fixtures.Validate(manifest);
+
+        Assert.True(result.IsValid, string.Join(" | ", result.Errors));
+    }
+
+    [Fact]
     public void DisconnectedChain_FailsReachability()
     {
         var manifest = V6Fixtures.MultiCollection();
