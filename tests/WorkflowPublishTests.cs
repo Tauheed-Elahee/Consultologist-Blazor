@@ -236,6 +236,40 @@ public class WorkflowPackagePublisherTests
     }
 
     [Fact]
+    public async Task Publish_AcceptsAnAddedNodeWithItsPrompt_TheEditorShape()
+    {
+        // Node authoring (#117): a new forEach node born with its 1:1 prompt
+        // (same id, prompts/{id}.md, bindings matching the declared
+        // variables) publishes and round-trips.
+        var (publisher, writer, _) = CreatePublisher();
+        var manifest = V5Fixtures.Manifest();
+        manifest = manifest with
+        {
+            Prompts = manifest.Prompts!
+                .Append(new WorkflowPromptSpec("summarize-standards", "prompts/summarize-standards.md",
+                    new List<string> { "section_name" }))
+                .ToList(),
+            Nodes = manifest.Nodes!
+                .Append(new WorkflowNodeSpec("summarize-standards", "Summarizing standards",
+                    Prompt: "summarize-standards",
+                    Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                    {
+                        ["section_name"] = new("item:name")
+                    },
+                    ForEach: "data:standards"))
+                .ToList()
+        };
+
+        var result = await publisher.PublishAsync(OwnerId, Request(manifest: manifest, files: V5Fixtures.Files(manifest)), CancellationToken.None);
+
+        Assert.True(result.Succeeded, string.Join(" | ", result.Errors));
+        var stored = writer.ReadManifest(AccountName, "v2026.07.1");
+        Assert.Equal("data:standards", stored.Nodes!.Single(n => n.Id == "summarize-standards").ForEach);
+        Assert.Contains(stored.Prompts!, p => p.Id == "summarize-standards");
+        Assert.Contains($"{AccountName}/v2026.07.1/prompts/summarize-standards.md", writer.Blobs.Keys);
+    }
+
+    [Fact]
     public async Task Publish_AcceptsAnAddedSecondCollection_TheEditorShape()
     {
         // The "+ data folder" contract (#154): a fork adds one data-map entry,
