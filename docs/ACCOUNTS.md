@@ -31,24 +31,28 @@ requestedAccessTokenVersion: 2
 
 The SPA app registration must have delegated permission to the API scope.
 
-Since 2026-07-18 sign-in is **multi-tenant**: both registrations use
-`signInAudience: AzureADMultipleOrgs`, and the API registration lists the SPA
-client id in `api.knownClientApplications` so a foreign tenant grants one
-combined consent covering both apps (see the "Multi-tenant sign-in" section
-in `CONFIGURATION.md` for where each setting lives and what a foreign tenant
+Since 2026-07-18 sign-in is **multi-tenant**, and since 2026-07-23 (#132) it
+also accepts **personal Microsoft accounts**: both registrations use
+`signInAudience: AzureADandPersonalMicrosoftAccount`, and the API
+registration lists the SPA client id in `api.knownClientApplications` so a
+foreign tenant grants one combined consent covering both apps (see the
+"Multi-tenant sign-in" section in `CONFIGURATION.md` for where each setting
+lives, the MSA-specific registration constraints, and what a foreign tenant
 still needs).
 
 The Function App settings should be:
 
 ```text
-Auth__Authority=https://login.microsoftonline.com/organizations/v2.0
+Auth__Authority=https://login.microsoftonline.com/common/v2.0
 Auth__Audience=b3866040-8bae-4c01-88ba-ecff646df451
 Auth__RequiredScope=access_as_user
 AccountStorage__TableServiceUri=https://consultologistjobqueue.table.core.windows.net
 ```
 
 Expected access-token claims (the issuer varies per signing tenant; the
-validator accepts any tenant's issuer under the `organizations` authority):
+validator accepts any tenant's issuer under the `common` authority — for
+personal accounts that tenant is Microsoft's consumer tenant
+`9188040d-6c67-4c5b-b112-36a304b66dad`):
 
 ```text
 ver=2.0
