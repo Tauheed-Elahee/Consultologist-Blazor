@@ -161,7 +161,13 @@ finish *after* the close job and re-create the environment. The workflow's
 canceled) makes that impossible — the close-event run is always the
 newest in its branch group.
 
-Manual sweep, should anything ever slip through (also mind the
+A weekly scheduled sweep (`.github/workflows/swa-staging-sweep.yml`,
+Mondays 09:00 UTC, also runnable via workflow_dispatch) deletes any
+staging environment whose PR is no longer open — it authenticates via
+GitHub OIDC as `consultologist-blazor-swa-sweep` (Contributor scoped to
+the SWA resource only) and never touches `default` (#182).
+
+Manual sweep, only if the scheduled one is unavailable (also mind the
 10-environment cap):
 
 ```bash
