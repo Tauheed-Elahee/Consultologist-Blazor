@@ -13,36 +13,53 @@ through `IConfiguration` accept either form; settings read directly via
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
-| `Auth__Authority` | Entra authority URL. Production uses the multi-tenant `https://login.microsoftonline.com/organizations/v2.0` (since 2026-07-18); a tenanted `https://login.microsoftonline.com/<tenant-id>/v2.0` locks sign-in to one tenant. Issuer validation adapts automatically: the validator accepts whatever the authority's OIDC metadata declares, including the `{tenantid}` template the `organizations` endpoint publishes | — | yes (startup throws without it) |
+| `Auth__Authority` | Entra authority URL. Production uses `https://login.microsoftonline.com/common/v2.0` (since 2026-07-23, #132 — includes personal Microsoft accounts); `…/organizations/v2.0` restricts to work/school tenants; a tenanted `…/<tenant-id>/v2.0` locks sign-in to one tenant. Issuer validation adapts automatically: the validator accepts whatever the authority's OIDC metadata declares, including the `{tenantid}` template the `common`/`organizations` endpoints publish | — | yes (startup throws without it) |
 | `Auth__Audience` | Expected token audience, e.g. `api://<client-id>` | — | yes |
 | `Auth__RequiredScope` | Scope name callers must carry, e.g. `access_as_user` | none (scope check skipped) | no |
 
-### Multi-tenant sign-in (2026-07-18)
+### Multi-tenant sign-in (2026-07-18; personal accounts 2026-07-23)
 
-Sign-in accepts any Microsoft Entra organizational tenant. Three settings make
-that true, and only one of them lives in this repo's deployment surface:
+Sign-in accepts any Microsoft Entra organizational tenant and, since #132,
+personal Microsoft accounts. Three settings make that true, and only one of
+them lives in this repo's deployment surface:
 
-1. **`signInAudience` = `AzureADMultipleOrgs`** on **both** app registrations
-   (the SPA and the API). Portal: App registrations → *Authentication* →
-   "Supported account types" (also visible in the registration's Manifest).
-   The API being single-tenant is the classic failure: a foreign tenant has
-   no service principal for it and sign-in dies with **AADSTS500011**
-   ("resource principal not found") — a consent/provisioning problem, never a
-   credential one.
+1. **`signInAudience` = `AzureADandPersonalMicrosoftAccount`** on **both**
+   app registrations (the SPA and the API); `AzureADMultipleOrgs` is the
+   work/school-only variant used 2026-07-18 → 2026-07-23. Portal: App
+   registrations → *Authentication* → "Supported account types" (also
+   visible in the registration's Manifest). Two MSA-specific constraints:
+   Entra refuses the widening unless the registration's
+   `api.requestedAccessTokenVersion` is `2` (the SPA registration had it
+   unset and needed a Graph PATCH first), and identifier URIs must be the
+   `api://<client-id>` form (already the case). The API being single-tenant
+   is the classic failure: a foreign tenant has no service principal for it
+   and sign-in dies with **AADSTS500011** ("resource principal not found") —
+   a consent/provisioning problem, never a credential one.
 2. **`api.knownClientApplications` = `[<spa-client-id>]`** on the **API**
    registration, so a foreign tenant consents to the SPA and the API in one
    combined prompt. Manifest-only — there is no portal blade for it. Do not
    confuse it with the *Expose an API* blade's "Authorized client
    applications" (`preAuthorizedApplications`), which *skips* consent rather
    than bundling it.
-3. **`Auth__Authority`** on the Function App set to the `organizations`
-   authority (table above). Locally this comes from `local.settings.json`
-   (gitignored).
+3. **`Auth__Authority`** on the Function App set to the `common` authority
+   (table above), and the client's `AzureAd:Authority`
+   (`src/Consultologist.Web/wwwroot/appsettings.json`) set to
+   `https://login.microsoftonline.com/common` — MSAL takes the authority
+   without `/v2.0`; the API's OIDC-metadata URL takes it with. Locally the
+   Function value comes from `local.settings.json` (gitignored).
 
 What a foreign tenant still needs: consent. Where user consent is allowed,
 the first sign-in shows the combined prompt and provisions both service
 principals; tenants that gate consent need their admin to visit
 `https://login.microsoftonline.com/<their-tenant-id>/adminconsent?client_id=<spa-client-id>`.
+Personal Microsoft accounts have no tenant admin — the user always consents
+for themselves, which is exactly why this path exists as the fallback for
+users whose IT departments block consent (#132).
+
+CSP note: MSA sign-in can bounce through `login.live.com`, but only via
+top-level navigation (redirect login mode), which CSP does not restrict —
+`staticwebapp.config.json` needs no new origins. Token endpoints and silent
+renewal stay on `login.microsoftonline.com`, already in `connect-src`.
 
 Credential posture is unchanged by any of this: the SPA is a public client
 (authorization code + PKCE — client secrets/certificates are never used and
