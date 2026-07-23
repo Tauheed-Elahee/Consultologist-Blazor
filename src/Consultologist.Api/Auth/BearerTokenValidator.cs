@@ -118,7 +118,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
             : _configuration[key]!;
     }
 
-    private static string ValidateIssuer(string authority, string metadataIssuer, string issuer)
+    internal static string ValidateIssuer(string authority, string metadataIssuer, string issuer)
     {
         var validIssuers = GetValidIssuers(authority, metadataIssuer).ToArray();
 
@@ -149,7 +149,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
         }
     }
 
-    private static bool MatchesTenantIssuerTemplate(string metadataIssuer, string issuer)
+    internal static bool MatchesTenantIssuerTemplate(string metadataIssuer, string issuer)
     {
         const string tenantPlaceholder = "{tenantid}";
 
@@ -167,7 +167,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
             && issuer.EndsWith(parts[1], StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool MatchesAuthorityTenantIssuer(string authority, string issuer)
+    internal static bool MatchesAuthorityTenantIssuer(string authority, string issuer)
     {
         var normalizedAuthority = authority.TrimEnd('/');
 
