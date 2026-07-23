@@ -169,14 +169,26 @@ so both the user and the operator (reviewing a `Pending` account) can see
 it. There is no self-service unlink yet; the operator can delete the two
 table rows if needed.
 
-Meaning of "verified": a real, demonstrably user-controlled LinkedIn
-identity to weigh during the manual activation decision — an OAuth proof
-of account control, never a typed-in profile URL. It does not prove the
-profile's claims: LinkedIn's own identity-verification badge is **not**
-exposed through the base OIDC product, so the earlier aspirational
-`GET https://api.linkedin.com/rest/verificationReport` / `r_verify_details`
-design is **not implemented** (that API requires a LinkedIn partner
-program). #133 supersedes that text.
+Meaning of "verified", two layers:
+
+1. **Proof of account control** (always): a real, demonstrably
+   user-controlled LinkedIn identity — an OAuth proof, never a typed-in
+   profile URL.
+2. **Verified on LinkedIn categories** (best-effort): the callback also
+   calls `GET https://api.linkedin.com/rest/verificationReport` (scope
+   `r_verify`, `LinkedIn-Version` per `LinkedIn__ApiVersion`) with the
+   just-issued access token and stores the member's verified categories
+   (`IDENTITY` = government-ID, `WORKPLACE` = work email/Entra) on the
+   link. The app's LinkedIn registration has the self-serve **Verified on
+   LinkedIn** product attached, currently the **Development tier**: the
+   report is only available for members who are admins of the developer
+   app (everyone else gets 403 → categories stay empty, linking still
+   succeeds). Apply for the Lite tier before external users.
+
+Both layers are **inputs to the operator's manual activation judgment** —
+never an automated gate. That is also a LinkedIn policy requirement: the
+Verified on LinkedIn API is licensed for trust enhancement, not for
+eligibility decisions, employment screening, or KYC.
 
 ## Do Not Do
 

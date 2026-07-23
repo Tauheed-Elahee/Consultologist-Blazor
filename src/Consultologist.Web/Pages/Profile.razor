@@ -84,6 +84,10 @@
                             {
                                 <span class="muted-text">@LinkedInIdentity.Email</span>
                             }
+                            @if (VerifiedCategoryLabels.Length > 0)
+                            {
+                                <strong>Verified on LinkedIn: @string.Join(", ", VerifiedCategoryLabels)</strong>
+                            }
                             <span class="muted-text">Connected @LinkedInIdentity.LinkedAt.ToString("yyyy-MM-dd")</span>
                         </div>
                     }
@@ -137,6 +141,17 @@
     private AccountIdentity? LinkedInIdentity =>
         account?.LinkedIdentities.FirstOrDefault(identity =>
             string.Equals(identity.Provider, "linkedin", StringComparison.Ordinal));
+
+    private string[] VerifiedCategoryLabels =>
+        (LinkedInIdentity?.VerifiedCategories ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(category => category switch
+            {
+                "IDENTITY" => "Identity",
+                "WORKPLACE" => "Workplace",
+                _ => category
+            })
+            .ToArray();
 
     protected override async Task OnInitializedAsync()
     {

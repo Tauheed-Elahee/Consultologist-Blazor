@@ -13,7 +13,10 @@ public static class LinkedInOidc
     public const string DiscoveryUrl = "https://www.linkedin.com/oauth/.well-known/openid-configuration";
     public const string AuthorizationEndpoint = "https://www.linkedin.com/oauth/v2/authorization";
     public const string TokenEndpoint = "https://www.linkedin.com/oauth/v2/accessToken";
-    public const string Scopes = "openid profile email";
+    public const string VerificationReportEndpoint = "https://api.linkedin.com/rest/verificationReport";
+    // r_verify comes from the Verified on LinkedIn product attached to the
+    // LinkedIn app (Development/Lite tier scope).
+    public const string Scopes = "openid profile email r_verify";
 }
 
 public sealed class LinkedInLinkStateEntity : ITableEntity
@@ -35,10 +38,10 @@ public sealed record LinkedInLinkState(
     string Nonce,
     string ReturnOrigin);
 
-// The token exchange also returns an access_token; it is deliberately not
-// modeled — the flow consumes only the id_token proof and never calls
-// LinkedIn APIs on the user's behalf.
-public sealed record LinkedInTokenResponse(string? IdToken);
+// The access token is used for exactly one read-only call — the Verified on
+// LinkedIn verificationReport — then discarded; the flow never writes to
+// LinkedIn on the user's behalf.
+public sealed record LinkedInTokenResponse(string? IdToken, string? AccessToken);
 
 public sealed record LinkedInIdentityClaims(
     string Subject,

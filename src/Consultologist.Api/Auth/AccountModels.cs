@@ -49,6 +49,7 @@ public sealed class IdentityLinkEntity : ITableEntity
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
     public string? PictureUrl { get; set; }
+    public string? VerifiedCategories { get; set; }
 }
 
 public sealed class UserIdentityLinkEntity : ITableEntity
@@ -65,6 +66,7 @@ public sealed class UserIdentityLinkEntity : ITableEntity
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
     public string? PictureUrl { get; set; }
+    public string? VerifiedCategories { get; set; }
 }
 
 public sealed record AuthenticatedUser(
@@ -91,7 +93,8 @@ public sealed record AccountIdentity(
     DateTimeOffset LastSeenAt,
     string? DisplayName = null,
     string? Email = null,
-    string? PictureUrl = null);
+    string? PictureUrl = null,
+    string? VerifiedCategories = null);
 
 public sealed record AccountMeResponse(
     string AppUserId,
