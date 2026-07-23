@@ -86,7 +86,17 @@ consumed — the flow never calls LinkedIn APIs on the user's behalf.
 | `LinkedIn__ClientSecret` | The LinkedIn app's client secret — a genuine secret app setting (no managed-identity equivalent exists) | — | yes (token exchange throws without it) |
 | `LinkedIn__RedirectUri` | The callback URL, byte-for-byte equal to one registered in the LinkedIn app. Production: `https://east.ca.api.consultologist.ai/api/Account/LinkedIn/Callback`; local: `http://localhost:7071/api/Account/LinkedIn/Callback` | — | yes |
 | `LinkedIn__StateTtlMinutes` | Minutes an OAuth state stays valid | `10` | no |
+| `LinkedIn__ApiVersion` | `LinkedIn-Version` header for the Verified on LinkedIn `verificationReport` call (see LinkedIn's release notes for the current value) | `202510` | no |
 | `LinkedInStateStorage__TableServiceUri` | Table service URI for the single-use `LinkedInLinkStates` table; chains to `AccountStorage` when unset (the usual case) | falls through to `AccountStorage` | no |
+
+The authorize request asks for `openid profile email r_verify` — the last
+scope comes from the **Verified on LinkedIn** product attached to the
+LinkedIn app and lets the callback fetch the member's verification
+categories (IDENTITY/WORKPLACE), stored on the link. The fetch is
+best-effort: on the **Development tier** LinkedIn returns 403 for members
+who are not admins of the developer app, so linking still succeeds and the
+categories simply stay empty. Apply for the **Lite tier** before external
+users if their categories should populate.
 
 State rows are single-use (ETag-conditioned delete — a replayed callback
 gets a 400) and expire after the TTL; Azure Tables has no native TTL, so
