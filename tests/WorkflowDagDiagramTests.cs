@@ -1,64 +1,32 @@
-using System.Text.Json;
 using Consultologist.Api.Workflow;
 
 namespace Consultologist.Api.Tests;
 
+// The generator's structural pins run on the test fixtures; the general
+// package's dag.mmd snapshot lives with the package in the
+// consultologist-workflows repo since #16 (content left the app repo).
 public class WorkflowDagDiagramTests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        return dir!.FullName;
-    }
-
-    private static WorkflowPackageManifest GeneralManifest()
-        => JsonSerializer.Deserialize<WorkflowPackageManifest>(
-            File.ReadAllText(Path.Combine(RepoRoot(), "packages", "general", "manifest.json")), JsonOptions)!;
-
-    [Fact]
-    public void GeneratedDiagram_MatchesCheckedInFile()
-    {
-        // The snapshot pin: packages/general/dag.mmd is generated, never authored.
-        // On a legitimate manifest change, regenerate with
-        //   UPDATE_SNAPSHOTS=1 dotnet test --filter WorkflowDagDiagramTests
-        // and commit the result alongside the manifest.
-        var generated = WorkflowDagDiagram.Generate(GeneralManifest());
-        var snapshotPath = Path.Combine(RepoRoot(), "packages", "general", "dag.mmd");
-
-        if (Environment.GetEnvironmentVariable("UPDATE_SNAPSHOTS") == "1")
-        {
-            File.WriteAllText(snapshotPath, generated);
-            return;
-        }
-
-        Assert.True(File.Exists(snapshotPath), $"snapshot not found at {snapshotPath} — generate it with UPDATE_SNAPSHOTS=1");
-        Assert.Equal(File.ReadAllText(snapshotPath), generated);
-    }
-
     [Fact]
     public void Diagram_DrawsNodesEdgesAndTheForEachSubgraph()
     {
-        var diagram = WorkflowDagDiagram.Generate(GeneralManifest());
+        var diagram = WorkflowDagDiagram.Generate(V6Fixtures.SingleCollection());
 
         Assert.StartsWith("flowchart TD", diagram);
         // Inputs as stadium nodes.
         Assert.Contains("input_consult_draft([\"input:consult_draft\"])", diagram);
         // A scalar node with its schema annotation.
         Assert.Contains("extract-patient-concepts<br/>Extracting clinical concepts<br/>output: concept-list", diagram);
-        // The diamond's fan-in edge with a renderer annotation.
+        // The fan-in edge with a renderer annotation.
         Assert.Contains("-->|\"patient_trajectory_concepts (as concept-context)\"|", diagram);
         // The forEach chain as a per-collection subgraph fed by its collection.
         Assert.Contains("-->|\"forEach\"| foreach_", diagram);
         Assert.Contains("subgraph foreach_", diagram);
         // Item-aligned edges chain the steps inside the box.
         Assert.Contains("standard_section_draft -->|\"standard_section_draft\"| patient_section_draft", diagram);
+        // The v6 aggregator box and its ordered source edge.
+        Assert.Contains("assemble_note", diagram);
+        Assert.Contains("-->|\"aggregate\"| assemble_note", diagram);
     }
 
     [Fact]
@@ -79,8 +47,8 @@ public class WorkflowDagDiagramTests
     [Fact]
     public void Generate_RejectsManifestsWithoutNodes()
     {
-        var v3 = GeneralManifest() with { Nodes = null };
+        var noNodes = V5Fixtures.Manifest() with { Nodes = null };
 
-        Assert.Throws<InvalidOperationException>(() => WorkflowDagDiagram.Generate(v3));
+        Assert.Throws<InvalidOperationException>(() => WorkflowDagDiagram.Generate(noNodes));
     }
 }

@@ -11,11 +11,13 @@ namespace Consultologist.Api.Agents;
 
 /// <summary>
 /// Startup check over every output-contract catalog entry: the deployed Foundry agent
-/// must match the git-attested manifest bundled with the app (agents/{name}.yaml), and
-/// the catalog's declared schema must match the schema welded into that manifest. Git
-/// is the source of truth; drift is logged loudly, or fails the host when
-/// AgentAttestation__Enforce=true. See docs/customizable-workflow/provenance.md and
-/// output-contract-catalog.md.
+/// must match the git-attested manifest. In production (public registry configured)
+/// the baseline is the registry's published definition — the git-only channel, written
+/// exclusively by the consultologist-agents repo's CI (#16); locally the bundled
+/// agents/{name}.yaml serves as the baseline. The catalog's declared schema must match
+/// the schema welded into the manifest either way. Drift is logged loudly, or fails
+/// the host when AgentAttestation__Enforce=true. See
+/// docs/customizable-workflow/provenance.md and content-repos.md.
 /// </summary>
 public sealed class AgentAttestationService : IHostedService
 {
@@ -86,17 +88,22 @@ public sealed class AgentAttestationService : IHostedService
         }
 
         var mismatches = new List<string>();
+        var registryBaseline = !string.IsNullOrWhiteSpace(publicRegistryUri);
 
-        // The registry leg (#93): the runtime catalog (loaded from the public
-        // registry at the pinned version) must equal the bundled, git-tracked
-        // catalog — publish/pin/deploy drift fails loud here.
-        try
+        // Local dev only: the runtime catalog must equal the bundled git copy.
+        // In production the runtime catalog already comes from the registry at
+        // the pinned version — the registry IS the git channel (#16), and the
+        // app's bundled copy is a local-dev fallback that may lag canonical.
+        if (!registryBaseline)
         {
-            mismatches.AddRange(CompareCatalogToBundled(_catalog, OutputContractCatalog.Load()));
-        }
-        catch (Exception ex)
-        {
-            mismatches.Add($"catalog: bundled baseline could not be loaded ({ex.Message})");
+            try
+            {
+                mismatches.AddRange(CompareCatalogToBundled(_catalog, OutputContractCatalog.Load()));
+            }
+            catch (Exception ex)
+            {
+                mismatches.Add($"catalog: bundled baseline could not be loaded ({ex.Message})");
+            }
         }
 
         // Every catalog entry's agent gets attested against its git manifest, plus the
@@ -106,17 +113,37 @@ public sealed class AgentAttestationService : IHostedService
         // shape its agent doesn't enforce.
         foreach (var entry in _catalog.Entries.Values)
         {
-            var manifestPath = Path.Combine(OutputContractCatalog.ResolveDirectory(), $"{entry.AgentName}.yaml");
+            string manifestYaml;
+            var agentMismatches = new List<string>();
 
-            if (!File.Exists(manifestPath))
+            if (registryBaseline)
             {
-                mismatches.Add($"{entry.AgentName}@{entry.AgentVersion}: catalog contract '{entry.ContractId}' has no git manifest at {manifestPath}");
-                continue;
+                // Production baseline: the registry's published (redacted)
+                // definition — writable only by the agents repo's CI.
+                var fetched = await FetchRegistryManifestAsync(publicRegistryUri!, entry, cancellationToken);
+
+                if (fetched == null)
+                {
+                    mismatches.Add($"{entry.AgentName}@{entry.AgentVersion}: definition not published to the public registry");
+                    continue;
+                }
+
+                manifestYaml = fetched;
+            }
+            else
+            {
+                var manifestPath = Path.Combine(OutputContractCatalog.ResolveDirectory(), $"{entry.AgentName}.yaml");
+
+                if (!File.Exists(manifestPath))
+                {
+                    mismatches.Add($"{entry.AgentName}@{entry.AgentVersion}: catalog contract '{entry.ContractId}' has no git manifest at {manifestPath}");
+                    continue;
+                }
+
+                manifestYaml = await File.ReadAllTextAsync(manifestPath, cancellationToken);
             }
 
-            var manifestYaml = await File.ReadAllTextAsync(manifestPath, cancellationToken);
             var manifest = AttestedAgentManifest.Load(manifestYaml);
-            var agentMismatches = new List<string>();
 
             if (!string.Equals(manifest.Version, entry.AgentVersion, StringComparison.Ordinal))
             {
@@ -127,14 +154,6 @@ public sealed class AgentAttestationService : IHostedService
 
             var deployed = await FetchDeployedDefinitionAsync(endpoint, entry.AgentName, entry.AgentVersion, apiVersion, cancellationToken);
             agentMismatches.AddRange(AttestedAgentManifest.Compare(manifest, deployed));
-
-            // The public-registry leg (#94): the published (redacted) definition
-            // must equal Redact(bundled git manifest) — publish drift and
-            // redaction-transform drift both fail here.
-            if (!string.IsNullOrWhiteSpace(publicRegistryUri))
-            {
-                agentMismatches.AddRange(await CompareRegistryDefinitionAsync(publicRegistryUri, entry, manifestYaml, cancellationToken));
-            }
 
             if (agentMismatches.Count == 0)
             {
@@ -229,10 +248,10 @@ public sealed class AgentAttestationService : IHostedService
         return mismatches;
     }
 
-    private async Task<List<string>> CompareRegistryDefinitionAsync(
+    /// <summary>The registry's published (redacted) definition, or null when unpublished.</summary>
+    private async Task<string?> FetchRegistryManifestAsync(
         string publicRegistryUri,
         OutputContractEntry entry,
-        string manifestYaml,
         CancellationToken cancellationToken)
     {
         var url = $"{publicRegistryUri.TrimEnd('/')}/agent-definitions/{Uri.EscapeDataString(entry.AgentName)}/{Uri.EscapeDataString(entry.AgentVersion)}/definition.yaml";
@@ -244,15 +263,11 @@ public sealed class AgentAttestationService : IHostedService
 
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return new List<string> { $"definition not published to the public registry ({url})" };
+            return null;
         }
 
         response.EnsureSuccessStatusCode();
-        var published = await response.Content.ReadAsStringAsync(cancellationToken);
-
-        return AttestedAgentManifest.NormalizeText(published) == AttestedAgentManifest.NormalizeText(AgentDefinitionRedaction.Redact(manifestYaml))
-            ? new List<string>()
-            : new List<string> { "published registry definition differs from redact(git manifest)" };
+        return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
     private async Task<JsonNode> FetchDeployedDefinitionAsync(
@@ -382,7 +397,13 @@ public sealed class AttestedAgentManifest
             var actual = deployedTools[i];
             CompareValue(mismatches, $"tools[{i}].type", expected.Type, actual?["type"]?.ToString());
             CompareValue(mismatches, $"tools[{i}].server_label", expected.ServerLabel, actual?["server_label"]?.ToString());
-            CompareValue(mismatches, $"tools[{i}].server_url", expected.ServerUrl, actual?["server_url"]?.ToString());
+
+            // A registry-served baseline is redacted (server_url stripped as
+            // deployment plumbing); only compare it when the baseline has it.
+            if (expected.ServerUrl != null)
+            {
+                CompareValue(mismatches, $"tools[{i}].server_url", expected.ServerUrl, actual?["server_url"]?.ToString());
+            }
         }
 
         return mismatches;
