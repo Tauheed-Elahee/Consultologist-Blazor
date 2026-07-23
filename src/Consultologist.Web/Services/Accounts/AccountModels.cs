@@ -16,7 +16,8 @@ public sealed record AccountIdentity(
     DateTimeOffset LastSeenAt,
     string? DisplayName = null,
     string? Email = null,
-    string? PictureUrl = null);
+    string? PictureUrl = null,
+    string? VerifiedCategories = null);
 
 public sealed record LinkedInStartResponse(string AuthorizationUrl);
 
