@@ -1,0 +1,56 @@
+name: SWA staging sweep
+
+# The weekly janitor (#182): deletes staging environments whose PR is no
+# longer open, catching leaks regardless of cause — belt-and-braces over
+# the per-branch concurrency fix (#156) that eliminated the known race.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    environment: sweep
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_SWEEP_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sweep stale staging environments
+        run: |
+          set -euo pipefail
+          SWEPT=0
+          while IFS=$'\t' read -r NAME BRANCH; do
+            [ "$NAME" = "default" ] && continue
+            [ -z "$NAME" ] && continue
+
+            OPEN=""
+            if [[ "$NAME" =~ ^[0-9]+$ ]]; then
+              STATE=$(gh pr view "$NAME" --repo "$GITHUB_REPOSITORY" --json state -q .state 2>/dev/null || echo "UNKNOWN")
+              [ "$STATE" = "OPEN" ] && OPEN=yes
+            fi
+            if [ -z "$OPEN" ] && [ -n "$BRANCH" ]; then
+              COUNT=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number -q length)
+              [ "${COUNT:-0}" != "0" ] && OPEN=yes
+            fi
+
+            if [ -z "$OPEN" ]; then
+              echo "Sweeping environment '$NAME' (branch: ${BRANCH:-?}) — no open PR"
+              az staticwebapp environment delete -n consultologist-blazor --environment-name "$NAME" --yes
+              SWEPT=$((SWEPT + 1))
+            else
+              echo "Keeping environment '$NAME' (branch: $BRANCH) — PR open"
+            fi
+          done < <(az staticwebapp environment list -n consultologist-blazor --query "[].[name, sourceBranch]" -o tsv)
+          echo "Sweep complete: $SWEPT environment(s) removed."
