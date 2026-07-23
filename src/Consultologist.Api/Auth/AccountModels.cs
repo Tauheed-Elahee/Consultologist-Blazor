@@ -10,6 +10,15 @@ public static class AccountStatuses
     public const string Disabled = "Disabled";
 }
 
+public static class IdentityProviders
+{
+    // The credential authority: only entra-external-id identities can sign in.
+    public const string EntraExternalId = "entra-external-id";
+    // Verification signal only (#133): linked for proof of account control,
+    // never accepted as a bearer credential.
+    public const string LinkedIn = "linkedin";
+}
+
 public sealed class AppUserEntity : ITableEntity
 {
     public string PartitionKey { get; set; } = "app-user";
@@ -37,6 +46,9 @@ public sealed class IdentityLinkEntity : ITableEntity
     public string SubjectHash { get; set; } = string.Empty;
     public DateTimeOffset LinkedAtUtc { get; set; }
     public DateTimeOffset LastSeenAtUtc { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Email { get; set; }
+    public string? PictureUrl { get; set; }
 }
 
 public sealed class UserIdentityLinkEntity : ITableEntity
@@ -50,6 +62,9 @@ public sealed class UserIdentityLinkEntity : ITableEntity
     public string SubjectHash { get; set; } = string.Empty;
     public DateTimeOffset LinkedAtUtc { get; set; }
     public DateTimeOffset LastSeenAtUtc { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Email { get; set; }
+    public string? PictureUrl { get; set; }
 }
 
 public sealed record AuthenticatedUser(
@@ -73,7 +88,10 @@ public sealed record AccountIdentity(
     string Issuer,
     string Subject,
     DateTimeOffset LinkedAt,
-    DateTimeOffset LastSeenAt);
+    DateTimeOffset LastSeenAt,
+    string? DisplayName = null,
+    string? Email = null,
+    string? PictureUrl = null);
 
 public sealed record AccountMeResponse(
     string AppUserId,

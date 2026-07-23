@@ -8,9 +8,26 @@ using Microsoft.Extensions.Logging;
 
 namespace Consultologist.Api.Auth;
 
+public enum IdentityLinkOutcome
+{
+    Linked,
+    AlreadyLinkedToSelf,
+    ConflictOtherUser
+}
+
 public interface IAccountStore
 {
     Task<AppAccount> ResolveOrCreateAsync(AuthenticatedUser user, CancellationToken cancellationToken);
+
+    Task<IdentityLinkOutcome> LinkIdentityAsync(
+        string appUserId,
+        string provider,
+        string issuer,
+        string subject,
+        string? displayName,
+        string? email,
+        string? pictureUrl,
+        CancellationToken cancellationToken);
 }
 
 public sealed class AccountStore : IAccountStore
@@ -121,6 +138,85 @@ public sealed class AccountStore : IAccountStore
             linkedIdentities);
     }
 
+    public async Task<IdentityLinkOutcome> LinkIdentityAsync(
+        string appUserId,
+        string provider,
+        string issuer,
+        string subject,
+        string? displayName,
+        string? email,
+        string? pictureUrl,
+        CancellationToken cancellationToken)
+    {
+        await EnsureTablesAsync(cancellationToken);
+
+        var now = DateTimeOffset.UtcNow;
+        var subjectHash = CreateSubjectHash(provider, issuer, subject);
+        IdentityLinkEntity? existing = null;
+
+        try
+        {
+            var response = await _identityLinks.GetEntityAsync<IdentityLinkEntity>(
+                provider,
+                subjectHash,
+                cancellationToken: cancellationToken);
+            existing = response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+        }
+
+        var outcome = DecideLinkOutcome(existing, appUserId);
+
+        if (outcome == IdentityLinkOutcome.ConflictOtherUser)
+        {
+            _logger.LogWarning(
+                "Identity link refused: already attached to another account. Provider={Provider}, AppUserId={AppUserId}",
+                provider,
+                appUserId);
+            return outcome;
+        }
+
+        var identityLink = new IdentityLinkEntity
+        {
+            PartitionKey = provider,
+            RowKey = subjectHash,
+            AppUserId = appUserId,
+            Provider = provider,
+            Issuer = issuer,
+            Subject = subject,
+            SubjectHash = subjectHash,
+            LinkedAtUtc = existing?.LinkedAtUtc ?? now,
+            LastSeenAtUtc = now,
+            DisplayName = displayName,
+            Email = email,
+            PictureUrl = pictureUrl
+        };
+
+        await _identityLinks.UpsertEntityAsync(identityLink, TableUpdateMode.Replace, cancellationToken);
+        await _userIdentityLinks.UpsertEntityAsync(ToUserIdentityLink(identityLink), TableUpdateMode.Replace, cancellationToken);
+
+        _logger.LogInformation(
+            "Linked identity to app user. AppUserId={AppUserId}, Provider={Provider}, Outcome={Outcome}",
+            appUserId,
+            provider,
+            outcome);
+
+        return outcome;
+    }
+
+    internal static IdentityLinkOutcome DecideLinkOutcome(IdentityLinkEntity? existing, string appUserId)
+    {
+        if (existing == null)
+        {
+            return IdentityLinkOutcome.Linked;
+        }
+
+        return string.Equals(existing.AppUserId, appUserId, StringComparison.Ordinal)
+            ? IdentityLinkOutcome.AlreadyLinkedToSelf
+            : IdentityLinkOutcome.ConflictOtherUser;
+    }
+
     private async Task EnsureTablesAsync(CancellationToken cancellationToken)
     {
         await _appUsers.CreateIfNotExistsAsync(cancellationToken);
@@ -143,7 +239,10 @@ public sealed class AccountStore : IAccountStore
                 entity.Issuer,
                 entity.SubjectHash,
                 entity.LinkedAtUtc,
-                entity.LastSeenAtUtc));
+                entity.LastSeenAtUtc,
+                entity.DisplayName,
+                entity.Email,
+                entity.PictureUrl));
         }
 
         return identities;
@@ -159,11 +258,14 @@ public sealed class AccountStore : IAccountStore
             Issuer = identityLink.Issuer,
             SubjectHash = identityLink.SubjectHash,
             LinkedAtUtc = identityLink.LinkedAtUtc,
-            LastSeenAtUtc = identityLink.LastSeenAtUtc
+            LastSeenAtUtc = identityLink.LastSeenAtUtc,
+            DisplayName = identityLink.DisplayName,
+            Email = identityLink.Email,
+            PictureUrl = identityLink.PictureUrl
         };
     }
 
-    private static string CreateSubjectHash(string provider, string issuer, string subject)
+    internal static string CreateSubjectHash(string provider, string issuer, string subject)
     {
         var input = $"{provider}|{issuer}|{subject}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
