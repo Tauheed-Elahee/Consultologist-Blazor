@@ -54,11 +54,24 @@ public class LinkedInIdTokenValidatorTests
     }
 
     [Fact]
-    public void ReadClaims_MissingNonceClaim_ReturnsNull()
+    public void ReadClaims_MatchingNonce_ReturnsClaims()
+    {
+        var principal = CreatePrincipal(("nonce", "nonce-1"), ("sub", "li-sub"));
+
+        Assert.NotNull(LinkedInIdTokenValidator.ReadClaims(principal, "nonce-1"));
+    }
+
+    // LinkedIn omits the nonce claim from its id_tokens, so absence is
+    // accepted — the single-use state row is the primary replay defense.
+    [Fact]
+    public void ReadClaims_MissingNonceClaim_IsAccepted()
     {
         var principal = CreatePrincipal(("sub", "li-sub"));
 
-        Assert.Null(LinkedInIdTokenValidator.ReadClaims(principal, "nonce-1"));
+        var claims = LinkedInIdTokenValidator.ReadClaims(principal, "nonce-1");
+
+        Assert.NotNull(claims);
+        Assert.Equal("li-sub", claims.Subject);
     }
 
     [Fact]

@@ -151,7 +151,9 @@ Flow:
    redirect): consumes the state (ETag-conditioned delete; a replayed or
    expired callback gets a 400, not a redirect), exchanges the code
    server-side, validates the id_token (LinkedIn issuer, our client id
-   audience, nonce), and stores the link. Only the id_token is consumed —
+   audience; the nonce is sent in the authorize request but validated
+   opportunistically — LinkedIn does not echo it into id_tokens, so the
+   single-use state is the replay defense), and stores the link. Only the id_token is consumed —
    the access token is discarded and LinkedIn APIs are never called on the
    user's behalf. The browser is then 302'd to
    `{origin}/profile?linkedin=connected` (or `…?linkedin=error&reason=…`).

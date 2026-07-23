@@ -75,9 +75,13 @@ public sealed class LinkedInIdTokenValidator : ILinkedInIdTokenValidator
 
     internal static LinkedInIdentityClaims? ReadClaims(ClaimsPrincipal principal, string expectedNonce)
     {
+        // LinkedIn does not echo the nonce into its id_tokens (their discovery
+        // document lists no nonce claim), so the check is opportunistic: absent
+        // is accepted, present must match. The single-use server-bound state is
+        // the flow's primary replay/CSRF defense.
         var nonce = principal.FindFirstValue("nonce");
 
-        if (!string.Equals(nonce, expectedNonce, StringComparison.Ordinal))
+        if (nonce != null && !string.Equals(nonce, expectedNonce, StringComparison.Ordinal))
         {
             return null;
         }
