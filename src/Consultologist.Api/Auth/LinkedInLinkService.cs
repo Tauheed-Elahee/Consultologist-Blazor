@@ -15,6 +15,7 @@ public sealed class LinkedInLinkService : ILinkedInLinkService
     private readonly ILinkedInLinkStateStore _stateStore;
     private readonly ILinkedInTokenClient _tokenClient;
     private readonly ILinkedInIdTokenValidator _idTokenValidator;
+    private readonly ILinkedInVerificationClient _verificationClient;
     private readonly IAccountStore _accountStore;
     private readonly IConfiguration _configuration;
     private readonly ILogger<LinkedInLinkService> _logger;
@@ -23,6 +24,7 @@ public sealed class LinkedInLinkService : ILinkedInLinkService
         ILinkedInLinkStateStore stateStore,
         ILinkedInTokenClient tokenClient,
         ILinkedInIdTokenValidator idTokenValidator,
+        ILinkedInVerificationClient verificationClient,
         IAccountStore accountStore,
         IConfiguration configuration,
         ILogger<LinkedInLinkService> logger)
@@ -30,6 +32,7 @@ public sealed class LinkedInLinkService : ILinkedInLinkService
         _stateStore = stateStore;
         _tokenClient = tokenClient;
         _idTokenValidator = idTokenValidator;
+        _verificationClient = verificationClient;
         _accountStore = accountStore;
         _configuration = configuration;
         _logger = logger;
@@ -83,6 +86,13 @@ public sealed class LinkedInLinkService : ILinkedInLinkService
             return new LinkedInCallbackResult(LinkedInCallbackOutcome.TokenInvalid, linkState.ReturnOrigin);
         }
 
+        // Best-effort Verified on LinkedIn categories: unavailable (e.g. 403
+        // for non-app-admin members on the Development tier) never blocks the
+        // link — the proof of account control stands on its own.
+        var verifiedCategories = tokenResponse.AccessToken == null
+            ? null
+            : await _verificationClient.GetVerifiedCategoriesAsync(tokenResponse.AccessToken, cancellationToken);
+
         var outcome = await _accountStore.LinkIdentityAsync(
             linkState.AppUserId,
             IdentityProviders.LinkedIn,
@@ -91,6 +101,7 @@ public sealed class LinkedInLinkService : ILinkedInLinkService
             claims.Name,
             claims.Email,
             claims.Picture,
+            verifiedCategories == null ? null : string.Join(",", verifiedCategories),
             cancellationToken);
 
         return outcome == IdentityLinkOutcome.ConflictOtherUser

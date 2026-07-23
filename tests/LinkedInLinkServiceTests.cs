@@ -10,6 +10,7 @@ public class LinkedInLinkServiceTests
     private readonly ILinkedInLinkStateStore _stateStore = Substitute.For<ILinkedInLinkStateStore>();
     private readonly ILinkedInTokenClient _tokenClient = Substitute.For<ILinkedInTokenClient>();
     private readonly ILinkedInIdTokenValidator _idTokenValidator = Substitute.For<ILinkedInIdTokenValidator>();
+    private readonly ILinkedInVerificationClient _verificationClient = Substitute.For<ILinkedInVerificationClient>();
     private readonly IAccountStore _accountStore = Substitute.For<IAccountStore>();
 
     private LinkedInLinkService CreateService()
@@ -26,6 +27,7 @@ public class LinkedInLinkServiceTests
             _stateStore,
             _tokenClient,
             _idTokenValidator,
+            _verificationClient,
             _accountStore,
             configuration,
             NullLogger<LinkedInLinkService>.Instance);
@@ -107,7 +109,7 @@ public class LinkedInLinkServiceTests
     {
         _stateStore.TakeAsync("state-1", Arg.Any<CancellationToken>()).Returns(CreateState());
         _tokenClient.ExchangeCodeAsync("code", Arg.Any<CancellationToken>())
-            .Returns(new LinkedInTokenResponse("id-token"));
+            .Returns(new LinkedInTokenResponse("id-token", "access-token"));
         _idTokenValidator.ValidateAsync("id-token", "nonce-1", Arg.Any<CancellationToken>())
             .Returns((LinkedInIdentityClaims?)null);
 
@@ -115,7 +117,7 @@ public class LinkedInLinkServiceTests
 
         Assert.Equal(LinkedInCallbackOutcome.TokenInvalid, result.Outcome);
         await _accountStore.DidNotReceiveWithAnyArgs()
-            .LinkIdentityAsync(default!, default!, default!, default!, default, default, default, default);
+            .LinkIdentityAsync(default!, default!, default!, default!, default, default, default, default, default);
     }
 
     [Fact]
@@ -123,12 +125,14 @@ public class LinkedInLinkServiceTests
     {
         _stateStore.TakeAsync("state-1", Arg.Any<CancellationToken>()).Returns(CreateState());
         _tokenClient.ExchangeCodeAsync("code", Arg.Any<CancellationToken>())
-            .Returns(new LinkedInTokenResponse("id-token"));
+            .Returns(new LinkedInTokenResponse("id-token", "access-token"));
         _idTokenValidator.ValidateAsync("id-token", "nonce-1", Arg.Any<CancellationToken>())
             .Returns(new LinkedInIdentityClaims("li-sub", "Pat Doe", "pat@example.com", "https://media.example/p.jpg"));
+        _verificationClient.GetVerifiedCategoriesAsync("access-token", Arg.Any<CancellationToken>())
+            .Returns(new[] { "IDENTITY", "WORKPLACE" });
         _accountStore.LinkIdentityAsync(
                 "user-1", "linkedin", "https://www.linkedin.com/oauth", "li-sub",
-                "Pat Doe", "pat@example.com", "https://media.example/p.jpg", Arg.Any<CancellationToken>())
+                "Pat Doe", "pat@example.com", "https://media.example/p.jpg", "IDENTITY,WORKPLACE", Arg.Any<CancellationToken>())
             .Returns(IdentityLinkOutcome.Linked);
 
         var result = await CreateService().HandleCallbackAsync("code", "state-1", null, CancellationToken.None);
@@ -137,7 +141,7 @@ public class LinkedInLinkServiceTests
         Assert.Equal("https://app.example.com", result.ReturnOrigin);
         await _accountStore.Received(1).LinkIdentityAsync(
             "user-1", "linkedin", "https://www.linkedin.com/oauth", "li-sub",
-            "Pat Doe", "pat@example.com", "https://media.example/p.jpg", Arg.Any<CancellationToken>());
+            "Pat Doe", "pat@example.com", "https://media.example/p.jpg", "IDENTITY,WORKPLACE", Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -145,17 +149,59 @@ public class LinkedInLinkServiceTests
     {
         _stateStore.TakeAsync("state-1", Arg.Any<CancellationToken>()).Returns(CreateState());
         _tokenClient.ExchangeCodeAsync("code", Arg.Any<CancellationToken>())
-            .Returns(new LinkedInTokenResponse("id-token"));
+            .Returns(new LinkedInTokenResponse("id-token", "access-token"));
         _idTokenValidator.ValidateAsync("id-token", "nonce-1", Arg.Any<CancellationToken>())
             .Returns(new LinkedInIdentityClaims("li-sub", null, null, null));
         _accountStore.LinkIdentityAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(IdentityLinkOutcome.ConflictOtherUser);
 
         var result = await CreateService().HandleCallbackAsync("code", "state-1", null, CancellationToken.None);
 
         Assert.Equal(LinkedInCallbackOutcome.AlreadyLinked, result.Outcome);
         Assert.Equal("https://app.example.com", result.ReturnOrigin);
+    }
+
+    [Fact]
+    public async Task Callback_VerificationUnavailable_StillLinksWithoutCategories()
+    {
+        _stateStore.TakeAsync("state-1", Arg.Any<CancellationToken>()).Returns(CreateState());
+        _tokenClient.ExchangeCodeAsync("code", Arg.Any<CancellationToken>())
+            .Returns(new LinkedInTokenResponse("id-token", "access-token"));
+        _idTokenValidator.ValidateAsync("id-token", "nonce-1", Arg.Any<CancellationToken>())
+            .Returns(new LinkedInIdentityClaims("li-sub", null, null, null));
+        _verificationClient.GetVerifiedCategoriesAsync("access-token", Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<string>?)null);
+        _accountStore.LinkIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(IdentityLinkOutcome.Linked);
+
+        var result = await CreateService().HandleCallbackAsync("code", "state-1", null, CancellationToken.None);
+
+        Assert.Equal(LinkedInCallbackOutcome.Linked, result.Outcome);
+        await _accountStore.Received(1).LinkIdentityAsync(
+            "user-1", "linkedin", "https://www.linkedin.com/oauth", "li-sub",
+            null, null, null, null, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Callback_NoAccessToken_SkipsVerificationAndLinks()
+    {
+        _stateStore.TakeAsync("state-1", Arg.Any<CancellationToken>()).Returns(CreateState());
+        _tokenClient.ExchangeCodeAsync("code", Arg.Any<CancellationToken>())
+            .Returns(new LinkedInTokenResponse("id-token", null));
+        _idTokenValidator.ValidateAsync("id-token", "nonce-1", Arg.Any<CancellationToken>())
+            .Returns(new LinkedInIdentityClaims("li-sub", null, null, null));
+        _accountStore.LinkIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(IdentityLinkOutcome.Linked);
+
+        var result = await CreateService().HandleCallbackAsync("code", "state-1", null, CancellationToken.None);
+
+        Assert.Equal(LinkedInCallbackOutcome.Linked, result.Outcome);
+        await _verificationClient.DidNotReceiveWithAnyArgs().GetVerifiedCategoriesAsync(default!, default);
     }
 }

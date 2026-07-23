@@ -65,6 +65,9 @@ public sealed class LinkedInTokenClient : ILinkedInTokenClient
             var idToken = document.RootElement.TryGetProperty("id_token", out var idTokenElement)
                 ? idTokenElement.GetString()
                 : null;
+            var accessToken = document.RootElement.TryGetProperty("access_token", out var accessTokenElement)
+                ? accessTokenElement.GetString()
+                : null;
 
             if (string.IsNullOrWhiteSpace(idToken))
             {
@@ -72,7 +75,7 @@ public sealed class LinkedInTokenClient : ILinkedInTokenClient
                 return null;
             }
 
-            return new LinkedInTokenResponse(idToken);
+            return new LinkedInTokenResponse(idToken, accessToken);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

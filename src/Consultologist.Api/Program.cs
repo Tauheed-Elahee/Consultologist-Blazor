@@ -94,6 +94,7 @@ builder.Services.AddTransient<ConsultGenerationJobEntity>();
 builder.Services.AddSingleton<ILinkedInLinkStateStore, LinkedInLinkStateStore>();
 builder.Services.AddSingleton<ILinkedInTokenClient, LinkedInTokenClient>();
 builder.Services.AddSingleton<ILinkedInIdTokenValidator, LinkedInIdTokenValidator>();
+builder.Services.AddSingleton<ILinkedInVerificationClient, LinkedInVerificationClient>();
 builder.Services.AddSingleton<ILinkedInLinkService, LinkedInLinkService>();
 builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();

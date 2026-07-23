@@ -27,6 +27,7 @@ public interface IAccountStore
         string? displayName,
         string? email,
         string? pictureUrl,
+        string? verifiedCategories,
         CancellationToken cancellationToken);
 }
 
@@ -146,6 +147,7 @@ public sealed class AccountStore : IAccountStore
         string? displayName,
         string? email,
         string? pictureUrl,
+        string? verifiedCategories,
         CancellationToken cancellationToken)
     {
         await EnsureTablesAsync(cancellationToken);
@@ -190,7 +192,8 @@ public sealed class AccountStore : IAccountStore
             LastSeenAtUtc = now,
             DisplayName = displayName,
             Email = email,
-            PictureUrl = pictureUrl
+            PictureUrl = pictureUrl,
+            VerifiedCategories = verifiedCategories
         };
 
         await _identityLinks.UpsertEntityAsync(identityLink, TableUpdateMode.Replace, cancellationToken);
@@ -242,7 +245,8 @@ public sealed class AccountStore : IAccountStore
                 entity.LastSeenAtUtc,
                 entity.DisplayName,
                 entity.Email,
-                entity.PictureUrl));
+                entity.PictureUrl,
+                entity.VerifiedCategories));
         }
 
         return identities;
@@ -261,7 +265,8 @@ public sealed class AccountStore : IAccountStore
             LastSeenAtUtc = identityLink.LastSeenAtUtc,
             DisplayName = identityLink.DisplayName,
             Email = identityLink.Email,
-            PictureUrl = identityLink.PictureUrl
+            PictureUrl = identityLink.PictureUrl,
+            VerifiedCategories = identityLink.VerifiedCategories
         };
     }
 
