@@ -72,6 +72,29 @@ and it lands **`Pending`** (since #191) — the activation flip in the
 `AppUsers` table is the admission control for self-provisioned sign-ups (see
 "Account Statuses and Activation" in `docs/ACCOUNTS.md` for the runbook).
 
+## LinkedIn identity linking (`Auth/LinkedInLink*`, #133)
+
+LinkedIn is a **verification signal**, never a credential: the Connect
+LinkedIn flow on the Profile page proves the signed-in user controls a real
+LinkedIn identity and stores it (with name/email/picture claims) on the app
+account as an input to the manual activation decision. Only the id_token is
+consumed — the flow never calls LinkedIn APIs on the user's behalf.
+
+| Variable | Accepted values | Default | Required |
+|---|---|---|---|
+| `LinkedIn__ClientId` | Client ID of the LinkedIn Developer app (Sign In with LinkedIn using OpenID Connect product) | — | yes (Start endpoint and validator throw without it) |
+| `LinkedIn__ClientSecret` | The LinkedIn app's client secret — a genuine secret app setting (no managed-identity equivalent exists) | — | yes (token exchange throws without it) |
+| `LinkedIn__RedirectUri` | The callback URL, byte-for-byte equal to one registered in the LinkedIn app. Production: `https://east.ca.api.consultologist.ai/api/Account/LinkedIn/Callback`; local: `http://localhost:7071/api/Account/LinkedIn/Callback` | — | yes |
+| `LinkedIn__StateTtlMinutes` | Minutes an OAuth state stays valid | `10` | no |
+| `LinkedInStateStorage__TableServiceUri` | Table service URI for the single-use `LinkedInLinkStates` table; chains to `AccountStorage` when unset (the usual case) | falls through to `AccountStorage` | no |
+
+State rows are single-use (ETag-conditioned delete — a replayed callback
+gets a 400) and expire after the TTL; Azure Tables has no native TTL, so
+abandoned rows are deleted opportunistically when touched and are otherwise
+harmless. The callback's redirect-back origin is captured at Start from the
+browser's `Origin` header validated against the CORS allow-list — never
+from a client-supplied value.
+
 ## Azure AI Foundry agent (`Agents/AgentSectionGenerator.cs`)
 
 | Variable | Accepted values | Default | Required |
