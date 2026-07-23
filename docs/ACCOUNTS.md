@@ -58,11 +58,42 @@ scp=access_as_user
 ```
 
 Accounts are tenant-agnostic: a first sign-in from any organizational tenant
-resolves-or-creates an app account exactly like a home-tenant sign-in, and
-new accounts land **inactive**. The activation flip in the accounts table is
-the sole admission control for cross-tenant users.
+resolves-or-creates an app account exactly like a home-tenant sign-in.
 
 Bearer tokens must not be pasted into logs, issues, or chat. Use decoded claim summaries when debugging.
+
+## Account Statuses and Activation (#191)
+
+New accounts land **`Pending`** (since #191; before that they were created
+`Active`, despite docs claiming otherwise). The activation flip in the
+`AppUsers` table is the sole admission control for self-provisioned sign-ups.
+
+| Status | Meaning |
+|---|---|
+| `Pending` | Created on first sign-in; every protected endpoint returns 403 |
+| `Active` | Activated by the operator; full access |
+| `Disabled` | Deliberately turned off by the operator; 403 everywhere |
+
+Comparison is ordinal and case-sensitive (`AccountAuthorizer.IsActive`), so
+the exact strings above are the vocabulary. The one exception to the 403
+gate is `GET /api/Account/Me`, which returns the caller's own profile
+(including `Status`) for any authenticated account so the client can show an
+"awaiting activation" banner instead of a broken app.
+
+Activation runbook (operator's az login holds Storage Table Data Contributor
+on `consultologistjobqueue`; find the `RowKey` via the banner user's report
+or an entity query on `AppUsers`):
+
+```bash
+az storage entity merge \
+  --auth-mode login \
+  --account-name consultologistjobqueue \
+  --table-name AppUsers \
+  --entity PartitionKey=app-user RowKey=<AppUserId> Status=Active
+```
+
+The same command with `Status=Disabled` turns an account off. Existing rows
+created before #191 keep their `Active` status — no migration.
 
 ## Account Settings
 
