@@ -1,12 +1,10 @@
-# Accounts, Entra API Access, and LinkedIn Login
+# Accounts, Entra API Access, and LinkedIn Linking
 
 ## Summary
 
-This app currently uses Microsoft Entra ID login through MSAL in the Blazor WebAssembly client. Protected Azure Functions validate an Entra access token for the Consultologist API and resolve the caller to an internal app account stored in Azure Tables.
+This app uses Microsoft Entra ID login through MSAL in the Blazor WebAssembly client. Protected Azure Functions validate an Entra access token for the Consultologist API and resolve the caller to an internal app account stored in Azure Tables.
 
-LinkedIn login is possible, but it should not be implemented as browser-only authorization. A Blazor WebAssembly app runs on the user's machine, so any rule like "only allow verified LinkedIn accounts" must be enforced by a trusted server-side component.
-
-The preferred lightweight server-side component for this repository is the existing Azure Functions project under `Api/`.
+LinkedIn is a **verification signal**, not a login provider (#133): a Connect LinkedIn flow on the Profile page proves the signed-in user controls a real LinkedIn identity, and the stored link feeds the operator's manual activation decision. Microsoft remains the only credential authority. The flow is enforced server-side in the Azure Functions project — browser-only checks are never authorization.
 
 ## Current Entra Setup
 
@@ -128,97 +126,64 @@ It holds the account's workflow-package pin (`name` or `name@version`), resolved
 
 Historical: the original key, `consult.sectionStandardsMarkdown` (a per-account section-standards override), retired 2026-07-15 with the specVersion-5 input model (#71) — section standards are now package data, and account customization is package forking (the in-app editor, #57; see docs/customizable-workflow/in-app-editing.md).
 
-## LinkedIn Login
+## LinkedIn Linking (#133, implemented)
 
-LinkedIn login can be added through an OAuth 2.0 / OpenID Connect flow. The app should not store LinkedIn client secrets or perform privileged token exchange directly in Blazor WebAssembly.
+LinkedIn is an account-**verification** signal, explicitly not a login
+provider — that would mean re-platforming auth, rejected in favor of
+Microsoft remaining the only credential authority. The Connect LinkedIn
+button on the Profile page runs LinkedIn's Sign-In-with-LinkedIn OpenID
+Connect code flow through two server-side Functions endpoints
+(`AccountLinkedIn.cs`); the client secret lives in Function App settings
+(`docs/CONFIGURATION.md`, "LinkedIn identity linking") and never reaches the
+browser.
 
-Recommended implementation options:
+Flow:
 
-- Use Azure Static Web Apps custom OpenID Connect authentication for LinkedIn, then enforce authorization in an API-backed gate.
-- Use Microsoft Entra External ID or a similar identity broker to present LinkedIn as a login option while the app continues to use a Microsoft identity layer.
-- Add a backend-for-frontend or serverless auth endpoint that handles LinkedIn OAuth, profile lookup, verification checks, and app session issuance.
+1. `GET /api/Account/LinkedIn/Start` (bearer-authed; **no IsActive gate** —
+   linking is an input to activating a `Pending` account): validates the
+   browser `Origin` against the CORS allow-list, writes a single-use state
+   row (`LinkedInLinkStates` table: CSPRNG state + nonce, the app user id,
+   the return origin, 10-minute expiry) and returns the LinkedIn
+   authorization URL as JSON; the client navigates top-level.
+2. The user consents on linkedin.com (scopes `openid profile email`;
+   personal LinkedIn credentials never touch this app).
+3. `GET /api/Account/LinkedIn/Callback` (anonymous — the browser arrives by
+   redirect): consumes the state (ETag-conditioned delete; a replayed or
+   expired callback gets a 400, not a redirect), exchanges the code
+   server-side, validates the id_token (LinkedIn issuer, our client id
+   audience, nonce), and stores the link. Only the id_token is consumed —
+   the access token is discarded and LinkedIn APIs are never called on the
+   user's behalf. The browser is then 302'd to
+   `{origin}/profile?linkedin=connected` (or `…?linkedin=error&reason=…`).
 
-## Verified LinkedIn Requirement
+What is stored (`IdentityLinks` PK `linkedin` / `UserIdentityLinks`): the
+stable OIDC `sub` (pairwise per LinkedIn app), issuer
+`https://www.linkedin.com/oauth`, and the token's name/email/picture
+claims. One LinkedIn identity vouches for at most one app account —
+linking an identity already attached to a different account is refused
+(`already-linked`). Re-linking the same account is idempotent and
+refreshes the claims. `Account/Me` exposes the link in `LinkedIdentities`
+so both the user and the operator (reviewing a `Pending` account) can see
+it. There is no self-service unlink yet; the operator can delete the two
+table rows if needed.
 
-LinkedIn sign-in alone does not prove the LinkedIn account is identity-verified. To accept only verified LinkedIn users, the trusted server-side component should call LinkedIn's Verified on LinkedIn API after login.
-
-The verification check should call:
-
-```text
-GET https://api.linkedin.com/rest/verificationReport
-```
-
-The LinkedIn app must request the required verification scope, such as `r_verify_details`.
-
-The access policy should decide which verification categories are acceptable:
-
-- `IDENTITY`: government-ID based verification.
-- `WORKPLACE`: workplace verification, such as company email or Microsoft Entra-backed workplace verification.
-
-Default recommendation: require at least `IDENTITY`. If the product needs workplace-specific trust, require `WORKPLACE` as well.
-
-If the user is not verified, the app should deny access or direct the user to LinkedIn's verification URL when LinkedIn provides one.
-
-## Server-Side Enforcement
-
-The authorization decision must be made by a trusted component, such as an Azure Function. Browser-side checks may improve the user experience, but they are not authorization.
-
-The server-side component should:
-
-- Complete or receive the LinkedIn authentication result.
-- Use a securely stored LinkedIn client secret when required.
-- Call LinkedIn profile and verification APIs.
-- Decide whether the LinkedIn identity satisfies the app's access policy.
-- Issue or allow access only after verification succeeds.
-- Enforce the same rule for protected APIs, not only for visible UI.
-
-## Account Linking
-
-The app should use one internal app user record and attach provider identities to it. Provider identity IDs are the source of truth; email addresses are only candidate match signals.
-
-For Microsoft Entra ID:
-
-- Store a stable Entra identity key, preferably tenant ID plus object ID.
-- Treat Entra `oid` as stronger than email-like claims.
-- Use `preferred_username`, `email`, or `upn` only as candidate email values.
-
-For LinkedIn:
-
-- Store LinkedIn's stable OpenID Connect `sub`, or a stable ID returned by LinkedIn's verified identity APIs.
-- Require the configured LinkedIn verification policy before linking or granting access.
-- Use LinkedIn's primary email only as a candidate match when available.
-
-## Recommended Flow
-
-For Entra login:
-
-1. Resolve the user by the stored Entra identity key.
-2. If no linked Entra identity exists, check whether the trusted Entra email matches an existing internal account.
-3. If a match exists, require confirmation before linking unless the account is already trusted by policy.
-4. After linking, future Entra logins resolve to the same internal app user.
-
-For LinkedIn login:
-
-1. Authenticate with LinkedIn through the server-side auth flow.
-2. Call LinkedIn verification APIs.
-3. Reject access if the required verification category is missing.
-4. Resolve the user by stored LinkedIn identity ID.
-5. If no linked LinkedIn identity exists, compare LinkedIn's verified or trusted email candidate to existing app users.
-6. If the email matches an Entra-linked user, require the user to sign in with Entra once to confirm the link.
-7. After linking, LinkedIn and Entra logins both resolve to the same internal app user.
+Meaning of "verified": a real, demonstrably user-controlled LinkedIn
+identity to weigh during the manual activation decision — an OAuth proof
+of account control, never a typed-in profile URL. It does not prove the
+profile's claims: LinkedIn's own identity-verification badge is **not**
+exposed through the base OIDC product, so the earlier aspirational
+`GET https://api.linkedin.com/rest/verificationReport` / `r_verify_details`
+design is **not implemented** (that API requires a LinkedIn partner
+program). #133 supersedes that text.
 
 ## Do Not Do
 
 - Do not store LinkedIn client secrets in Blazor WebAssembly.
 - Do not trust browser-side checks as authorization.
 - Do not merge accounts based only on matching email addresses.
-- Do not treat LinkedIn sign-in as proof of LinkedIn identity verification.
-- Do not use mutable profile fields, display names, or email alone as permanent account keys.
-
-## Acceptance Criteria
-
-- LinkedIn login is documented as possible.
-- Verified LinkedIn-only access is documented as requiring LinkedIn's verification APIs.
-- A backend or serverless function is documented as required for secure enforcement.
-- Entra and LinkedIn account linking is documented around stable provider IDs.
-- Email matching is documented as a candidate match, not sole proof of identity.
+- Do not treat a linked LinkedIn identity as proof of the profile's claims —
+  it proves control of the account, nothing more.
+- Do not use mutable profile fields, display names, or email alone as
+  permanent account keys (links key on provider + issuer + `sub`).
+- Do not accept a LinkedIn identity as a bearer credential — only
+  `entra-external-id` identities sign in.
