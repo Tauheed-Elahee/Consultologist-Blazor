@@ -9,7 +9,9 @@ notes vs the original text: the agent mirror layout is
 `agent-definitions/{name}/{version}/definition.yaml` (redacted); the agents repo
 also carries `concept-extraction.yaml` and the separately-versioned
 `output-contracts.json` catalog; in production the attestation baseline is the
-registry manifest (the bundled copy serves local dev only), and the catalog pin
+registry manifest; the local-dev fallback is the canonical repo pinned as a git
+submodule at `external/consultologist-agents` (bump the submodule to advance
+the local baseline — no silent drift), and the catalog pin
 (`OutputContracts__Pin`) is set explicitly. Goal achieved: the app repo is
 **engine-only** — content cadence fully decouples from app deploys.
 

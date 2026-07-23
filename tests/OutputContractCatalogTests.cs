@@ -13,7 +13,7 @@ public class OutputContractCatalogTests
             dir = dir.Parent;
         }
 
-        return Path.Combine(dir!.FullName, "agents");
+        return Path.Combine(dir!.FullName, "external", "consultologist-agents", "agents");
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class CatalogRegistryIdentityTests
             dir = dir.Parent;
         }
 
-        return Path.Combine(dir!.FullName, "agents");
+        return Path.Combine(dir!.FullName, "external", "consultologist-agents", "agents");
     }
 
     private const string MinimalCatalog = """
