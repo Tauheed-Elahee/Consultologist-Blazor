@@ -2,6 +2,7 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @inject IAccountEndpointService AccountService
+@inject NavigationManager Navigation
 @attribute [Authorize]
 
 @page "/profile"
@@ -57,6 +58,46 @@
                     </FluentMessageBar>
                 </div>
             </section>
+
+            <section class="content-card">
+                <div class="form-stack">
+                    <h2 class="panel-title">
+                        LinkedIn verification
+                    </h2>
+
+                    <p class="panel-description">
+                        Connecting your LinkedIn profile proves this account belongs to a real clinician.
+                        It supports the account activation decision — LinkedIn is never used to sign in.
+                    </p>
+
+                    @if (linkedInMessage != null)
+                    {
+                        <FluentMessageBar Intent="@linkedInMessageIntent">@linkedInMessage</FluentMessageBar>
+                    }
+
+                    @if (LinkedInIdentity != null)
+                    {
+                        <div class="state-panel">
+                            <span class="muted-text">Connected LinkedIn profile</span>
+                            <strong>@(LinkedInIdentity.DisplayName ?? "LinkedIn account")</strong>
+                            @if (LinkedInIdentity.Email != null)
+                            {
+                                <span class="muted-text">@LinkedInIdentity.Email</span>
+                            }
+                            <span class="muted-text">Connected @LinkedInIdentity.LinkedAt.ToString("yyyy-MM-dd")</span>
+                        </div>
+                    }
+
+                    <div class="action-row">
+                        <FluentButton Appearance="Appearance.Accent"
+                                      IconStart="@(new Icons.Regular.Size20.LinkMultiple())"
+                                      Disabled="@linkedInStartInProgress"
+                                      @onclick="ConnectLinkedInAsync">
+                            @(LinkedInIdentity == null ? "Connect LinkedIn" : "Reconnect LinkedIn")
+                        </FluentButton>
+                    </div>
+                </div>
+            </section>
         }
         else if (!string.IsNullOrWhiteSpace(accountErrorMessage))
         {
@@ -81,11 +122,26 @@
     [CascadingParameter]
     private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
 
+    [SupplyParameterFromQuery(Name = "linkedin")]
+    private string? LinkedInResult { get; set; }
+
+    [SupplyParameterFromQuery(Name = "reason")]
+    private string? LinkedInErrorReason { get; set; }
+
     private AccountMeResponse? account;
     private string? accountErrorMessage;
+    private string? linkedInMessage;
+    private MessageIntent linkedInMessageIntent = MessageIntent.Info;
+    private bool linkedInStartInProgress;
+
+    private AccountIdentity? LinkedInIdentity =>
+        account?.LinkedIdentities.FirstOrDefault(identity =>
+            string.Equals(identity.Provider, "linkedin", StringComparison.Ordinal));
 
     protected override async Task OnInitializedAsync()
     {
+        CaptureLinkedInResultFromQuery();
+
         var authState = await AuthenticationStateTask!;
         var user = authState.User;
 
@@ -95,6 +151,28 @@
         }
 
         await LoadAccountAsync();
+    }
+
+    private void CaptureLinkedInResultFromQuery()
+    {
+        if (string.IsNullOrWhiteSpace(LinkedInResult))
+        {
+            return;
+        }
+
+        (linkedInMessage, linkedInMessageIntent) = LinkedInResult switch
+        {
+            "connected" => ("LinkedIn profile connected.", MessageIntent.Success),
+            _ => (LinkedInErrorReason switch
+            {
+                "denied" => "LinkedIn connection was cancelled or denied.",
+                "already-linked" => "That LinkedIn profile is already connected to a different Consultologist account.",
+                _ => "LinkedIn connection failed. Please try again."
+            }, MessageIntent.Error)
+        };
+
+        // Strip the query so a refresh doesn't replay the message.
+        Navigation.NavigateTo("/profile", replace: true);
     }
 
     private async Task LoadAccountAsync()
@@ -113,4 +191,24 @@
         }
     }
 
+    private async Task ConnectLinkedInAsync()
+    {
+        linkedInStartInProgress = true;
+
+        try
+        {
+            var authorizationUrl = await AccountService.StartLinkedInLinkAsync();
+            Navigation.NavigateTo(authorizationUrl, forceLoad: true);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            linkedInMessage = $"Unable to start the LinkedIn connection: {ex.Message}";
+            linkedInMessageIntent = MessageIntent.Error;
+            linkedInStartInProgress = false;
+        }
+    }
 }
