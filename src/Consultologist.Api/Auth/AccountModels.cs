@@ -5,6 +5,7 @@ namespace Consultologist.Api.Auth;
 
 public static class AccountStatuses
 {
+    public const string Pending = "Pending";
     public const string Active = "Active";
     public const string Disabled = "Disabled";
 }
@@ -17,7 +18,7 @@ public sealed class AppUserEntity : ITableEntity
     public ETag ETag { get; set; }
     public string DisplayName { get; set; } = string.Empty;
     public string? Email { get; set; }
-    public string Status { get; set; } = AccountStatuses.Active;
+    public string Status { get; set; } = AccountStatuses.Pending;
     public DateTimeOffset CreatedAtUtc { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public DateTimeOffset LastSeenAtUtc { get; set; }

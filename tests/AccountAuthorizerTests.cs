@@ -79,6 +79,7 @@ public class AccountAuthorizerTests
     [Theory]
     [InlineData("Active", true)]
     [InlineData("active", false)]
+    [InlineData("Pending", false)]
     [InlineData("Disabled", false)]
     [InlineData("", false)]
     public void IsActive_ComparesStatusOrdinally(string status, bool expected)

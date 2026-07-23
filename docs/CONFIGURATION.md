@@ -51,8 +51,9 @@ the user-assigned managed identity. Neither registration carries a
 credential, so there is nothing to expire or rotate.
 
 A first sign-in from a foreign tenant creates an app account like any other,
-and it lands **inactive** — the activation gate is the admission control for
-cross-tenant users (see `docs/ACCOUNTS.md`).
+and it lands **`Pending`** (since #191) — the activation flip in the
+`AppUsers` table is the admission control for self-provisioned sign-ups (see
+"Account Statuses and Activation" in `docs/ACCOUNTS.md` for the runbook).
 
 ## Azure AI Foundry agent (`Agents/AgentSectionGenerator.cs`)
 

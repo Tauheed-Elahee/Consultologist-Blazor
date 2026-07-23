@@ -57,7 +57,7 @@ public sealed class AccountStore : IAccountStore
                 RowKey = appUserId,
                 DisplayName = user.DisplayName,
                 Email = user.Email,
-                Status = AccountStatuses.Active,
+                Status = AccountStatuses.Pending,
                 CreatedAtUtc = now,
                 UpdatedAtUtc = now,
                 LastSeenAtUtc = now
