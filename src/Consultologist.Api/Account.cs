@@ -52,11 +52,8 @@ public sealed class Account
             return AccountAuthorizer.CreateUnauthorizedResponse(req);
         }
 
-        if (!AccountAuthorizer.IsActive(account))
-        {
-            return AccountAuthorizer.CreateForbiddenResponse(req);
-        }
-
+        // No IsActive gate: a Pending/Disabled user may still read their own
+        // profile so the client can explain why the rest of the API is 403.
         var response = req.CreateResponse(HttpStatusCode.OK);
         FunctionCors.Apply(req, response);
         await response.WriteAsJsonAsync(
