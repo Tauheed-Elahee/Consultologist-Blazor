@@ -111,7 +111,9 @@ diffing two published versions locally.
 
 Publishing is not a browse operation: author changes in the repo's `packages/` sources,
 bump the manifest's CalVer version, and run
-`./scripts/publish-workflow-package.sh consultologistjobqueue packages/<name>`.
+publishing from the [consultologist-workflows](https://github.com/Tauheed-Elahee/consultologist-workflows)
+repo: tag `{name}-vYYYY.MM.N` and CI publishes via OIDC (#16). Human registry
+writes are retired.
 The script uploads the version folder, updates the `latest` pointer, and refuses to
 republish an existing version. CI validates the package sources on every build
 (`tests/PackageSourceValidationTests.cs`) using the same validator the engine applies

@@ -1,9 +1,17 @@
 # Content Repos: Workflows and Agents as GitOps-Published Artifacts
 
-Design recorded 2026-07-10 (user-approved direction; implementation tracked on the
-Configurable Workflow board, paired with milestone 2). Goal: the app repo becomes
-**engine-only** — all content ships from dedicated repos through CI to the registry,
-and content cadence fully decouples from app deploys.
+Design recorded 2026-07-10; **implemented 2026-07-23 (#16)**. Both repos exist
+and publish through CI OIDC: [consultologist-workflows](https://github.com/Tauheed-Elahee/consultologist-workflows)
+(tag `{name}-vYYYY.MM.N` → registry) and
+[consultologist-agents](https://github.com/Tauheed-Elahee/consultologist-agents)
+(merge → Foundry version + redacted registry mirror + catalog). Implementation
+notes vs the original text: the agent mirror layout is
+`agent-definitions/{name}/{version}/definition.yaml` (redacted); the agents repo
+also carries `concept-extraction.yaml` and the separately-versioned
+`output-contracts.json` catalog; in production the attestation baseline is the
+registry manifest (the bundled copy serves local dev only), and the catalog pin
+(`OutputContracts__Pin`) is set explicitly. Goal achieved: the app repo is
+**engine-only** — content cadence fully decouples from app deploys.
 
 ## Topology: two repos
 

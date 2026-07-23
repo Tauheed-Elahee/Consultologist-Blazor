@@ -46,7 +46,7 @@ keeps its native scheme.
 > setting fallback (`general@latest`), frontend loads standards from the endpoint, and
 > jobs record `WorkflowPackage`/`EffectiveInputHash`/`AgentVersion`
 > (job `SchemaVersion` 2). Seed package source lives in `packages/general/`; publish
-> with `scripts/publish-workflow-package.sh`.
+> from the consultologist-workflows repo (tag-triggered CI, OIDC; #16).
 > Registry auth is Entra-first: the store uses the app's managed identity against
 > `WorkflowPackages__BlobServiceUri` (Storage Blob Data Reader on the account); the
 > publish script uses `az --auth-mode login` (Storage Blob Data Contributor for the
