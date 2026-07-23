@@ -117,36 +117,10 @@ public class NodeVariableResolverTests
             Resolve("create-patient-trajectory"));
     }
 
-    [Fact]
-    public void RenderedVariables_StrictRenderAgainstRepoTemplates()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Consultologist.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        var packageDir = Path.Combine(dir!.FullName, "packages", "general");
-        var manifest = JsonSerializer.Deserialize<WorkflowPackageManifest>(
-            File.ReadAllText(Path.Combine(packageDir, "manifest.json")),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
-
-        foreach (var node in Nodes.Where(n => n.ForEach is null))
-        {
-            var spec = manifest.Prompts!.Single(p => p.Id == node.PromptId);
-            var template = new WorkflowPromptTemplate(
-                spec.Id,
-                File.ReadAllText(Path.Combine(packageDir, spec.File.Replace('/', Path.DirectorySeparatorChar))),
-                spec.Variables,
-                spec.Prelude is null
-                    ? null
-                    : File.ReadAllText(Path.Combine(packageDir, manifest.Preludes![spec.Prelude].Replace('/', Path.DirectorySeparatorChar))));
-
-            var rendered = PromptTemplateRenderer.Render(template, Resolve(node.Id));
-
-            Assert.False(string.IsNullOrWhiteSpace(rendered));
-        }
-    }
+    // The strict-render-against-repo-templates case retired with #16: the
+    // general package's sources live in the consultologist-workflows repo, and
+    // the validator's strict render covers every published template at
+    // publish time (fixture templates cover it in WorkflowV5Tests here).
 
     [Fact]
     public void Render_DispatchesToTheBytePinnedFormatters()
