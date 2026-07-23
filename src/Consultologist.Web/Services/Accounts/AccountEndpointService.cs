@@ -56,6 +56,30 @@ public sealed class AccountEndpointService : IAccountEndpointService
             ?? throw new InvalidOperationException("Failed to deserialize account response.");
     }
 
+    public async Task<string> StartLinkedInLinkAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, GetAccountBaseUrl() + "/LinkedIn/Start");
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "LinkedIn link start failed with status {StatusCode}: {Error}",
+                response.StatusCode,
+                errorContent);
+
+            throw new HttpRequestException($"LinkedIn link start failed: {response.StatusCode}");
+        }
+
+        var startResponse = await response.Content.ReadFromJsonAsync<LinkedInStartResponse>()
+            ?? throw new InvalidOperationException("Failed to deserialize LinkedIn start response.");
+
+        return startResponse.AuthorizationUrl;
+    }
+
     public async Task<AccountSettingResponse?> GetSettingAsync(string key)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, GetSettingUrl(key));

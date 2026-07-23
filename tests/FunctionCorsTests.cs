@@ -50,4 +50,16 @@ public class FunctionCorsTests
 
         Assert.Empty(context.Response.Headers);
     }
+
+    [Theory]
+    [InlineData("https://app.consultologist.ai", true)]
+    [InlineData("http://localhost:5173", true)]
+    [InlineData("https://evil.example.com", false)]
+    [InlineData("https://app.consultologist.ai.evil.example.com", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsAllowedOrigin_MatchesExactAllowListEntries(string? origin, bool expected)
+    {
+        Assert.Equal(expected, FunctionCors.IsAllowedOrigin(origin));
+    }
 }

@@ -97,7 +97,7 @@ public sealed class BearerTokenValidator : IBearerTokenValidator
                 ?? principal.FindFirstValue("upn");
 
             return new AuthenticatedUser(
-                "entra-external-id",
+                IdentityProviders.EntraExternalId,
                 issuer,
                 subject,
                 displayName,

@@ -13,7 +13,12 @@ public sealed record AccountIdentity(
     string Issuer,
     string Subject,
     DateTimeOffset LinkedAt,
-    DateTimeOffset LastSeenAt);
+    DateTimeOffset LastSeenAt,
+    string? DisplayName = null,
+    string? Email = null,
+    string? PictureUrl = null);
+
+public sealed record LinkedInStartResponse(string AuthorizationUrl);
 
 public sealed record AccountSettingResponse(
     string Key,
