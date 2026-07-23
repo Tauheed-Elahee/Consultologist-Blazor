@@ -317,7 +317,7 @@ public class AgentDefinitionRedactionTests
 
         foreach (var name in new[] { "test-json", "concept-extraction" })
         {
-            var yaml = File.ReadAllText(Path.Combine(dir!.FullName, "agents", $"{name}.yaml"));
+            var yaml = File.ReadAllText(Path.Combine(dir!.FullName, "external", "consultologist-agents", "agents", $"{name}.yaml"));
             var redacted = AgentDefinitionRedaction.Redact(yaml);
 
             Assert.Equal(yaml.Replace("\r\n", "\n").Split('\n').Length - 2, redacted.Split('\n').Length);

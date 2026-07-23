@@ -129,12 +129,12 @@ public class WorkflowPackagePublisherTests
     private static OutputContractCatalog LoadCatalog()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "agents", "output-contracts.json")))
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "external", "consultologist-agents", "agents", "output-contracts.json")))
         {
             dir = dir.Parent;
         }
 
-        return OutputContractCatalog.Load(Path.Combine(dir!.FullName, "agents"));
+        return OutputContractCatalog.Load(Path.Combine(dir!.FullName, "external", "consultologist-agents", "agents"));
     }
 
     private static (WorkflowPackagePublisher Publisher, FakeRegistryWriter Writer, FakeSettingsStore Settings) CreatePublisher(

@@ -19,7 +19,7 @@ public static class TestOutputContracts
             dir = dir.Parent;
         }
 
-        var catalog = Consultologist.Api.Agents.OutputContractCatalog.Load(Path.Combine(dir!.FullName, "agents"));
+        var catalog = Consultologist.Api.Agents.OutputContractCatalog.Load(Path.Combine(dir!.FullName, "external", "consultologist-agents", "agents"));
 
         return catalog.Entries.Values
             .Where(entry => entry.SchemaJson != null)

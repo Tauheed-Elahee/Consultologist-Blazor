@@ -76,8 +76,8 @@ settings are retired — delete them from the Function App.
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
-| `AgentAttestation__Enforce` | `true` (case-insensitive) = drift fails host startup; any other value = drift logs an error only. Since #16 the production baseline is the registry's published definition (CI-only channel); the bundled `agents/` copy is the baseline only in local dev | warn-only | no |
-| `AgentAttestation__ManifestDirectory` | Directory holding the attested agent YAMLs and `output-contracts.json` (replaces the former `AgentAttestation__ManifestPath`) | `agents/` under the app base directory | no |
+| `AgentAttestation__Enforce` | `true` (case-insensitive) = drift fails host startup; any other value = drift logs an error only. Since #16 the production baseline is the registry's published definition (CI-only channel); the submodule-pinned copy (`external/consultologist-agents/agents`, bundled into the build output) is the baseline only in local dev | warn-only | no |
+| `AgentAttestation__ManifestDirectory` | Directory holding the attested agent YAMLs and `output-contracts.json` (replaces the former `AgentAttestation__ManifestPath`) | `agents/` under the app base directory (populated at build from the `external/consultologist-agents` submodule) | no |
 
 Every output-contract catalog entry is attested: the deployed agent against its git
 manifest (`{agent-name}.yaml`, including the `text.format` block — type/name/strict
