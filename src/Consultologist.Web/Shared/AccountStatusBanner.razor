@@ -1,0 +1,51 @@
+@inject IAccountEndpointService AccountService
+
+<AuthorizeView>
+    <Authorized>
+        @if (message != null)
+        {
+            <div class="account-status-banner">
+                <FluentMessageBar Intent="MessageIntent.Warning" AllowDismiss="false">
+                    @message
+                </FluentMessageBar>
+            </div>
+        }
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthenticationStateTask == null)
+        {
+            return;
+        }
+
+        var authState = await AuthenticationStateTask;
+
+        if (authState.User.Identity?.IsAuthenticated != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var account = await AccountService.GetCurrentAccountAsync();
+            message = account.Status switch
+            {
+                "Active" => null,
+                "Disabled" => "This account has been disabled. Contact Consultologist support if you believe this is an error.",
+                _ => "Your account is awaiting activation. Protected workflows stay unavailable until it is activated."
+            };
+        }
+        catch
+        {
+            // The banner is advisory only — never surface its own failures.
+        }
+    }
+}
