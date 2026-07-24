@@ -105,6 +105,45 @@ harmless. The callback's redirect-back origin is captured at Start from the
 browser's `Origin` header validated against the CORS allow-list — never
 from a client-supplied value.
 
+## Email consult intake (`Email/*`, #158)
+
+Submit consults by email: a timer polls the dedicated shared mailbox via
+Microsoft Graph (the managed identity's `Mail.ReadWrite`/`Mail.Send` roles
+are restricted to that one mailbox by an Exchange application access policy
+— see `docs/ACCOUNTS.md`), matches the sender to a registered account,
+starts a normal consult job with the email body as the draft
+(`source: email`), and replies on completion with a no-PHI
+`/history/{jobId}` deep link.
+
+| Variable | Accepted values | Default | Required |
+|---|---|---|---|
+| `EmailIntake__MailboxAddress` | The intake mailbox (`consults@consultologist.ai`). **Unset = intake off**: the poller no-ops quietly (local dev, CI) | — | prod only |
+| `EmailIntake__PollSchedule` | NCRONTAB expression for the poll timer. Bound as `%EmailIntake__PollSchedule%`, so it must resolve in EVERY running environment — a missing value fails host startup, not just this function. Locally it lives in `local.settings.json` (gitignored): `0 */2 * * * *` | — | yes, everywhere |
+| `EmailIntake__AppBaseUrl` | SPA origin for reply deep links (`https://app.consultologist.ai`) — the server cannot derive it | — | prod only (replies skipped with a warning when unset) |
+| `EmailIntake__MaxMessagesPerPoll` | Per-tick message cap; excess waits for the next tick | `25` | no |
+| `EmailIntakeStorage__TableServiceUri` | Table endpoint for the `EmailIntakeProcessed` claim table; chains to `AccountStorage` when unset (the usual case) | falls through to `AccountStorage` | no |
+
+Posture, in brief:
+
+- **Authentication floor**: the first `Authentication-Results` header (our
+  Exchange hop's) must show `dmarc=pass`, or `spf=pass` **and** `dkim=pass`.
+- **Sender gate**: the From address must match **exactly one** account and
+  it must be `Active` — emails come from token claims and are not unique,
+  so ambiguity is a rejection, never a guess. (A partition scan today; an
+  `EmailIndex` table is the follow-up if account counts grow.)
+- **Silent rejection**: unmatched, inactive, unauthenticated, or empty
+  messages are moved to `Inbox/Rejected` and logged — no bounce, no
+  backscatter. Accepted messages move to `Inbox/Processed`.
+- **PHI at rest**: the Processed/Rejected folders hold referral emails —
+  set an Exchange retention policy (e.g. 30-day delete) on the mailbox;
+  the job record is the canonical copy of accepted drafts.
+- **Exactly-once**: a claim row (`EmailIntakeProcessed`, keyed by
+  internetMessageId) is written atomically BEFORE the job starts — a
+  message can never start two jobs; a crash between claim and start drops
+  that message with a warning (at-most-once by design for PHI jobs).
+- **Replies carry no PHI**: fixed subjects, boilerplate + deep link only;
+  the inbound subject is never echoed.
+
 ## Azure AI Foundry agent (`Agents/AgentSectionGenerator.cs`)
 
 | Variable | Accepted values | Default | Required |
