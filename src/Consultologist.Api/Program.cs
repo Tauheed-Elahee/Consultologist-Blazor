@@ -107,6 +107,7 @@ builder.Services.AddSingleton<IEmailSenderResolver, TableEmailSenderResolver>();
 builder.Services.AddSingleton<IEmailIntakeClaimStore, TableEmailIntakeClaimStore>();
 builder.Services.AddSingleton<EmailIntakeProcessor>();
 builder.Services.AddScoped<EmailIntakeFunctions>();
+builder.Services.AddScoped<SendEmailIntakeReplyActivity>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
 builder.Services.AddScoped<RunPromptNodeActivity>();
 

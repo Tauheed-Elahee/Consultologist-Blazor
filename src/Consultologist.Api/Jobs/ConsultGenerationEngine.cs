@@ -545,6 +545,8 @@ public sealed class ConsultGenerationOrchestrator
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus, finalError));
 
+        await SendEmailIntakeReplyAsync(context, input, finalStatus, logger);
+
         PublishStatus(finalStatus);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -573,7 +575,42 @@ public sealed class ConsultGenerationOrchestrator
                     cleanupEx.Message);
             }
 
+            await SendEmailIntakeReplyAsync(context, input, ConsultGenerationJobStatuses.Failed, logger);
+
             throw;
+        }
+    }
+
+    /// <summary>
+    /// #158: email-sourced jobs announce their terminal status by reply. The
+    /// gate reads only orchestration input (deterministic on replay); a reply
+    /// failure never fails a finalized job.
+    /// </summary>
+    private static async Task SendEmailIntakeReplyAsync(
+        TaskOrchestrationContext context,
+        ConsultGenerationOrchestrationInput input,
+        string finalStatus,
+        ILogger logger)
+    {
+        if (input.Source != ConsultGenerationJobSources.Email
+            || string.IsNullOrWhiteSpace(input.ReplyToAddress))
+        {
+            return;
+        }
+
+        try
+        {
+            await context.CallActivityAsync(
+                Email.SendEmailIntakeReplyActivity.Name,
+                new Email.EmailIntakeReplyInput(context.InstanceId, input.ReplyToAddress, finalStatus),
+                new TaskOptions(new TaskRetryOptions(new RetryPolicy(3, TimeSpan.FromSeconds(10), 2.0))));
+        }
+        catch (Exception replyEx)
+        {
+            logger.LogWarning(
+                replyEx,
+                "Email intake reply activity failed. JobId={JobId}",
+                context.InstanceId);
         }
     }
 
