@@ -1,11 +1,12 @@
 # Async Delivery: Scheduled Runs, Email Intake, Encrypted Documents
 
-**Status: part 2 (#158, email intake) implemented 2026-07-25 — see the
-decision record in §2. Parts 1 (#157) and 3 (#159) remain backlog design
-sketches.** Settled in the 2026-07-20 discussion and filed as a
-cross-linked arc: #157 (scheduled runs), #158 (email intake), #159
-(encrypted delivery — its former v6 blocker, #152, has since shipped).
-This doc is the arc's design record; the issues point here.
+**Status: parts 1 (#157, scheduled runs) and 2 (#158, email intake)
+implemented — see the decision records in §1 and §2. Part 3 (#159)
+remains a backlog design sketch.** Settled in the 2026-07-20 discussion
+and filed as a cross-linked arc: #157 (scheduled runs), #158 (email
+intake), #159 (encrypted delivery — its former v6 blocker, #152, has
+since shipped). This doc is the arc's design record; the issues point
+here.
 
 Composition: **email in → scheduled batch overnight → link (or encrypted
 document) back in the morning.** Each part also stands alone.
@@ -19,23 +20,34 @@ requirement — the client is optional after submission, and **History is the
 canonical result surface**. Everything below builds on that fact rather
 than adding queue infrastructure.
 
-## 1. Scheduled runs (#157)
+## 1. Scheduled runs (#157) — IMPLEMENTED 2026-07-25
 
 Submit now, run later (overnight), result waiting in History.
+Implementation decisions (settled 2026-07-25):
 
-- **Mechanism**: the orchestrator sleeps via a durable timer
-  (`CreateTimer`) until the scheduled time, then proceeds — native Durable
-  Functions.
-- **Surface**: `scheduledAt` on the job request; a "run overnight" option
-  in the Consults setup phase; a Scheduled state in History and the run
-  rail (a pending Setup row is already the honest rendering).
-- **Completion signal**: History always; an email notification composes
-  with part 2.
-- **Motivation**: batch economics (off-peak/batch agent tiers) and
-  rate-limit smoothing.
-- **Deliberate consideration**: a scheduled job keeps the draft (PHI) at
-  rest longer before processing — a retention-policy statement to make at
-  implementation, not a blocker.
+- **Mechanism**: `ScheduledAtUtc` on the job request (7-day horizon; past
+  values simply run immediately — clock-skew friendly). The orchestrator
+  sleeps on `context.CreateTimer` between entity Initialize and
+  MarkRunning, so the job is visible as **Scheduled** (new status between
+  Queued and Running) while sleeping; the guard uses
+  `context.CurrentUtcDateTime` for replay determinism.
+- **Surface**: a "Run overnight (~2:00 AM browser-local)" preset switch in
+  the Consults setup phase — no arbitrary datetime picker in v1. A
+  scheduled submit never enters the run phase (nothing to stream);
+  History shows the amber Scheduled badge plus "runs {local time}".
+- **Completion signal**: History always, plus part 2's reply machinery
+  reused — the completion-email gate is simply "reply address present":
+  email intake sets the sender, the HTTP endpoint sets the **account
+  email** exactly when the job is scheduled, immediate app jobs stay
+  silent. Requires the `EmailIntake__*` settings (skipped with a warning
+  otherwise).
+- **Not in v1**: cancellation of a Scheduled job (deferred — a wrong
+  schedule costs one harmless run; follow-up issue filed).
+- **Retention statement** (the deliberate consideration): a scheduled
+  draft rests in Durable orchestration state up to the 7-day horizon
+  before processing — the same storage account, encryption posture, and
+  access controls as running and completed jobs; scheduling extends
+  duration, not exposure surface.
 
 ## 2. Email intake (#158) — IMPLEMENTED 2026-07-25
 
