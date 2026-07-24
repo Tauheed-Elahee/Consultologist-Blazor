@@ -12,12 +12,14 @@ public sealed class EmailIntakeFunctions
         _processor = processor;
     }
 
-    // The schedule setting must resolve in every environment or the host fails
-    // to index the app; EmailIntake__MailboxAddress (unset → quiet no-op) is
-    // the on/off switch, not the schedule.
+    // Flat name by necessity: %…% binding expressions resolve literal config
+    // keys, and the environment provider normalizes double-underscore names to
+    // EmailIntake:PollSchedule — so a __ name can never resolve here. Unset →
+    // this one function fails indexing and is disabled (host unaffected);
+    // EmailIntake__MailboxAddress (unset → quiet no-op) is the real switch.
     [Function("EmailIntakePoll")]
     public Task RunAsync(
-        [TimerTrigger("%EmailIntake__PollSchedule%")] TimerInfo timer,
+        [TimerTrigger("%EmailIntakePollSchedule%")] TimerInfo timer,
         [DurableClient] DurableTaskClient client,
         FunctionContext context)
         => _processor.RunOnceAsync(client, context.CancellationToken);

@@ -118,7 +118,7 @@ starts a normal consult job with the email body as the draft
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
 | `EmailIntake__MailboxAddress` | The intake mailbox (`consults@consultologist.ai`). **Unset = intake off**: the poller no-ops quietly (local dev, CI) | — | prod only |
-| `EmailIntake__PollSchedule` | NCRONTAB expression for the poll timer. Bound as `%EmailIntake__PollSchedule%`, so it must resolve in EVERY running environment — a missing value fails host startup, not just this function. Locally it lives in `local.settings.json` (gitignored): `0 */2 * * * *` | — | yes, everywhere |
+| `EmailIntakePollSchedule` | NCRONTAB expression for the poll timer (`0 */2 * * * *`). **Deliberately flat-named**: `%…%` timer binding expressions resolve literal config keys, and the environment provider normalizes `__` names to `:` form, so a grouped name can never resolve there. When unset, only `EmailIntakePoll` fails indexing and is disabled — the rest of the host runs. Locally in `local.settings.json` (gitignored) | — | yes wherever the poller should run |
 | `EmailIntake__AppBaseUrl` | SPA origin for reply deep links (`https://app.consultologist.ai`) — the server cannot derive it | — | prod only (replies skipped with a warning when unset) |
 | `EmailIntake__MaxMessagesPerPoll` | Per-tick message cap; excess waits for the next tick | `25` | no |
 | `EmailIntakeStorage__TableServiceUri` | Table endpoint for the `EmailIntakeProcessed` claim table; chains to `AccountStorage` when unset (the usual case) | falls through to `AccountStorage` | no |
