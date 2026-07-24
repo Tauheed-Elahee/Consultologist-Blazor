@@ -64,7 +64,17 @@ public sealed class ConsultGenerationOrchestrator
                 nodes,
                 input.EffectiveInputHashVersion,
                 input.CatalogRef,
-                input.Source));
+                input.Source,
+                request.ScheduledAtUtc));
+
+        // #157: a scheduled job sleeps here — visible as Scheduled (entity state
+        // above) — then proceeds identically. CurrentUtcDateTime keeps the guard
+        // deterministic on replay; past times fall through and run immediately.
+        if (request.ScheduledAtUtc is { } scheduledAt && scheduledAt > context.CurrentUtcDateTime)
+        {
+            context.SetCustomStatus(new { status = ConsultGenerationJobStatuses.Scheduled });
+            await context.CreateTimer(scheduledAt.UtcDateTime, CancellationToken.None);
+        }
 
         await context.Entities.CallEntityAsync(entityId, nameof(ConsultGenerationJobEntity.MarkRunning));
 
@@ -582,9 +592,11 @@ public sealed class ConsultGenerationOrchestrator
     }
 
     /// <summary>
-    /// #158: email-sourced jobs announce their terminal status by reply. The
-    /// gate reads only orchestration input (deterministic on replay); a reply
-    /// failure never fails a finalized job.
+    /// #158/#157: jobs with a reply address announce their terminal status by
+    /// email — the starter's caller decides who gets one by setting the address
+    /// (email intake: the sender; scheduled app jobs: the account email;
+    /// immediate app jobs: none). The gate reads only orchestration input
+    /// (deterministic on replay); a reply failure never fails a finalized job.
     /// </summary>
     private static async Task SendEmailIntakeReplyAsync(
         TaskOrchestrationContext context,
@@ -592,8 +604,7 @@ public sealed class ConsultGenerationOrchestrator
         string finalStatus,
         ILogger logger)
     {
-        if (input.Source != ConsultGenerationJobSources.Email
-            || string.IsNullOrWhiteSpace(input.ReplyToAddress))
+        if (string.IsNullOrWhiteSpace(input.ReplyToAddress))
         {
             return;
         }

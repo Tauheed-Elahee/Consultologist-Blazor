@@ -99,6 +99,33 @@ public class ScheduledRunTests
         Assert.Equal(ConsultGenerationJobStatuses.Running, StateOf(entity).Status);
     }
 
+    private static Consultologist.Api.Auth.AppAccount CreateAccount(string? email) =>
+        new("user-1", "Test User", email, "Active",
+            new Consultologist.Api.Auth.AccountIdentity("entra-external-id", "iss", "sub", default, default),
+            Array.Empty<Consultologist.Api.Auth.AccountIdentity>());
+
+    [Fact]
+    public void ReplyAddressFor_ScheduledJob_UsesAccountEmail()
+    {
+        var request = new ConsultGenerationRequest("draft", ScheduledAtUtc: DateTimeOffset.UtcNow.AddHours(8));
+
+        Assert.Equal("doc@example.com", ConsultGenerationJobs.ReplyAddressFor(request, CreateAccount("doc@example.com")));
+    }
+
+    [Fact]
+    public void ReplyAddressFor_ImmediateJob_IsNull()
+    {
+        Assert.Null(ConsultGenerationJobs.ReplyAddressFor(new ConsultGenerationRequest("draft"), CreateAccount("doc@example.com")));
+    }
+
+    [Fact]
+    public void ReplyAddressFor_ScheduledJobWithoutAccountEmail_IsNull()
+    {
+        var request = new ConsultGenerationRequest("draft", ScheduledAtUtc: DateTimeOffset.UtcNow.AddHours(8));
+
+        Assert.Null(ConsultGenerationJobs.ReplyAddressFor(request, CreateAccount(null)));
+    }
+
     [Fact]
     public void IndexEntryAndResponse_CarryScheduledAtUtc()
     {

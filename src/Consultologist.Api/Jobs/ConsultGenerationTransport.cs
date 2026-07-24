@@ -149,7 +149,7 @@ public sealed class ConsultGenerationJobs
                 client,
                 request,
                 account.AppUserId,
-                new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+                new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App, ReplyAddressFor(request, account)),
                 cancellationToken);
 
             if (outcome.Error != null)
@@ -564,6 +564,14 @@ public sealed class ConsultGenerationJobs
 
         return null;
     }
+
+    // #157: scheduled jobs finish while the user is away, so they get the
+    // completion email at the account address; immediate app jobs stay silent
+    // (the live view is right there).
+    internal static string? ReplyAddressFor(ConsultGenerationRequest request, AppAccount account) =>
+        request.ScheduledAtUtc != null && !string.IsNullOrWhiteSpace(account.Email)
+            ? account.Email
+            : null;
 
     private static async Task<ConsultGenerationJobResponse?> GetJobResponseAsync(
         DurableTaskClient client,
