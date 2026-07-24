@@ -50,6 +50,12 @@ files: `src/Consultologist.Api/Email/*`, settings in
 - **Disposition**: accepted → `Inbox/Processed`, everything else →
   `Inbox/Rejected` (debuggable v1), with an Exchange retention policy
   expected on the mailbox — the folders hold PHI at rest.
+- **Authentication floor** (corrected after the first production e2e):
+  intra-tenant mail arrives via authenticated submission with NO
+  SPF/DKIM/DMARC stamps, so the floor accepts
+  `X-MS-Exchange-Organization-AuthAs: Internal` (EOP strips that header
+  family from external mail — unforgeable) alongside the external
+  `dmarc=pass` / `spf=pass`+`dkim=pass` paths.
 - **Sender matching**: normalized equality against `AppUsers.Email`
   requiring exactly one match with Active status; zero, many, or
   non-Active → silent ignore (logged; no bounce — no backscatter).

@@ -11,10 +11,11 @@ namespace Consultologist.Api.Email;
 /// </summary>
 internal static partial class EmailAuthenticationResults
 {
-    internal sealed record Verdict(string? Dmarc, string? Spf, string? Dkim)
+    internal sealed record Verdict(string? Dmarc, string? Spf, string? Dkim, bool AuthenticatedInternal = false)
     {
         public bool Passes =>
-            string.Equals(Dmarc, "pass", StringComparison.OrdinalIgnoreCase)
+            AuthenticatedInternal
+            || string.Equals(Dmarc, "pass", StringComparison.OrdinalIgnoreCase)
             || (string.Equals(Spf, "pass", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(Dkim, "pass", StringComparison.OrdinalIgnoreCase));
     }
@@ -24,12 +25,22 @@ internal static partial class EmailAuthenticationResults
 
     internal static Verdict Evaluate(IEnumerable<GraphInternetMessageHeader> headers)
     {
-        var header = headers.FirstOrDefault(h =>
+        var headerList = headers as IReadOnlyList<GraphInternetMessageHeader> ?? headers.ToList();
+
+        // Intra-tenant mail never gets SPF/DKIM/DMARC stamps — it arrives via
+        // authenticated submission, marked X-MS-Exchange-Organization-AuthAs:
+        // Internal. Trustworthy because EOP strips the Organization-* header
+        // family from all external inbound mail, so outsiders cannot inject it.
+        var authAs = headerList.FirstOrDefault(h =>
+            string.Equals(h.Name, "X-MS-Exchange-Organization-AuthAs", StringComparison.OrdinalIgnoreCase));
+        var authenticatedInternal = string.Equals(authAs?.Value.Trim(), "Internal", StringComparison.OrdinalIgnoreCase);
+
+        var header = headerList.FirstOrDefault(h =>
             string.Equals(h.Name, "Authentication-Results", StringComparison.OrdinalIgnoreCase));
 
         return header == null
-            ? new Verdict(null, null, null)
-            : Parse(header.Value);
+            ? new Verdict(null, null, null, authenticatedInternal)
+            : Parse(header.Value) with { AuthenticatedInternal = authenticatedInternal };
     }
 
     internal static Verdict Parse(string headerValue)

@@ -90,4 +90,53 @@ public class EmailAuthenticationResultsTests
         Assert.Null(verdict.Dmarc);
         Assert.False(verdict.Passes);
     }
+
+    // Intra-tenant mail: no SPF/DKIM/DMARC stamps at all, but Exchange marks
+    // the authenticated submission — and EOP strips this header family from
+    // external mail, so it cannot be forged from outside.
+    [Fact]
+    public void Evaluate_AuthenticatedInternal_PassesWithoutAuthenticationResults()
+    {
+        var headers = new[]
+        {
+            new GraphInternetMessageHeader("X-MS-Exchange-Organization-AuthAs", "Internal")
+        };
+
+        var verdict = EmailAuthenticationResults.Evaluate(headers);
+
+        Assert.True(verdict.AuthenticatedInternal);
+        Assert.True(verdict.Passes);
+    }
+
+    [Fact]
+    public void Evaluate_AuthenticatedInternal_PassesDespiteFailingClauses()
+    {
+        // Internal mail sometimes carries an Authentication-Results header with
+        // none/fail clauses; AuthAs Internal outranks them.
+        var headers = new[]
+        {
+            new GraphInternetMessageHeader("Authentication-Results", "spf=none; dkim=none; dmarc=none"),
+            new GraphInternetMessageHeader("x-ms-exchange-organization-authas", "Internal")
+        };
+
+        Assert.True(EmailAuthenticationResults.Evaluate(headers).Passes);
+    }
+
+    [Theory]
+    [InlineData("Anonymous")]
+    [InlineData("External")]
+    [InlineData("")]
+    public void Evaluate_NonInternalAuthAs_DoesNotPass(string authAs)
+    {
+        var headers = new[]
+        {
+            new GraphInternetMessageHeader("X-MS-Exchange-Organization-AuthAs", authAs),
+            new GraphInternetMessageHeader("Authentication-Results", "spf=none; dkim=none; dmarc=none")
+        };
+
+        var verdict = EmailAuthenticationResults.Evaluate(headers);
+
+        Assert.False(verdict.AuthenticatedInternal);
+        Assert.False(verdict.Passes);
+    }
 }
