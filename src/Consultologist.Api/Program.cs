@@ -100,6 +100,7 @@ builder.Services.AddScoped<IAccountAuthorizer, AccountAuthorizer>();
 builder.Services.AddScoped<Account>();
 builder.Services.AddScoped<AccountLinkedIn>();
 builder.Services.AddScoped<Diagnostics>();
+builder.Services.AddSingleton<IConsultGenerationJobStarter, ConsultGenerationJobStarter>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
 builder.Services.AddScoped<RunPromptNodeActivity>();
 
