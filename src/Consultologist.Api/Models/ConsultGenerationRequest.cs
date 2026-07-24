@@ -4,7 +4,10 @@ namespace Consultologist.Api.Models;
 
 public record ConsultGenerationRequest(
     string ConsultDraft,
-    string? WorkflowPackage = null);
+    string? WorkflowPackage = null,
+    // #157: run later — the orchestrator sleeps on a durable timer until
+    // this time. Null = run immediately; past values also run immediately.
+    DateTimeOffset? ScheduledAtUtc = null);
 
 public record ConsultGenerationJobStartResponse(
     string JobId,
@@ -46,7 +49,9 @@ public record ConsultGenerationJobResponse(
     // (Completed jobs only; hash version 2 covers exactly these bytes).
     string? AssembledDocument = null,
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
-    string? Source = null);
+    string? Source = null,
+    // #157: when a scheduled job was/is due to start (null = immediate job).
+    DateTimeOffset? ScheduledAtUtc = null);
 
 /// <summary>
 /// The identity and display label of one per-item chain step, snapshotted from the

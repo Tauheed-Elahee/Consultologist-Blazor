@@ -22,6 +22,7 @@ namespace Consultologist.Api.Jobs;
 public sealed class ConsultGenerationJobs
 {
     private const string LastEventIdHeaderName = "Last-Event-ID";
+    private const int MaxScheduleHorizonDays = 7;
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
@@ -551,6 +552,14 @@ public sealed class ConsultGenerationJobs
         if (string.IsNullOrWhiteSpace(request.ConsultDraft))
         {
             return "ConsultDraft is required.";
+        }
+
+        // Past times are NOT errors (clock skew) — the orchestrator's timer
+        // guard just runs them immediately. Only the horizon is enforced.
+        if (request.ScheduledAtUtc is { } scheduledAt
+            && scheduledAt > DateTimeOffset.UtcNow.AddDays(MaxScheduleHorizonDays))
+        {
+            return $"ScheduledAtUtc is more than {MaxScheduleHorizonDays} days out.";
         }
 
         return null;
