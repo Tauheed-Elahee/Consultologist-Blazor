@@ -61,6 +61,7 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.Nodes ??= input.Nodes?.ToList();
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
         State.CatalogRef ??= input.CatalogRef;
+        State.Source ??= input.Source;
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -269,7 +270,12 @@ public sealed record ConsultGenerationOrchestrationInput(
     // keyed by collection id. Non-null selects the v6 path; Items then carries
     // the deliverable's BLOCKS (the result aggregator's expansion) for the
     // entity's section model, while the fan reads these sets.
-    IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? Collections = null);
+    IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? Collections = null,
+    // #158: how the job was submitted ("app" | "email"; null = pre-#158 record)
+    // and, for email jobs, where the completion reply goes. Append-only for
+    // Durable payload compatibility.
+    string? Source = null,
+    string? ReplyToAddress = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -280,7 +286,8 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<ConsultItemStepDescriptor>? ItemSteps = null,
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     int EffectiveInputHashVersion = 2,
-    string? CatalogRef = null);
+    string? CatalogRef = null,
+    string? Source = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -364,6 +371,9 @@ public sealed class ConsultGenerationJobState
     // (stored text, the same species as sections' GeneratedText).
     public string? AssembledDocument { get; set; }
 
+    // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
+    public string? Source { get; set; }
+
     public static ConsultGenerationJobState Create(
         string jobId,
         string appUserId,
@@ -398,7 +408,8 @@ public sealed class ConsultGenerationJobState
             CompletedAtUtc,
             TotalBlockCount,
             Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Completed),
-            Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Failed));
+            Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Failed),
+            Source);
     }
 
     public ConsultNodeOutputState GetOrAddNodeOutput(string nodeId, string label)
@@ -487,6 +498,7 @@ public sealed class ConsultGenerationJobState
             History: History.Count > 0 ? History.AsReadOnly() : null,
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
+            Source: Source,
             ItemSteps: ItemSteps,
             Nodes: Nodes,
             NodeOutputs: NodeOutputs?.ToDictionary(

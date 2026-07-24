@@ -1,8 +1,10 @@
 # Async Delivery: Scheduled Runs, Email Intake, Encrypted Documents
 
-**Status: backlog design sketch, not scheduled.** Settled in the 2026-07-20
-discussion and filed as a cross-linked arc: #157 (scheduled runs), #158
-(email intake), #159 (encrypted delivery — blocked on format v6, #152).
+**Status: part 2 (#158, email intake) implemented 2026-07-25 — see the
+decision record in §2. Parts 1 (#157) and 3 (#159) remain backlog design
+sketches.** Settled in the 2026-07-20 discussion and filed as a
+cross-linked arc: #157 (scheduled runs), #158 (email intake), #159
+(encrypted delivery — its former v6 blocker, #152, has since shipped).
 This doc is the arc's design record; the issues point here.
 
 Composition: **email in → scheduled batch overnight → link (or encrypted
@@ -35,10 +37,31 @@ Submit now, run later (overnight), result waiting in History.
   rest longer before processing — a retention-policy statement to make at
   implementation, not a blocker.
 
-## 2. Email intake (#158)
+## 2. Email intake (#158) — IMPLEMENTED 2026-07-25
 
 Submit consults by email; results announced by reply; runs recorded in
-History like any other.
+History like any other. Implementation decisions (settled 2026-07-25;
+files: `src/Consultologist.Api/Email/*`, settings in
+`docs/CONFIGURATION.md` "Email consult intake"):
+
+- **Polling, not webhooks**: a TimerTrigger (2-minute NCRONTAB) lists
+  unread mail — zero public surface, no subscription lifecycle; the
+  processor is webhook-reusable if latency ever matters.
+- **Disposition**: accepted → `Inbox/Processed`, everything else →
+  `Inbox/Rejected` (debuggable v1), with an Exchange retention policy
+  expected on the mailbox — the folders hold PHI at rest.
+- **Sender matching**: normalized equality against `AppUsers.Email`
+  requiring exactly one match with Active status; zero, many, or
+  non-Active → silent ignore (logged; no bounce — no backscatter).
+- **Exactly-once**: an `EmailIntakeProcessed` claim row (keyed by
+  internetMessageId) is written atomically BEFORE the job starts —
+  at-most-once by design: a crash in the claim→start window drops the
+  message visibly (stale-claim repair + warning) rather than ever
+  running a PHI job twice.
+- **Replies**: sent for Completed AND Failed from the orchestrator
+  (activity after FinalizeJob); always a fresh message, never a Graph
+  /reply (which would quote the PHI-bearing original); fixed subjects;
+  body = boilerplate + `/history/{jobId}` deep link.
 
 - **Mechanism**: a dedicated mailbox (e.g. `consults@…`) read via
   Microsoft Graph — the Function App holds `Mail.Read`/`Mail.Send` scoped

@@ -8,6 +8,7 @@
 @attribute [Authorize]
 
 @page "/history"
+@page "/history/{JobId}"
 
 <PageTitle>History</PageTitle>
 
@@ -47,13 +48,17 @@
                     <div class="job-history-list">
                         @foreach (var job in jobs)
                         {
-                            <details class="job-item">
+                            <details class="job-item" id="job-@job.JobId" open="@(job.JobId == JobId)">
                                 <summary class="job-item__summary" @onclick="async () => await EnsureDetailsLoadedAsync(job.JobId)">
                                     <span class="job-item__chevron" aria-hidden="true">&#x203A;</span>
                                     <div class="job-history-item__status">
                                         <span class="job-status-badge job-status-badge--@job.Status.ToLowerInvariant()">
                                             @job.Status
                                         </span>
+                                        @if (job.Source == "email")
+                                        {
+                                            <span class="job-source-badge" title="Submitted by email">email</span>
+                                        }
                                     </div>
                                     <div class="job-history-item__meta">
                                         <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
@@ -100,6 +105,12 @@
                                             <span class="provenance-chip" title="Job record schema version">
                                                 schema v@(detail.SchemaVersion?.ToString() ?? "—")
                                             </span>
+                                            @if (detail.Source == "email")
+                                            {
+                                                <span class="provenance-chip" title="This job was submitted by email intake">
+                                                    source: email
+                                                </span>
+                                            }
                                         </div>
 
                                         <details class="job-detail-section">
@@ -255,10 +266,54 @@
     // (the job record stores contract → version only; names are catalog metadata).
     private Dictionary<string, string> _agentNames = new(StringComparer.Ordinal);
 
+    [Parameter]
+    public string? JobId { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         await LoadJobsAsync();
+        await ApplyDeepLinkAsync();
         await LoadAgentNamesAsync();
+    }
+
+    /// <summary>
+    /// /history/{jobId} (the email reply's deep link, #158): surface that job
+    /// first, expanded, with its detail eager-loaded — synthesizing a summary
+    /// row from the detail when the job is outside the loaded page.
+    /// </summary>
+    private async Task ApplyDeepLinkAsync()
+    {
+        if (string.IsNullOrWhiteSpace(JobId))
+        {
+            return;
+        }
+
+        var existing = jobs.FindIndex(job => job.JobId == JobId);
+
+        if (existing > 0)
+        {
+            var job = jobs[existing];
+            jobs.RemoveAt(existing);
+            jobs.Insert(0, job);
+        }
+
+        await EnsureDetailsLoadedAsync(JobId);
+
+        if (existing < 0
+            && _jobDetails.TryGetValue(JobId, out var detail)
+            && detail != null)
+        {
+            jobs.Insert(0, new AccountJobSummaryResponse(
+                detail.JobId,
+                detail.Status,
+                detail.CreatedAtUtc ?? default,
+                detail.StartedAtUtc,
+                detail.CompletedAtUtc,
+                detail.TotalBlockCount,
+                detail.CompletedBlockCount,
+                detail.FailedBlockCount,
+                detail.Source));
+        }
     }
 
     private async Task LoadAgentNamesAsync()
