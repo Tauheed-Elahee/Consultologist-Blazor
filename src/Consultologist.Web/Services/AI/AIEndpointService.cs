@@ -307,7 +307,9 @@ public record ConsultGenerationJobResponse(
     IReadOnlyDictionary<string, ConsultGenerationNodeStatus>? NodeOutputs = null,
     // v6: the result aggregator's rendered output — the deliverable itself
     // (Completed jobs only; workflowOutputHash v2 is its digest).
-    string? AssembledDocument = null);
+    string? AssembledDocument = null,
+    // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
+    string? Source = null);
 
 /// <summary>
 /// One node of the job's workflow DAG (v5: one kind, ForEach as multiplicity).
