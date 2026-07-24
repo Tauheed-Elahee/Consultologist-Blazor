@@ -62,6 +62,10 @@
                                     </div>
                                     <div class="job-history-item__meta">
                                         <span class="muted-text">@FormatDate(job.CreatedAtUtc)</span>
+                                        @if (job.Status == "Scheduled" && job.ScheduledAtUtc is { } scheduledAt)
+                                        {
+                                            <span class="muted-text">runs @scheduledAt.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                        }
                                         <span class="muted-text">@job.CompletedBlockCount / @job.TotalBlockCount sections</span>
                                         @if (job.FailedBlockCount > 0)
                                         {

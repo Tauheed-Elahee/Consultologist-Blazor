@@ -13,7 +13,8 @@ public interface IAIEndpointService
 {
     Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        string? workflowPackage = null);
+        string? workflowPackage = null,
+        DateTimeOffset? scheduledAtUtc = null);
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
@@ -50,7 +51,8 @@ public class AIEndpointService : IAIEndpointService
 
     public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         string consultDraft,
-        string? workflowPackage = null)
+        string? workflowPackage = null,
+        DateTimeOffset? scheduledAtUtc = null)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -64,7 +66,7 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
             }
 
-            var request = new ConsultGenerationRequest(consultDraft, workflowPackage);
+            var request = new ConsultGenerationRequest(consultDraft, workflowPackage, scheduledAtUtc);
 
             _logger.LogInformation(
                 "Starting consult generation job at {Url}. ConsultDraftLength={ConsultDraftLength}",
@@ -270,7 +272,10 @@ public class AIEndpointService : IAIEndpointService
     }
 }
 
-public record ConsultGenerationRequest(string ConsultDraft, string? WorkflowPackage = null);
+public record ConsultGenerationRequest(
+    string ConsultDraft,
+    string? WorkflowPackage = null,
+    DateTimeOffset? ScheduledAtUtc = null);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
@@ -309,7 +314,9 @@ public record ConsultGenerationJobResponse(
     // (Completed jobs only; workflowOutputHash v2 is its digest).
     string? AssembledDocument = null,
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
-    string? Source = null);
+    string? Source = null,
+    // #157: when a scheduled job was/is due to start (null = immediate job).
+    DateTimeOffset? ScheduledAtUtc = null);
 
 /// <summary>
 /// One node of the job's workflow DAG (v5: one kind, ForEach as multiplicity).

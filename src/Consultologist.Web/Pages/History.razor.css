@@ -105,6 +105,11 @@
 	color: var(--consultologist-accent);
 }
 
+.job-status-badge--scheduled {
+	background: rgba(161, 92, 0, 0.12);
+	color: #a15c00;
+}
+
 .job-status-badge--queued {
 	background: rgba(93, 106, 124, 0.12);
 	color: var(--consultologist-text-muted);
