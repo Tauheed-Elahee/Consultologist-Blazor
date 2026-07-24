@@ -125,8 +125,12 @@ starts a normal consult job with the email body as the draft
 
 Posture, in brief:
 
-- **Authentication floor**: the first `Authentication-Results` header (our
-  Exchange hop's) must show `dmarc=pass`, or `spf=pass` **and** `dkim=pass`.
+- **Authentication floor**: authenticated intra-tenant submission
+  (`X-MS-Exchange-Organization-AuthAs: Internal` — unforgeable from outside;
+  EOP strips that header family from external mail, and intra-tenant mail
+  carries no SPF/DKIM/DMARC stamps at all), OR the first
+  `Authentication-Results` header (our Exchange hop's) showing `dmarc=pass`
+  or `spf=pass` **and** `dkim=pass`.
 - **Sender gate**: the From address must match **exactly one** account and
   it must be `Active` — emails come from token claims and are not unique,
   so ambiguity is a rejection, never a guess. (A partition scan today; an
