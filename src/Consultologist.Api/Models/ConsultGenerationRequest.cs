@@ -44,7 +44,9 @@ public record ConsultGenerationJobResponse(
     int? WorkflowOutputHashVersion = null,
     // v6: the result aggregator's rendered output — the deliverable itself
     // (Completed jobs only; hash version 2 covers exactly these bytes).
-    string? AssembledDocument = null);
+    string? AssembledDocument = null,
+    // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
+    string? Source = null);
 
 /// <summary>
 /// The identity and display label of one per-item chain step, snapshotted from the

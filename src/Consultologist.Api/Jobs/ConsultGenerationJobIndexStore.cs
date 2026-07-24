@@ -105,7 +105,8 @@ internal sealed class TableConsultGenerationJobIndexStore : IConsultGenerationJo
             CompletedAtUtc = entry.CompletedAtUtc,
             TotalBlockCount = entry.TotalBlockCount,
             CompletedBlockCount = entry.CompletedBlockCount,
-            FailedBlockCount = entry.FailedBlockCount
+            FailedBlockCount = entry.FailedBlockCount,
+            Source = entry.Source
         };
     }
 
@@ -120,7 +121,8 @@ internal sealed class TableConsultGenerationJobIndexStore : IConsultGenerationJo
             entity.CompletedAtUtc,
             entity.TotalBlockCount,
             entity.CompletedBlockCount,
-            entity.FailedBlockCount);
+            entity.FailedBlockCount,
+            entity.Source);
     }
 
     private static string FormatRowKey(DateTimeOffset createdAtUtc, string jobId)
@@ -167,7 +169,8 @@ public sealed record ConsultGenerationJobIndexEntry(
     DateTimeOffset? CompletedAtUtc,
     int TotalBlockCount,
     int CompletedBlockCount,
-    int FailedBlockCount);
+    int FailedBlockCount,
+    string? Source = null);
 
 internal sealed class ConsultGenerationJobIndexEntity : ITableEntity
 {
@@ -183,4 +186,5 @@ internal sealed class ConsultGenerationJobIndexEntity : ITableEntity
     public int TotalBlockCount { get; set; }
     public int CompletedBlockCount { get; set; }
     public int FailedBlockCount { get; set; }
+    public string? Source { get; set; }
 }

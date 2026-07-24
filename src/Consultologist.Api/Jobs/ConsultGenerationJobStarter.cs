@@ -195,7 +195,8 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 resolvedPackageRef,
                 effectiveInputHash,
                 sectionSteps,
-                nodes));
+                nodes,
+                Source: origin.Source));
 
         var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
             nameof(ConsultGenerationOrchestrator),
@@ -210,7 +211,9 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 items,
                 dataScalars,
                 CatalogRef: _catalog.ResolvedRef,
-                Collections: collectionSets),
+                Collections: collectionSets,
+                Source: origin.Source,
+                ReplyToAddress: origin.ReplyToAddress),
             new StartOrchestrationOptions { InstanceId = jobId },
             cancellationToken);
 

@@ -114,7 +114,8 @@ public sealed class Account
                     j.CompletedAtUtc,
                     j.TotalBlockCount,
                     j.CompletedBlockCount,
-                    j.FailedBlockCount)).ToArray(),
+                    j.FailedBlockCount,
+                    j.Source)).ToArray(),
                 nextToken),
             cancellationToken);
 
@@ -352,7 +353,8 @@ public sealed record AccountJobSummaryResponse(
     DateTimeOffset? CompletedAtUtc,
     int TotalBlockCount,
     int CompletedBlockCount,
-    int FailedBlockCount);
+    int FailedBlockCount,
+    string? Source = null);
 
 public sealed record AccountJobsResponse(
     IReadOnlyList<AccountJobSummaryResponse> Jobs,
