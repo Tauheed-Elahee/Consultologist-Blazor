@@ -93,7 +93,15 @@
                             <FluentMessageBar Intent="MessageIntent.Error">@aiRequestError</FluentMessageBar>
                         }
 
+                        @if (!string.IsNullOrEmpty(scheduleConfirmation))
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Success">@scheduleConfirmation</FluentMessageBar>
+                        }
+
                         <div class="action-row">
+                            <FluentSwitch @bind-Value="runOvernight"
+                                          Label="Run overnight (starts ~2:00 AM)"
+                                          Disabled="@(isAiRequestLoading || isSchedulingRequest)" />
                             @if (totalBlockCount > 0)
                             {
                                 <FluentButton Appearance="Appearance.Neutral" @onclick="BackToRun">
@@ -102,8 +110,8 @@
                             }
                             <FluentButton Appearance="Appearance.Accent"
                                           @onclick="CreateConsultAsync"
-                                          Disabled="@(isBlocksLoading || isAiRequestLoading || string.IsNullOrWhiteSpace(consultDraft) || packageBlocks.Count == 0)">
-                                Create consult
+                                          Disabled="@(isBlocksLoading || isAiRequestLoading || isSchedulingRequest || string.IsNullOrWhiteSpace(consultDraft) || packageBlocks.Count == 0)">
+                                @(runOvernight ? "Schedule consult" : "Create consult")
                             </FluentButton>
                         </div>
                     </div>
@@ -363,6 +371,11 @@
   private string? blocksLoadError;
   private bool isAiRequestLoading;
   private string? aiRequestError;
+
+  // #157: "run overnight" preset — next 2:00 AM browser-local, sent as UTC.
+  private bool runOvernight;
+  private bool isSchedulingRequest;
+  private string? scheduleConfirmation;
   private string? aiProgressNotice;
   private int completedBlockCount;
   private int totalBlockCount;
@@ -452,6 +465,18 @@
     }
   }
 
+  private static DateTimeOffset NextOvernightRunUtc()
+  {
+    var now = DateTime.Now;
+    var next = now.Date.AddHours(2);
+    if (now >= next)
+    {
+      next = next.AddDays(1);
+    }
+
+    return new DateTimeOffset(next).ToUniversalTime();
+  }
+
   private async Task CreateConsultAsync()
   {
     editingDraft = false;
@@ -461,6 +486,7 @@
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
+    scheduleConfirmation = null;
     generatedBlocks = new();
     failedBlockErrors = new();
     completedBlockCount = 0;
@@ -478,6 +504,32 @@
     if (packageBlocks.Count == 0)
     {
       aiRequestError = "No section standards are available.";
+      return;
+    }
+
+    // #157: a scheduled submit never enters the run phase — the job sleeps
+    // server-side and History (plus the completion email) is its surface.
+    if (runOvernight)
+    {
+      try
+      {
+        isSchedulingRequest = true;
+        var scheduledAtUtc = NextOvernightRunUtc();
+        var job = await AIService.StartConsultGenerationJobAsync(consultDraft, workflowPackageRef, scheduledAtUtc);
+        scheduleConfirmation =
+          $"Consult scheduled for {scheduledAtUtc.ToLocalTime():MMM d, h:mm tt} — it will appear in History, and you'll receive an email when it's ready.";
+        runOvernight = false;
+        consultDraft = string.Empty;
+      }
+      catch (Exception ex)
+      {
+        aiRequestError = $"Error scheduling consult: {ex.Message}";
+      }
+      finally
+      {
+        isSchedulingRequest = false;
+      }
+
       return;
     }
 

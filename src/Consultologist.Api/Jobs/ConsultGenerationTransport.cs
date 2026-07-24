@@ -22,6 +22,7 @@ namespace Consultologist.Api.Jobs;
 public sealed class ConsultGenerationJobs
 {
     private const string LastEventIdHeaderName = "Last-Event-ID";
+    private const int MaxScheduleHorizonDays = 7;
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
@@ -148,7 +149,7 @@ public sealed class ConsultGenerationJobs
                 client,
                 request,
                 account.AppUserId,
-                new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+                new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App, ReplyAddressFor(request, account)),
                 cancellationToken);
 
             if (outcome.Error != null)
@@ -553,8 +554,24 @@ public sealed class ConsultGenerationJobs
             return "ConsultDraft is required.";
         }
 
+        // Past times are NOT errors (clock skew) — the orchestrator's timer
+        // guard just runs them immediately. Only the horizon is enforced.
+        if (request.ScheduledAtUtc is { } scheduledAt
+            && scheduledAt > DateTimeOffset.UtcNow.AddDays(MaxScheduleHorizonDays))
+        {
+            return $"ScheduledAtUtc is more than {MaxScheduleHorizonDays} days out.";
+        }
+
         return null;
     }
+
+    // #157: scheduled jobs finish while the user is away, so they get the
+    // completion email at the account address; immediate app jobs stay silent
+    // (the live view is right there).
+    internal static string? ReplyAddressFor(ConsultGenerationRequest request, AppAccount account) =>
+        request.ScheduledAtUtc != null && !string.IsNullOrWhiteSpace(account.Email)
+            ? account.Email
+            : null;
 
     private static async Task<ConsultGenerationJobResponse?> GetJobResponseAsync(
         DurableTaskClient client,

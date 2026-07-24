@@ -196,7 +196,8 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 effectiveInputHash,
                 sectionSteps,
                 nodes,
-                Source: origin.Source));
+                Source: origin.Source,
+                ScheduledAtUtc: request.ScheduledAtUtc));
 
         var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
             nameof(ConsultGenerationOrchestrator),

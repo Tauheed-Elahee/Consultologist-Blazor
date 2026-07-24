@@ -62,6 +62,16 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.EffectiveInputHashVersion ??= input.EffectiveInputHashVersion;
         State.CatalogRef ??= input.CatalogRef;
         State.Source ??= input.Source;
+        State.ScheduledAtUtc ??= input.ScheduledAtUtc;
+
+        // #157: a future schedule shows as Scheduled until MarkRunning; entities
+        // run exactly once per signal, so the wall clock is safe here.
+        if (State.Status == ConsultGenerationJobStatuses.Queued
+            && State.ScheduledAtUtc is { } scheduledAt
+            && scheduledAt > DateTimeOffset.UtcNow)
+        {
+            State.Status = ConsultGenerationJobStatuses.Scheduled;
+        }
 
         await _indexStore.UpsertAsync(State.ToIndexEntry(), CancellationToken.None);
     }
@@ -287,7 +297,8 @@ public sealed record ConsultGenerationJobInitialize(
     IReadOnlyList<ConsultNodeDescriptor>? Nodes = null,
     int EffectiveInputHashVersion = 2,
     string? CatalogRef = null,
-    string? Source = null);
+    string? Source = null,
+    DateTimeOffset? ScheduledAtUtc = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -374,6 +385,9 @@ public sealed class ConsultGenerationJobState
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
     public string? Source { get; set; }
 
+    // #157: when a scheduled job was/is due to start (null = immediate job).
+    public DateTimeOffset? ScheduledAtUtc { get; set; }
+
     public static ConsultGenerationJobState Create(
         string jobId,
         string appUserId,
@@ -409,7 +423,8 @@ public sealed class ConsultGenerationJobState
             TotalBlockCount,
             Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Completed),
             Blocks.Values.Count(b => b.Status == ConsultGenerationBlockStatuses.Failed),
-            Source);
+            Source,
+            ScheduledAtUtc);
     }
 
     public ConsultNodeOutputState GetOrAddNodeOutput(string nodeId, string label)
@@ -499,6 +514,7 @@ public sealed class ConsultGenerationJobState
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
             Source: Source,
+            ScheduledAtUtc: ScheduledAtUtc,
             ItemSteps: ItemSteps,
             Nodes: Nodes,
             NodeOutputs: NodeOutputs?.ToDictionary(
@@ -578,6 +594,9 @@ public static class ConsultGenerationNodeStatuses
 public static class ConsultGenerationJobStatuses
 {
     public const string Queued = "Queued";
+    // #157: initialized with a future ScheduledAtUtc; the orchestrator sleeps
+    // on a durable timer, then MarkRunning flips it to Running.
+    public const string Scheduled = "Scheduled";
     public const string Running = "Running";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
