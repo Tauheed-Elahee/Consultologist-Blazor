@@ -80,6 +80,53 @@ public sealed class AccountEndpointService : IAccountEndpointService
         return startResponse.AuthorizationUrl;
     }
 
+    public async Task SetDeliveryPasswordAsync(string password)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, GetAccountBaseUrl() + "/DeliveryPassword")
+        {
+            Content = JsonContent.Create(new SaveDeliveryPasswordRequest(password))
+        };
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            // The 400 body carries the validation message (e.g. length) —
+            // surface it; the password itself is never logged.
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Delivery password save failed with status {StatusCode}", response.StatusCode);
+            throw new HttpRequestException(ExtractError(error) ?? $"Delivery password save failed: {response.StatusCode}");
+        }
+    }
+
+    public async Task ClearDeliveryPasswordAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Delete, GetAccountBaseUrl() + "/DeliveryPassword");
+        await AddAuthorizationAsync(request);
+
+        using var response = await _httpClient.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Delivery password clear failed with status {StatusCode}", response.StatusCode);
+            throw new HttpRequestException($"Delivery password clear failed: {response.StatusCode}");
+        }
+    }
+
+    private static string? ExtractError(string body)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            return document.RootElement.TryGetProperty("error", out var error) ? error.GetString() : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
     public async Task<AccountSettingResponse?> GetSettingAsync(string key)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, GetSettingUrl(key));
