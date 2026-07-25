@@ -555,7 +555,14 @@ public sealed class ConsultGenerationOrchestrator
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus, finalError));
 
-        await SendEmailIntakeReplyAsync(context, input, finalStatus, logger);
+        // #159: the completed v6 document rides into the reply activity so it
+        // can be attached as an encrypted PDF when the account has a delivery
+        // password. Sourced from replayed activity outputs — deterministic.
+        var assembledDocument = v6 && outputs.TryGetValue(resultNodeId, out var resultOutput)
+            ? resultOutput.RawOutput
+            : null;
+
+        await SendEmailIntakeReplyAsync(context, input, finalStatus, logger, assembledDocument);
 
         PublishStatus(finalStatus);
         }
@@ -585,7 +592,7 @@ public sealed class ConsultGenerationOrchestrator
                     cleanupEx.Message);
             }
 
-            await SendEmailIntakeReplyAsync(context, input, ConsultGenerationJobStatuses.Failed, logger);
+            await SendEmailIntakeReplyAsync(context, input, ConsultGenerationJobStatuses.Failed, logger, assembledDocument: null);
 
             throw;
         }
@@ -602,7 +609,8 @@ public sealed class ConsultGenerationOrchestrator
         TaskOrchestrationContext context,
         ConsultGenerationOrchestrationInput input,
         string finalStatus,
-        ILogger logger)
+        ILogger logger,
+        string? assembledDocument)
     {
         if (string.IsNullOrWhiteSpace(input.ReplyToAddress))
         {
@@ -613,7 +621,12 @@ public sealed class ConsultGenerationOrchestrator
         {
             await context.CallActivityAsync(
                 Email.SendEmailIntakeReplyActivity.Name,
-                new Email.EmailIntakeReplyInput(context.InstanceId, input.ReplyToAddress, finalStatus),
+                new Email.EmailIntakeReplyInput(
+                    context.InstanceId,
+                    input.ReplyToAddress,
+                    finalStatus,
+                    input.AppUserId,
+                    assembledDocument),
                 new TaskOptions(new TaskRetryOptions(new RetryPolicy(3, TimeSpan.FromSeconds(10), 2.0))));
         }
         catch (Exception replyEx)

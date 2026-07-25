@@ -102,6 +102,51 @@
                     </div>
                 </div>
             </section>
+
+            <section class="content-card">
+                <div class="form-stack">
+                    <h2 class="panel-title">
+                        Encrypted document delivery
+                    </h2>
+
+                    <p class="panel-description">
+                        With a delivery password set, completion emails attach the consult as a
+                        password-protected PDF. Without one, emails carry only a sign-in link.
+                        The password is write-only — it is never shown again, and History always
+                        keeps the document if it is forgotten.
+                    </p>
+
+                    @if (passwordMessage != null)
+                    {
+                        <FluentMessageBar Intent="@passwordMessageIntent">@passwordMessage</FluentMessageBar>
+                    }
+
+                    <div class="state-panel">
+                        <span class="muted-text">Delivery password</span>
+                        <strong>@(account.DocumentPasswordSet ? "Set" : "Not set")</strong>
+                    </div>
+
+                    <div class="action-row">
+                        <FluentTextField @bind-Value="deliveryPasswordInput"
+                                         TextFieldType="TextFieldType.Password"
+                                         Placeholder="At least 16 characters"
+                                         Disabled="@passwordRequestInProgress" />
+                        <FluentButton Appearance="Appearance.Accent"
+                                      Disabled="@(passwordRequestInProgress || (deliveryPasswordInput?.Length ?? 0) < 16)"
+                                      @onclick="SetDeliveryPasswordAsync">
+                            @(account.DocumentPasswordSet ? "Replace password" : "Set password")
+                        </FluentButton>
+                        @if (account.DocumentPasswordSet)
+                        {
+                            <FluentButton Appearance="Appearance.Neutral"
+                                          Disabled="@passwordRequestInProgress"
+                                          @onclick="ClearDeliveryPasswordAsync">
+                                Clear
+                            </FluentButton>
+                        }
+                    </div>
+                </div>
+            </section>
         }
         else if (!string.IsNullOrWhiteSpace(accountErrorMessage))
         {
@@ -203,6 +248,71 @@
         catch (Exception ex)
         {
             accountErrorMessage = $"Unable to load account information: {ex.Message}";
+        }
+    }
+
+    private string? deliveryPasswordInput;
+    private bool passwordRequestInProgress;
+    private string? passwordMessage;
+    private MessageIntent passwordMessageIntent = MessageIntent.Info;
+
+    private async Task SetDeliveryPasswordAsync()
+    {
+        if (string.IsNullOrEmpty(deliveryPasswordInput))
+        {
+            return;
+        }
+
+        passwordRequestInProgress = true;
+        passwordMessage = null;
+
+        try
+        {
+            await AccountService.SetDeliveryPasswordAsync(deliveryPasswordInput);
+            deliveryPasswordInput = null;
+            passwordMessage = "Delivery password set. Completion emails will now attach the encrypted document.";
+            passwordMessageIntent = MessageIntent.Success;
+            await LoadAccountAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            passwordMessage = ex.Message;
+            passwordMessageIntent = MessageIntent.Error;
+        }
+        finally
+        {
+            passwordRequestInProgress = false;
+        }
+    }
+
+    private async Task ClearDeliveryPasswordAsync()
+    {
+        passwordRequestInProgress = true;
+        passwordMessage = null;
+
+        try
+        {
+            await AccountService.ClearDeliveryPasswordAsync();
+            passwordMessage = "Delivery password cleared. Completion emails will carry only the sign-in link.";
+            passwordMessageIntent = MessageIntent.Success;
+            await LoadAccountAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (Exception ex)
+        {
+            passwordMessage = ex.Message;
+            passwordMessageIntent = MessageIntent.Error;
+        }
+        finally
+        {
+            passwordRequestInProgress = false;
         }
     }
 

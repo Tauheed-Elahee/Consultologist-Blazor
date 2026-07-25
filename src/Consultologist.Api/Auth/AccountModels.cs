@@ -10,6 +10,17 @@ public static class AccountStatuses
     public const string Disabled = "Disabled";
 }
 
+public static class AccountSettingKeys
+{
+    /// <summary>
+    /// #159: the encrypted-document delivery password. Write-only through the
+    /// dedicated Account/DeliveryPassword endpoints — the generic settings
+    /// routes refuse it, and only Account/Me's DocumentPasswordSet flag ever
+    /// reveals anything about it.
+    /// </summary>
+    public const string DeliveryPassword = "delivery.documentPassword";
+}
+
 public static class IdentityProviders
 {
     // The credential authority: only entra-external-id identities can sign in.
@@ -102,7 +113,9 @@ public sealed record AccountMeResponse(
     string? Email,
     string Status,
     AccountIdentity CurrentIdentity,
-    IReadOnlyList<AccountIdentity> LinkedIdentities);
+    IReadOnlyList<AccountIdentity> LinkedIdentities,
+    // #159: the only readable signal about the write-only delivery password.
+    bool DocumentPasswordSet = false);
 
 public sealed class AccountSettingEntity : ITableEntity
 {
@@ -126,6 +139,8 @@ public sealed record AccountSettingResponse(
     string Value,
     string ContentType,
     DateTimeOffset UpdatedAtUtc);
+
+public sealed record SaveDeliveryPasswordRequest(string? Password);
 
 public sealed record SaveAccountSettingRequest(
     string? Value,

@@ -116,11 +116,21 @@ PUT    /api/Account/Settings/{key}
 DELETE /api/Account/Settings/{key}
 ```
 
-The current setting key is:
+The current setting keys are:
 
 ```text
 consult.workflowPackage
+delivery.documentPassword   (write-only — see below)
 ```
+
+`delivery.documentPassword` (#159) is a **secret**: it never travels the
+generic settings routes (they refuse the key in both directions). It is
+managed only through `PUT`/`DELETE /api/Account/DeliveryPassword`
+(16-character minimum) and its existence surfaces only as `Account/Me`'s
+`documentPasswordSet` flag. When set, completion emails attach the consult
+as an AES-256 password-protected PDF; the trust boundary is stated in
+`docs/ASYNC_DELIVERY.md` §3 — it protects the document in the mailbox, not
+from the server, which produced the plaintext.
 
 It holds the account's workflow-package pin (`name` or `name@version`), resolved server-side at job start; when unset, the `WorkflowPackages__Default` app setting (`general@latest`) applies. `GET` returns `404` when the setting has not been saved. `PUT` accepts a JSON body with `value` and `contentType`. `DELETE` removes the pin and restores the default resolution.
 

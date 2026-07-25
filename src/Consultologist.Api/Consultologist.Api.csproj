@@ -30,6 +30,8 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" />
+    <PackageReference Include="Markdig" />
+    <PackageReference Include="PDFsharp-MigraDoc" />
     <PackageReference Include="Scriban" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
@@ -46,6 +48,14 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Consultologist.Api.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- #159: PDFsharp's Core build resolves no system fonts on Linux — the
+         PDF renderer embeds Liberation Sans (SIL OFL; LICENSE alongside). -->
+    <EmbeddedResource Include="Fonts\LiberationSans-Regular.ttf" />
+    <EmbeddedResource Include="Fonts\LiberationSans-Bold.ttf" />
+    <EmbeddedResource Include="Fonts\LiberationSans-Italic.ttf" />
+    <EmbeddedResource Include="Fonts\LiberationSans-BoldItalic.ttf" />
   </ItemGroup>
 
 </Project>

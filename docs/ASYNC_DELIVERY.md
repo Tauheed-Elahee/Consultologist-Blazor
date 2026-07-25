@@ -1,11 +1,9 @@
 # Async Delivery: Scheduled Runs, Email Intake, Encrypted Documents
 
-**Status: parts 1 (#157, scheduled runs) and 2 (#158, email intake)
-implemented — see the decision records in §1 and §2. Part 3 (#159)
-remains a backlog design sketch.** Settled in the 2026-07-20 discussion
-and filed as a cross-linked arc: #157 (scheduled runs), #158 (email
-intake), #159 (encrypted delivery — its former v6 blocker, #152, has
-since shipped). This doc is the arc's design record; the issues point
+**Status: the whole arc is implemented — #157 (scheduled runs), #158
+(email intake), and #159 (encrypted delivery); see the decision records
+in each section.** Settled in the 2026-07-20 discussion and filed as a
+cross-linked arc. This doc is the arc's design record; the issues point
 here.
 
 Composition: **email in → scheduled batch overnight → link (or encrypted
@@ -100,10 +98,28 @@ files: `src/Consultologist.Api/Email/*`, settings in
   attacker. Keep PHI out of subjects and bodies in both directions;
   metadata is never protected.
 
-## 3. Encrypted single-document delivery (#159 — needs v6)
+## 3. Encrypted single-document delivery (#159) — IMPLEMENTED 2026-07-25
 
-Once format v6 (#152) makes the deliverable one assembled document, email
-delivery can attach it as an encrypted file.
+Once format v6 (#152) made the deliverable one assembled document, email
+delivery can attach it as an encrypted file. Implementation decisions
+(settled 2026-07-25; files: `Email/ConsultDocumentPdf.cs`, the reply
+activity, `Account/DeliveryPassword` endpoints):
+
+- **16-character minimum** password (user decision — offline brute force
+  is the threat model), max 128; stored under the write-only
+  `delivery.documentPassword` settings key: dedicated PUT/DELETE
+  endpoints, the generic settings routes refuse the key in both
+  directions, and existence surfaces only as Account/Me's
+  `DocumentPasswordSet`.
+- **AES-256 via PDFsharp 6.2** (PDF 2.0 encryption V5,
+  `SetEncryptionToV5`); MigraDoc composes from the Markdig AST with the
+  client preview's pipeline semantics (HTML disabled, soft breaks hard),
+  Liberation Sans embedded (PDFsharp Core resolves no Linux system
+  fonts). Attachment filename `consult-{jobId8}.pdf` — no PHI.
+- **Attaches on any completion reply** (email intake and scheduled runs)
+  when the password is set and the run Completed with a document; Failed
+  runs and password-less accounts get link-only replies; any failure in
+  the attachment leg degrades to link-only, never silence.
 
 - **Format**: password-protected PDF, AES-256 (PDF 2.0's KDF) — the flow
   clinicians already know, opening everywhere with no tooling. The

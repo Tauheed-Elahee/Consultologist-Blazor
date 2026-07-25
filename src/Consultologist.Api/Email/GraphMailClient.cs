@@ -35,8 +35,16 @@ public interface IGraphMailClient
 
     Task MoveMessageAsync(string mailbox, string messageId, string destinationFolderId, CancellationToken cancellationToken);
 
-    Task SendMailAsync(string mailbox, string toAddress, string subject, string textBody, CancellationToken cancellationToken);
+    Task SendMailAsync(
+        string mailbox,
+        string toAddress,
+        string subject,
+        string textBody,
+        CancellationToken cancellationToken,
+        GraphMailAttachment? attachment = null);
 }
+
+public sealed record GraphMailAttachment(string Name, byte[] Content);
 
 /// <summary>
 /// Raw Microsoft Graph REST (repo idiom — no Graph SDK) authenticated as the
@@ -199,18 +207,44 @@ public sealed class GraphMailClient : IGraphMailClient
         using var _ = await SendAsync(HttpMethod.Post, url, body, cancellationToken, tolerateNotFound: true);
     }
 
-    public async Task SendMailAsync(string mailbox, string toAddress, string subject, string textBody, CancellationToken cancellationToken)
+    public async Task SendMailAsync(
+        string mailbox,
+        string toAddress,
+        string subject,
+        string textBody,
+        CancellationToken cancellationToken,
+        GraphMailAttachment? attachment = null)
     {
         var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/sendMail";
-        var body = JsonSerializer.Serialize(new
+
+        // Dictionaries rather than anonymous types: the attachment's mandatory
+        // "@odata.type" is not a legal anonymous-property name. Inline
+        // attachments cap around 3 MB of request — a consult PDF is far under.
+        var message = new Dictionary<string, object?>
         {
-            message = new
+            ["subject"] = subject,
+            ["body"] = new { contentType = "Text", content = textBody },
+            ["toRecipients"] = new[] { new { emailAddress = new { address = toAddress } } }
+        };
+
+        if (attachment != null)
+        {
+            message["attachments"] = new[]
             {
-                subject,
-                body = new { contentType = "Text", content = textBody },
-                toRecipients = new[] { new { emailAddress = new { address = toAddress } } }
-            },
-            saveToSentItems = true
+                new Dictionary<string, object?>
+                {
+                    ["@odata.type"] = "#microsoft.graph.fileAttachment",
+                    ["name"] = attachment.Name,
+                    ["contentType"] = "application/pdf",
+                    ["contentBytes"] = Convert.ToBase64String(attachment.Content)
+                }
+            };
+        }
+
+        var body = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["message"] = message,
+            ["saveToSentItems"] = true
         });
 
         var document = await SendAsync(HttpMethod.Post, url, body, cancellationToken);

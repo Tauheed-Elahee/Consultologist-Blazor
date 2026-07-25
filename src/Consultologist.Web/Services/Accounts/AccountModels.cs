@@ -6,7 +6,10 @@ public sealed record AccountMeResponse(
     string? Email,
     string Status,
     AccountIdentity CurrentIdentity,
-    IReadOnlyList<AccountIdentity> LinkedIdentities);
+    IReadOnlyList<AccountIdentity> LinkedIdentities,
+    bool DocumentPasswordSet = false);
+
+public sealed record SaveDeliveryPasswordRequest(string Password);
 
 public sealed record AccountIdentity(
     string Provider,
