@@ -138,9 +138,13 @@ Posture, in brief:
 - **Silent rejection**: unmatched, inactive, unauthenticated, or empty
   messages are moved to `Inbox/Rejected` and logged — no bounce, no
   backscatter. Accepted messages move to `Inbox/Processed`.
-- **PHI at rest**: the Processed/Rejected folders hold referral emails —
-  set an Exchange retention policy (e.g. 30-day delete) on the mailbox;
-  the job record is the canonical copy of accepted drafts.
+- **PHI at rest**: the mailbox holds referral emails, so an Exchange
+  retention policy is applied (#201, 2026-07-25): the "Consults Intake
+  Retention" policy with a default 30-day **permanently-delete** tag,
+  covering every folder (Inbox, Processed, Rejected, Sent). The job
+  record is the canonical copy of accepted drafts; mailbox copies exist
+  only for a debugging window. Managed via ExchangeOnlineManagement
+  PowerShell (`Get-Mailbox consults@… | fl RetentionPolicy` to verify).
 - **Exactly-once**: a claim row (`EmailIntakeProcessed`, keyed by
   internetMessageId) is written atomically BEFORE the job starts — a
   message can never start two jobs; a crash between claim and start drops
