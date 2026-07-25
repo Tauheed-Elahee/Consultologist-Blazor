@@ -54,6 +54,11 @@ public sealed class Account
 
         // No IsActive gate: a Pending/Disabled user may still read their own
         // profile so the client can explain why the rest of the API is 403.
+        var deliveryPassword = await _settingsStore.GetAsync(
+            account.AppUserId,
+            AccountSettingKeys.DeliveryPassword,
+            cancellationToken);
+
         var response = req.CreateResponse(HttpStatusCode.OK);
         FunctionCors.Apply(req, response);
         await response.WriteAsJsonAsync(
@@ -63,11 +68,137 @@ public sealed class Account
                 account.Email,
                 account.Status,
                 account.CurrentIdentity,
-                account.LinkedIdentities),
+                account.LinkedIdentities,
+                DocumentPasswordSet: deliveryPassword != null),
             cancellationToken);
 
         return response;
     }
+
+    // #159: the delivery password is write-only — set/clear through these
+    // endpoints, existence surfaced only as Account/Me's DocumentPasswordSet.
+    [Function("AccountDeliveryPasswordSave")]
+    public async Task<HttpResponseData> SaveDeliveryPasswordAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "put", "options", Route = "Account/DeliveryPassword")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        if (string.Equals(req.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+        {
+            var optionsResponse = req.CreateResponse(HttpStatusCode.OK);
+            FunctionCors.Apply(req, optionsResponse);
+            return optionsResponse;
+        }
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        SaveDeliveryPasswordRequest? request = null;
+
+        try
+        {
+            var body = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                request = JsonSerializer.Deserialize<SaveDeliveryPasswordRequest>(body, JsonOptions);
+            }
+        }
+        catch (JsonException)
+        {
+            return await CreateErrorResponseAsync(req, "Malformed JSON request body.", cancellationToken);
+        }
+
+        var validationError = ValidateDeliveryPassword(request?.Password);
+
+        if (validationError != null)
+        {
+            return await CreateErrorResponseAsync(req, validationError, cancellationToken);
+        }
+
+        await _settingsStore.SaveAsync(
+            account.AppUserId,
+            AccountSettingKeys.DeliveryPassword,
+            request!.Password!,
+            "text/plain",
+            cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.NoContent);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    [Function("AccountDeliveryPasswordDelete")]
+    public async Task<HttpResponseData> DeleteDeliveryPasswordAsync(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "Account/DeliveryPassword")] HttpRequestData req)
+    {
+        var cancellationToken = req.FunctionContext.CancellationToken;
+
+        var account = await _authorizer.AuthorizeAsync(req, cancellationToken);
+
+        if (account == null)
+        {
+            return AccountAuthorizer.CreateUnauthorizedResponse(req);
+        }
+
+        if (!AccountAuthorizer.IsActive(account))
+        {
+            return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        await _settingsStore.DeleteAsync(account.AppUserId, AccountSettingKeys.DeliveryPassword, cancellationToken);
+
+        var response = req.CreateResponse(HttpStatusCode.NoContent);
+        FunctionCors.Apply(req, response);
+        return response;
+    }
+
+    private async Task<HttpResponseData> CreateErrorResponseAsync(
+        HttpRequestData req,
+        string error,
+        CancellationToken cancellationToken)
+    {
+        var response = req.CreateResponse(HttpStatusCode.BadRequest);
+        FunctionCors.Apply(req, response);
+        await response.WriteAsJsonAsync(new { error }, cancellationToken);
+        return response;
+    }
+
+    // 16-char minimum by decision (#159): an emailed attachment can be
+    // brute-forced offline with no rate limiting, so length is the defense.
+    internal const int MinDeliveryPasswordLength = 16;
+    internal const int MaxDeliveryPasswordLength = 128;
+
+    internal static string? ValidateDeliveryPassword(string? password)
+    {
+        if (string.IsNullOrEmpty(password))
+        {
+            return "Password is required.";
+        }
+
+        if (password.Length < MinDeliveryPasswordLength)
+        {
+            return $"Password must be at least {MinDeliveryPasswordLength} characters.";
+        }
+
+        if (password.Length > MaxDeliveryPasswordLength)
+        {
+            return "Password is too long.";
+        }
+
+        return null;
+    }
+
+    internal static bool IsSecretSettingKey(string key) =>
+        string.Equals(key, AccountSettingKeys.DeliveryPassword, StringComparison.Ordinal);
 
     [Function("AccountJobsList")]
     public async Task<HttpResponseData> GetJobsAsync(
@@ -303,6 +434,13 @@ public sealed class Account
         if (key.Length > MaxSettingKeyLength)
         {
             return "Setting key is too long.";
+        }
+
+        // Secret keys never travel the generic settings routes — reads would
+        // leak them and writes would bypass strength validation (#159).
+        if (IsSecretSettingKey(key))
+        {
+            return "This setting is managed through its dedicated endpoint.";
         }
 
         foreach (var character in key)
