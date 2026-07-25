@@ -33,6 +33,25 @@ public class EmailIntakeReplyTests
     }
 
     [Fact]
+    public void Compose_WithAttachment_MentionsTheEncryptedDocument()
+    {
+        var (subject, body) = EmailIntakeReply.Compose(
+            "https://app.example.com", "job-1", "Completed", includesAttachment: true);
+
+        Assert.Equal("Your consult is ready", subject);
+        Assert.Contains("encrypted with your delivery password", body);
+        Assert.Contains("https://app.example.com/history/job-1", body);
+    }
+
+    [Fact]
+    public void Compose_WithoutAttachment_DoesNotMentionOne()
+    {
+        var (_, body) = EmailIntakeReply.Compose("https://app.example.com", "job-1", "Completed");
+
+        Assert.DoesNotContain("attached", body);
+    }
+
+    [Fact]
     public void Compose_NeverEchoesCallerContent()
     {
         // The only caller-varying inputs are the base URL and job id; a hostile
