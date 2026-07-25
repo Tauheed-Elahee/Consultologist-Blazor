@@ -6,6 +6,7 @@
 @inject IAIEndpointService AIService
 @inject IWorkflowEndpointService WorkflowService
 @attribute [Authorize]
+@implements IDisposable
 
 @page "/history"
 @page "/history/{JobId}"
@@ -277,6 +278,7 @@
     {
         await LoadJobsAsync();
         await ApplyDeepLinkAsync();
+        EnsurePollingStarted();
         await LoadAgentNamesAsync();
     }
 
@@ -307,16 +309,118 @@
             && _jobDetails.TryGetValue(JobId, out var detail)
             && detail != null)
         {
-            jobs.Insert(0, new AccountJobSummaryResponse(
-                detail.JobId,
-                detail.Status,
-                detail.CreatedAtUtc ?? default,
-                detail.StartedAtUtc,
-                detail.CompletedAtUtc,
-                detail.TotalBlockCount,
-                detail.CompletedBlockCount,
-                detail.FailedBlockCount,
-                detail.Source));
+            jobs.Insert(0, SummaryFromDetail(detail));
+        }
+    }
+
+    private static AccountJobSummaryResponse SummaryFromDetail(ConsultGenerationJobResponse detail) =>
+        new(
+            detail.JobId,
+            detail.Status,
+            detail.CreatedAtUtc ?? default,
+            detail.StartedAtUtc,
+            detail.CompletedAtUtc,
+            detail.TotalBlockCount,
+            detail.CompletedBlockCount,
+            detail.FailedBlockCount,
+            detail.Source,
+            detail.ScheduledAtUtc);
+
+    private static bool IsTerminal(string status) => status is "Completed" or "Failed";
+
+    // #206: while any loaded row is non-terminal, refresh those jobs from the
+    // snapshot endpoint so status/counts tick without a reload. One fetch per
+    // non-terminal job also refreshes an expanded detail panel — a list-level
+    // re-fetch could not. Two-tier cadence: Scheduled-only pages poll slowly
+    // (those rows change at their fire time, not by the second).
+    private CancellationTokenSource? _pollingCts;
+
+    private void EnsurePollingStarted()
+    {
+        if (_pollingCts != null || !jobs.Any(job => !IsTerminal(job.Status)))
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _pollingCts = cts;
+        _ = PollInFlightJobsAsync(cts);
+    }
+
+    private async Task PollInFlightJobsAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                var active = jobs.Where(job => !IsTerminal(job.Status)).ToList();
+
+                if (active.Count == 0)
+                {
+                    return;
+                }
+
+                var fastCadence = active.Any(job => job.Status is "Queued" or "Running");
+                await Task.Delay(TimeSpan.FromSeconds(fastCadence ? 5 : 60), cts.Token);
+
+                if (jobsLoading)
+                {
+                    continue;
+                }
+
+                foreach (var job in active)
+                {
+                    try
+                    {
+                        var detail = await AIService.GetConsultGenerationJobAsync(job.JobId);
+                        var index = jobs.FindIndex(row => row.JobId == job.JobId);
+
+                        if (index >= 0)
+                        {
+                            jobs[index] = SummaryFromDetail(detail);
+                        }
+
+                        if (_jobDetails.ContainsKey(job.JobId))
+                        {
+                            _jobDetails[job.JobId] = detail;
+                        }
+                    }
+                    catch (AccessTokenNotAvailableException exception)
+                    {
+                        exception.Redirect();
+                        return;
+                    }
+                    catch
+                    {
+                        // Transient — the next tick retries.
+                    }
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_pollingCts, cts))
+            {
+                _pollingCts = null;
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            _pollingCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
@@ -474,6 +578,10 @@
             jobsLoading = false;
             StateHasChanged();
         }
+
+        // An older page can surface a non-terminal row (e.g. a Scheduled job)
+        // after the loop already stopped.
+        EnsurePollingStarted();
     }
 
     private async Task EnsureDetailsLoadedAsync(string jobId)
