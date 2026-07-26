@@ -86,7 +86,10 @@ The job request gains an optional map:
   absent, it back-fills the `consult_draft` slot. Sending **both** is
   rejected — no client ever needs both, and silently preferring one
   would drop caller data (the same explicit-over-silent posture as the
-  unknown-id rule below).
+  unknown-id rule below). The back-fill targets a declared slot like
+  any other: a v7 package that does not declare `consult_draft` rejects
+  a `consultDraft`-only request as an unknown id — the convention is
+  not mandatory, and the engine grants it no exemption.
 - Validation at job start, against the resolved package's declaration:
   every **required** input present and non-blank; **unknown ids
   rejected** (explicit, never silently dropped); per-input size cap
@@ -98,11 +101,13 @@ The job request gains an optional map:
 
 Until email attachments bind as inputs (#210), intake supplies exactly
 one text: the message body, which back-fills `consult_draft`. A v7
-package whose declaration has any **other required** input therefore
-cannot be satisfied by email — the claim records an explicit rejection
-outcome (a new `EmailIntakeOutcomes` slug) and the message moves to
-Rejected, never a partial run. Packages whose extra inputs are all
-optional intake normally.
+package is therefore **email-eligible** iff its declaration includes
+`consult_draft` **and** every other input is optional — stated
+positively so the no-`consult_draft` package (legal per § 3) is
+excluded too, not just the extra-required-input one. An email against
+an ineligible package records an explicit rejection outcome (a new
+`EmailIntakeOutcomes` slug) and the message moves to Rejected, never a
+partial run.
 
 ### Resolution
 
@@ -281,7 +286,9 @@ the editor work is the authoring surfaces:
    `inputs: [{id: consult_draft, label: Consult draft}]` and keeps its
    single result — output byte-identical to the v6 package (the proving
    migration; the effective-input hash version changes, the output hash
-   version changes, the bytes do not).
+   version changes, the bytes do not). Declaring `consult_draft` keeps
+   it email-eligible per § 3 — intake continuity is part of what the
+   migration proves.
 2. A **demo package** (working name `duo`) exercises the width: two
    inputs (`consult_draft`, `prior_notes` optional), two deliverables
    (consult note + patient letter).
