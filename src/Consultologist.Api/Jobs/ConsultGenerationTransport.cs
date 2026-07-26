@@ -23,6 +23,10 @@ public sealed class ConsultGenerationJobs
 {
     private const string LastEventIdHeaderName = "Last-Event-ID";
     private const int MaxScheduleHorizonDays = 7;
+
+    // Per-input text bound, matching the email-intake body cap
+    // (EmailIntakeProcessor.MaxDraftLength).
+    internal const int MaxInputLength = 256 * 1024;
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
@@ -161,6 +165,10 @@ public sealed class ConsultGenerationJobs
                     ConsultGenerationJobStartError.RegistryUnavailable => HttpStatusCode.ServiceUnavailable,
                     ConsultGenerationJobStartError.PackageNotExecutable => HttpStatusCode.UnprocessableEntity,
                     ConsultGenerationJobStartError.SpecVersionNotYetExecutable => HttpStatusCode.UnprocessableEntity,
+                    // Well-formed request, unsatisfiable against this package's
+                    // input declaration — 422, not 400 (the request-shape rules
+                    // in ValidateRequest are the 400s).
+                    ConsultGenerationJobStartError.InputsMismatch => HttpStatusCode.UnprocessableEntity,
                     _ => HttpStatusCode.InternalServerError
                 };
                 return await CreateJsonResponseAsync(req, status, new { error = outcome.ErrorDetail }, cancellationToken);
@@ -550,9 +558,40 @@ public sealed class ConsultGenerationJobs
             return "Request body is required.";
         }
 
-        if (string.IsNullOrWhiteSpace(request.ConsultDraft))
+        var hasDraft = !string.IsNullOrWhiteSpace(request.ConsultDraft);
+        var hasInputs = request.Inputs is { Count: > 0 };
+
+        // Exactly one of the two forms: silently preferring one would drop
+        // caller data (package-format-v7.md request contract).
+        if (hasDraft && hasInputs)
         {
-            return "ConsultDraft is required.";
+            return "Send ConsultDraft or Inputs, not both.";
+        }
+
+        if (!hasDraft && !hasInputs)
+        {
+            return "ConsultDraft or Inputs is required.";
+        }
+
+        if (hasInputs)
+        {
+            foreach (var (id, value) in request.Inputs!)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    return "Inputs contains a blank id.";
+                }
+
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return $"Input '{id}' is blank.";
+                }
+
+                if (value.Length > MaxInputLength)
+                {
+                    return $"Input '{id}' exceeds {MaxInputLength / 1024} KB.";
+                }
+            }
         }
 
         // Past times are NOT errors (clock skew) — the orchestrator's timer

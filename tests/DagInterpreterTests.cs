@@ -275,11 +275,37 @@ public class ProvenanceHashTests
 public class StartRequestValidationTests
 {
     [Fact]
-    public void ValidateRequest_RequiresBodyAndDraft()
+    public void ValidateRequest_RequiresBodyAndExactlyOneInputForm()
     {
         Assert.Equal("Request body is required.", ConsultGenerationJobs.ValidateRequest(null));
-        Assert.Equal("ConsultDraft is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
+        Assert.Equal("ConsultDraft or Inputs is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
         Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest("Draft.")));
+
+        Assert.Equal(
+            "Send ConsultDraft or Inputs, not both.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                "Draft.",
+                Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." })));
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+            null,
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." })));
+    }
+
+    [Fact]
+    public void ValidateRequest_ChecksInputEntries()
+    {
+        Assert.Equal(
+            "Inputs contains a blank id.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { [" "] = "text" })));
+        Assert.Equal(
+            "Input 'prior_notes' is blank.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { ["prior_notes"] = " " })));
+        Assert.Equal(
+            "Input 'consult_draft' exceeds 256 KB.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { ["consult_draft"] = new string('x', ConsultGenerationJobs.MaxInputLength + 1) })));
     }
 }
 

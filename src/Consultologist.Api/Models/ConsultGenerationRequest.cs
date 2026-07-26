@@ -3,11 +3,17 @@ using System.Text.Json.Serialization;
 namespace Consultologist.Api.Models;
 
 public record ConsultGenerationRequest(
-    string ConsultDraft,
+    // Exactly one of ConsultDraft / Inputs per request. The legacy field stays
+    // valid for every package; against a v7 package it back-fills the
+    // consult_draft slot (package-format-v7.md).
+    string? ConsultDraft,
     string? WorkflowPackage = null,
     // #157: run later — the orchestrator sleeps on a durable timer until
     // this time. Null = run immediately; past values also run immediately.
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // v7: the named-input map (declared id → text). Validated against the
+    // package declaration at job start.
+    Dictionary<string, string>? Inputs = null);
 
 public record ConsultGenerationJobStartResponse(
     string JobId,
@@ -76,6 +82,13 @@ public sealed record ConsultNodeDescriptor(
     IReadOnlyList<string>? Aggregate = null);
 
 public sealed record ConsultNodeBindingDescriptor(string From, string? As = null);
+
+/// <summary>
+/// One deliverable of a v7 job, snapshotted from the resolved package's result
+/// set at start — a Jobs-layer type so registry records never enter durable
+/// payloads.
+/// </summary>
+public sealed record ConsultResultDescriptor(string Id, string NodeId, string Label);
 
 /// <summary>
 /// Per-node run status and provenance exposed on the job response — the hashes form

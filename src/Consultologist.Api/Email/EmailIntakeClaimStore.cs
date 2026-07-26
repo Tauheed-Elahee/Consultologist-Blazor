@@ -22,6 +22,9 @@ public static class EmailIntakeOutcomes
     public const string RejectedAuth = "rejected-auth";
     public const string RejectedSender = "rejected-sender";
     public const string RejectedEmpty = "rejected-empty";
+    // v7 email eligibility: the pinned package's input declaration cannot be
+    // satisfied by a body-only email (package-format-v7.md).
+    public const string RejectedInputs = "rejected-inputs";
     public const string StartFailed = "start-failed";
     public const string Vanished = "vanished";
 }

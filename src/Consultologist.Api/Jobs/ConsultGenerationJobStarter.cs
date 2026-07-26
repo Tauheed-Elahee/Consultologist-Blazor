@@ -24,8 +24,20 @@ public enum ConsultGenerationJobStartError
     ForeignPackageRef,
     RegistryUnavailable,
     PackageNotExecutable,
-    SpecVersionNotYetExecutable
+    SpecVersionNotYetExecutable,
+    InputsMismatch
 }
+
+/// <summary>
+/// The outcome of resolving a request's inputs against the package declaration:
+/// Effective is the resolver map (every declared id present; absent optional
+/// inputs as empty strings), Supplied the caller's map for hashing (absent
+/// optional inputs omitted). Both null on the v5/v6 legacy path.
+/// </summary>
+internal sealed record EffectiveInputsResolution(
+    IReadOnlyDictionary<string, string>? Effective,
+    IReadOnlyDictionary<string, string>? Supplied,
+    string? Error);
 
 public sealed record ConsultGenerationJobStartOutcome(
     string? JobId,
@@ -119,6 +131,26 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 null,
                 ConsultGenerationJobStartError.RegistryUnavailable,
                 "Workflow package registry is unavailable.");
+        }
+
+        var inputs = ResolveEffectiveInputs(request, package.Manifest);
+        if (inputs.Error != null)
+        {
+            _logger.LogWarning(
+                "Rejected job start: inputs do not satisfy the package declaration. Package={Package}, Detail={Detail}",
+                package.Ref,
+                inputs.Error);
+            return new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputsMismatch,
+                inputs.Error);
+        }
+
+        // A consult_draft-only Inputs map against a legacy package folds into
+        // the draft field, so everything downstream sees the v5/v6 shape.
+        if (package.Manifest.SpecVersion < 7 && request.Inputs is { Count: > 0 })
+        {
+            request = request with { ConsultDraft = request.Inputs[ConsultDraftInputId], Inputs = null };
         }
 
         // Interim guard: the format layer accepts specVersion 7 (validation,
@@ -239,6 +271,82 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
             items.Count);
 
         return new ConsultGenerationJobStartOutcome(instanceId);
+    }
+
+    internal const string ConsultDraftInputId = "consult_draft";
+
+    /// <summary>
+    /// Resolves the request's inputs against the package declaration
+    /// (package-format-v7.md request contract). v5/v6: only a
+    /// consult_draft-only Inputs map is acceptable (folded into the draft by
+    /// the caller); v7: the supplied map (or the back-filled legacy draft)
+    /// must cover every required declared id and name no undeclared ones.
+    /// </summary>
+    internal static EffectiveInputsResolution ResolveEffectiveInputs(
+        ConsultGenerationRequest request,
+        WorkflowPackageManifest manifest)
+    {
+        if (manifest.SpecVersion < 7)
+        {
+            if (request.Inputs is { Count: > 0 })
+            {
+                var foreign = request.Inputs.Keys
+                    .Where(id => !string.Equals(id, ConsultDraftInputId, StringComparison.Ordinal))
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+                if (foreign.Count > 0)
+                {
+                    return new EffectiveInputsResolution(null, null,
+                        $"Inputs names undeclared input(s) {string.Join(", ", foreign.Select(id => $"'{id}'"))}: a specVersion {manifest.SpecVersion} package accepts only consult_draft.");
+                }
+            }
+
+            return new EffectiveInputsResolution(null, null, null);
+        }
+
+        var declared = manifest.Inputs ?? new List<WorkflowInputSpec>();
+        var supplied = request.Inputs is { Count: > 0 }
+            ? request.Inputs
+            : !string.IsNullOrWhiteSpace(request.ConsultDraft)
+                ? new Dictionary<string, string>(StringComparer.Ordinal) { [ConsultDraftInputId] = request.ConsultDraft }
+                : null;
+
+        if (supplied is null)
+        {
+            return new EffectiveInputsResolution(null, null, "No inputs were supplied.");
+        }
+
+        var declaredIds = declared.Select(input => input.Id).ToHashSet(StringComparer.Ordinal);
+        var unknown = supplied.Keys
+            .Where(id => !declaredIds.Contains(id))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        if (unknown.Count > 0)
+        {
+            return new EffectiveInputsResolution(null, null,
+                $"Unknown input(s) {string.Join(", ", unknown.Select(id => $"'{id}'"))} (declared: {string.Join(", ", declaredIds.Order(StringComparer.Ordinal))}).");
+        }
+
+        var missing = declared
+            .Where(input => input.Required
+                && (!supplied.TryGetValue(input.Id, out var value) || string.IsNullOrWhiteSpace(value)))
+            .Select(input => input.Id)
+            .ToList();
+        if (missing.Count > 0)
+        {
+            return new EffectiveInputsResolution(null, null,
+                $"Required input(s) {string.Join(", ", missing.Select(id => $"'{id}'"))} missing.");
+        }
+
+        // The resolver map covers every declared id — an absent optional input
+        // renders as empty (package-format-v7-design.md § 3 resolution rule).
+        var effective = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var input in declared)
+        {
+            effective[input.Id] = supplied.GetValueOrDefault(input.Id, string.Empty);
+        }
+
+        return new EffectiveInputsResolution(effective, supplied, null);
     }
 
     internal static ConsultNodeDescriptor DescribeNode(
