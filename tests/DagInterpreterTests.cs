@@ -234,6 +234,42 @@ public class ProvenanceHashTests
             ConsultGenerationProvenance.Sha256Hex("""{"consultDraft":"Draft text."}"""),
             ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
     }
+
+    [Fact]
+    public void DeclaredInputsHash_PinsTheCanonicalShape()
+    {
+        // Canonical shape pin: ordinal-sorted {id: text}, raw values, no wrapper —
+        // the definition v7 jobs record as effectiveInputHashVersion 3. Supplied
+        // map only: an absent optional input never appears.
+        var supplied = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["prior_notes"] = "Old notes.",
+            ["consult_draft"] = "Draft text."
+        };
+
+        Assert.Equal(
+            ConsultGenerationProvenance.Sha256Hex("""{"consult_draft":"Draft text.","prior_notes":"Old notes."}"""),
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(supplied));
+        Assert.Equal(3, ConsultGenerationProvenance.DeclaredInputsHashVersion);
+    }
+
+    [Fact]
+    public void ResultSetHash_PinsTheCanonicalShape()
+    {
+        // Canonical shape pin: ordinal-sorted {resultId: sha256hex(document)} —
+        // the definition v7 jobs record as workflowOutputHashVersion 3.
+        var documents = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["patient_letter"] = "Letter body.",
+            ["consult_note"] = "Note body."
+        };
+
+        var expected = ConsultGenerationProvenance.Sha256Hex(
+            $$"""{"consult_note":"{{ConsultGenerationProvenance.Sha256Hex("Note body.")}}","patient_letter":"{{ConsultGenerationProvenance.Sha256Hex("Letter body.")}}"}""");
+
+        Assert.Equal(expected, ConsultGenerationProvenance.ComputeResultSetHash(documents));
+        Assert.Equal(3, ConsultGenerationProvenance.ResultSetHashVersion);
+    }
 }
 
 public class StartRequestValidationTests
