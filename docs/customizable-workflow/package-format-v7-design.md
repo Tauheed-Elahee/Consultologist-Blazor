@@ -118,10 +118,10 @@ package author owns handling absence, e.g. via prompt wording).
 
 ```yaml
 results:
-  - id: consult-note           # kebab-case, ^[a-z][a-z0-9-]*$, unique
+  - id: consult_note           # snake_case, ^[a-z][a-z0-9_]*$, unique
     node: node:assemble-note   # must be an aggregator; distinct per result
     label: Consultation note
-  - id: patient-letter
+  - id: patient_letter
     node: node:assemble-letter
     label: Patient letter
 ```
@@ -132,6 +132,9 @@ results:
   single-result v7 delivery filenames identical to today's
   `consult-{jobId8}.pdf`. Declaring **both** is an error. At least one
   deliverable, always.
+- Result ids share the input-id convention (snake_case) — one casing
+  rule across both declared-vocabulary sections. Node ids keep their
+  existing convention untouched.
 - Each result's node must be an aggregator (v6's rule, per-result);
   result nodes are distinct (two results may not share one node — the
   same content twice is authorable by two aggregators over the same
@@ -176,17 +179,19 @@ source nodes); a result aggregator that cannot render fails the job.
 
 ## 5. Delivery, display, progress
 
-- **Consults**: the setup phase renders one field per declared input
-  (label + required marker; optional inputs collapsible). The result
+- **Consults**: the setup phase renders one field per declared input,
+  all always visible — optional ones marked "(optional)" — so the
+  clinician sees the package's full intake form at a glance. The result
   phase renders **one tab per deliverable** (result-set order; labels
   authored), each with its own copy action; the run rail is unchanged
   (nodes are nodes).
 - **History**: the detail view lists per-deliverable output hashes; the
   summary row is unchanged (counts already sum across blocks).
 - **Email delivery**: one encrypted PDF **per deliverable** on the one
-  completion reply, filename `{resultId}-{jobId8}.pdf` — the result id
-  is authored package content, never patient data, preserving the
-  no-PHI-in-filenames rule. Total-attachment size posture: inline
+  completion reply, filename `{resultId}-{jobId8}.pdf` (e.g.
+  `consult_note-ab12cd34.pdf`) — snake_case ids cannot contain `-`, so
+  the separator parses unambiguously; the result id is authored package
+  content, never patient data, preserving the no-PHI-in-filenames rule. Total-attachment size posture: inline
   attachments cap ~3 MB base64; if the set exceeds it, attach none and
   fall back to the link-only reply (degrade whole, never partially —
   a partial document set misleads).
