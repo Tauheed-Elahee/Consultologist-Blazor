@@ -7,11 +7,12 @@ using Scriban.Runtime;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Validates specVersion-5 and -6 packages: a manifest declares the rule set it
-/// was validated under (package-format-v5.md frozen; package-format-v6-design.md
-/// for the v6 closures — multi-collection, aggregator nodes, reachability). Used
-/// at load time by the store (the engine's enforcement point) and by tests; the
-/// same checks apply at publish time. Pre-v5 formats were retired by the v5-only
+/// Validates specVersion-5, -6 and -7 packages: a manifest declares the rule set
+/// it was validated under (package-format-v5.md frozen; package-format-v6.md for
+/// the v6 closures — multi-collection, aggregator nodes, reachability;
+/// package-format-v7.md for declared inputs and the result set). Used at load
+/// time by the store (the engine's enforcement point) and by tests; the same
+/// checks apply at publish time. Pre-v5 formats were retired by the v5-only
 /// rebase.
 /// </summary>
 public static class WorkflowPackageValidator
