@@ -83,14 +83,26 @@ The job request gains an optional map:
 ```
 
 - `consultDraft` (the v5/v6 field) remains valid: when `inputs` is
-  absent, it back-fills the `consult_draft` slot. When both are present,
-  `inputs` wins and `consultDraft` is ignored.
+  absent, it back-fills the `consult_draft` slot. Sending **both** is
+  rejected — no client ever needs both, and silently preferring one
+  would drop caller data (the same explicit-over-silent posture as the
+  unknown-id rule below).
 - Validation at job start, against the resolved package's declaration:
   every **required** input present and non-blank; **unknown ids
   rejected** (explicit, never silently dropped); per-input size cap
   (256 KB, matching the intake bound).
 - For a v5/v6 package, an `inputs` map with anything other than
   `consult_draft` is rejected.
+
+### Email intake
+
+Until email attachments bind as inputs (#210), intake supplies exactly
+one text: the message body, which back-fills `consult_draft`. A v7
+package whose declaration has any **other required** input therefore
+cannot be satisfied by email — the claim records an explicit rejection
+outcome (a new `EmailIntakeOutcomes` slug) and the message moves to
+Rejected, never a partial run. Packages whose extra inputs are all
+optional intake normally.
 
 ### Resolution
 
@@ -116,8 +128,10 @@ results:
 
 - `results` is optional in v7; `result: node:<id>` (the string form)
   remains valid as sugar for a one-entry result set with
-  `id: "document"`, `label: <node label>`. Declaring **both** is an
-  error. At least one deliverable, always.
+  `id: "consult"`, `label: <node label>` — the id `consult` keeps
+  single-result v7 delivery filenames identical to today's
+  `consult-{jobId8}.pdf`. Declaring **both** is an error. At least one
+  deliverable, always.
 - Each result's node must be an aggregator (v6's rule, per-result);
   result nodes are distinct (two results may not share one node — the
   same content twice is authorable by two aggregators over the same
@@ -135,11 +149,13 @@ concatenation — deliverables are separate documents, full stop.
 Multiple aggregators already render, hash, and report
 (`MarkNodeCompleted`) today; v7 changes the *deliverable* layer:
 
-- **Blocks** gain the deliverable dimension. Block ids become
-  `{resultId}:{sourceNodeId}:{itemId}` (scalar sources
+- **Blocks** gain the deliverable dimension **for v7 jobs only**. Block
+  ids become `{resultId}:{sourceNodeId}:{itemId}` (scalar sources
   `{resultId}:{sourceNodeId}`), eliminating the collision when two
-  deliverables share a source; `TotalBlockCount` is the sum across the
-  result set (still a stored scalar — the phase-7 rule stands).
+  deliverables share a source; v5/v6 jobs keep today's ids unchanged.
+  `TotalBlockCount` is the sum across the result set — a source shared
+  by two deliverables counts once per deliverable (still a stored
+  scalar — the phase-7 rule stands).
 - **Entity state** gains `AssembledDocuments` (ordered id→text map);
   `CompleteDocument` becomes per-result (`resultId`, text). v6's single
   `AssembledDocument` string stays for v6 jobs — the two shapes never
@@ -192,6 +208,12 @@ their predecessors, never compared across versions):
   `AssembledDocument != null` discriminator in `ToResponse` becomes an
   explicit three-way dispatch (documents map → v3; single string → v2;
   else → v1).
+
+Both v3 definitions say "canonical JSON"; the exact byte-level rules
+(UTF-8, no insignificant whitespace, ordinal key sort, escaping) are
+pinned in the normative v7 spec when the format sub-issue implements —
+a hash definition is its bytes, so the design doc deliberately does not
+freeze them informally.
 
 ## 7. The v7 closure set
 
