@@ -198,6 +198,8 @@ public class WorkflowNodeBindingSourceParserTests
     [InlineData("item:name")]
     [InlineData("item:content")]
     [InlineData("item:title")] // any field name parses; vocabulary closures are validator rules
+    [InlineData("input:patient_age")] // any input name parses; the declaration (v7) or fixed slot (v5/v6) closes it in the validator
+    [InlineData("input:sections")]
     [InlineData("node:extract-patient-concepts")]
     [InlineData("data:standards")]
     [InlineData("data:clinic-guidelines")]
@@ -209,8 +211,6 @@ public class WorkflowNodeBindingSourceParserTests
 
     [Theory]
     [InlineData("consult_draft")]
-    [InlineData("input:patient_age")]
-    [InlineData("input:sections")] // retired with the v5-only rebase
     [InlineData("previous_step_output")] // retired: item-aligned node: edges instead
     [InlineData("node:")]
     [InlineData("data:")]
@@ -274,7 +274,7 @@ public class WorkflowV5ValidationTests
 
         Assert.Contains(
             V5Fixtures.Validate(manifest).Errors,
-            e => e.Contains("accepts specVersion 5 or 6"));
+            e => e.Contains("accepts specVersion 5, 6 or 7"));
     }
 
     [Theory]

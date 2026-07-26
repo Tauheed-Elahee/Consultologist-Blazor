@@ -7,11 +7,12 @@ using Scriban.Runtime;
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// Validates specVersion-5 and -6 packages: a manifest declares the rule set it
-/// was validated under (package-format-v5.md frozen; package-format-v6-design.md
-/// for the v6 closures — multi-collection, aggregator nodes, reachability). Used
-/// at load time by the store (the engine's enforcement point) and by tests; the
-/// same checks apply at publish time. Pre-v5 formats were retired by the v5-only
+/// Validates specVersion-5, -6 and -7 packages: a manifest declares the rule set
+/// it was validated under (package-format-v5.md frozen; package-format-v6.md for
+/// the v6 closures — multi-collection, aggregator nodes, reachability;
+/// package-format-v7.md for declared inputs and the result set). Used at load
+/// time by the store (the engine's enforcement point) and by tests; the same
+/// checks apply at publish time. Pre-v5 formats were retired by the v5-only
 /// rebase.
 /// </summary>
 public static class WorkflowPackageValidator
@@ -85,9 +86,9 @@ public static class WorkflowPackageValidator
             }
         }
 
-        if (manifest.SpecVersion is not (5 or 6))
+        if (manifest.SpecVersion is not (5 or 6 or 7))
         {
-            errors.Add($"specVersion {manifest.SpecVersion} is not supported: this engine accepts specVersion 5 or 6 (pre-v5 packages are archived; see registry-operations.md).");
+            errors.Add($"specVersion {manifest.SpecVersion} is not supported: this engine accepts specVersion 5, 6 or 7 (pre-v5 packages are archived; see registry-operations.md).");
         }
         else
         {
@@ -124,7 +125,10 @@ public static class WorkflowPackageValidator
     /// multiplicity, item-aligned/broadcast edges only, one shared collection,
     /// result on a forEach node (package-format-v5.md, frozen). v6 additionally:
     /// multiple collections, aggregator nodes (the only aggregation), result on
-    /// an aggregator, and reachability (package-format-v6-design.md § 7).
+    /// an aggregator, and reachability (package-format-v6-design.md § 7) —
+    /// closures that carry to every later version. v7 additionally: declared
+    /// inputs (the input: vocabulary closure) and an optional results set
+    /// (package-format-v7.md).
     /// </summary>
     private static void ValidateNodes(
         WorkflowPackageManifest manifest,
@@ -132,7 +136,8 @@ public static class WorkflowPackageValidator
         IReadOnlyDictionary<string, string> catalogSchemas,
         List<string> errors)
     {
-        var v6 = manifest.SpecVersion == 6;
+        var v6OrLater = manifest.SpecVersion >= 6;
+        var declaredInputs = ValidateInputs(manifest, errors);
         var data = WorkflowDataResolver.Resolve(manifest, files, errors);
         var nodes = manifest.Nodes ?? new List<WorkflowNodeSpec>();
 
@@ -172,6 +177,21 @@ public static class WorkflowPackageValidator
 
             switch (source)
             {
+                case WorkflowNodeBindingSource.Input input:
+                    // The input vocabulary closure: parsing is structural, the
+                    // declaration (v7) or the fixed v5/v6 slot closes the set.
+                    if (!declaredInputs.Contains(input.Name))
+                    {
+                        errors.Add(manifest.SpecVersion >= 7
+                            ? $"Node '{node.Id}' binds '{variable}' to undeclared input '{input.Name}' (declared: {string.Join(", ", declaredInputs.Order(StringComparer.Ordinal))})."
+                            : $"Node '{node.Id}' binds '{variable}' to unknown input '{input.Name}' (expected consult_draft).");
+                    }
+                    else if (binding.As != null)
+                    {
+                        errors.Add($"Node '{node.Id}' binding '{variable}' declares renderer '{binding.As}' on non-node source '{binding.From}'.");
+                    }
+
+                    return;
                 case WorkflowNodeBindingSource.Item item when node.ForEach is null:
                     errors.Add($"Node '{node.Id}' binds '{variable}' to 'item:{item.Field}' but declares no forEach.");
                     return;
@@ -206,8 +226,8 @@ public static class WorkflowPackageValidator
                     // never bindings) in v6.
                     if (targetNode.ForEach != null && node.ForEach is null)
                     {
-                        errors.Add(v6
-                            ? $"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}': aggregation is explicit in specVersion 6 — collect it through an aggregator node."
+                        errors.Add(v6OrLater
+                            ? $"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}': aggregation is explicit in specVersion {manifest.SpecVersion} — collect it through an aggregator node."
                             : $"Node '{node.Id}' binds '{variable}' to forEach node '{target.NodeId}', whose aggregate output is not bindable in specVersion 5.0.");
                         return;
                     }
@@ -288,9 +308,9 @@ public static class WorkflowPackageValidator
 
             if (node.Aggregate != null)
             {
-                if (!v6)
+                if (!v6OrLater)
                 {
-                    errors.Add($"Node '{node.Id}' declares aggregate, which requires specVersion 6.");
+                    errors.Add($"Node '{node.Id}' declares aggregate, which requires specVersion 6 or later.");
                     continue;
                 }
 
@@ -342,9 +362,9 @@ public static class WorkflowPackageValidator
             errors.Add($"Prompt '{orphan}' is not referenced by any node.");
         }
 
-        // specVersion 6 allows prompt sharing — each using node binds the
+        // specVersion 6+ allows prompt sharing — each using node binds the
         // prompt's variables itself. v5's published 1:1 rule stays frozen.
-        if (!v6)
+        if (!v6OrLater)
         {
             foreach (var overused in promptReferenceCounts.Where(pair => pair.Value > 1).Select(pair => pair.Key))
             {
@@ -352,7 +372,7 @@ public static class WorkflowPackageValidator
             }
         }
 
-        if (!v6)
+        if (!v6OrLater)
         {
             // v5.0 closure: the engine fans one item set per job, so every forEach
             // node shares one collection (disconnected parallel chains would have no
@@ -369,9 +389,9 @@ public static class WorkflowPackageValidator
             }
         }
 
-        ValidateResult(manifest, nodesById, v6, errors);
+        ValidateResult(manifest, nodesById, v6OrLater, errors);
 
-        if (v6)
+        if (v6OrLater)
         {
             ValidateReachability(manifest, nodes, nodesById, edges, errors);
         }
@@ -380,11 +400,121 @@ public static class WorkflowPackageValidator
     }
 
     /// <summary>
-    /// The v6 reachability closure: every node must transitively feed the result
-    /// through binding or aggregate edges — the orphan-prompt philosophy applied
-    /// to execution (package-format-v6-design.md § 7). The result aggregator must
-    /// also transitively include at least one forEach source: a package with no
-    /// fan has no consult.
+    /// The input vocabulary: v5/v6 packages bind exactly consult_draft (the
+    /// declaration-free closure, frozen); v7 packages declare their slots —
+    /// required section, at least one slot, snake_case unique ids, non-blank
+    /// labels (package-format-v7.md § 2). Returns the closed set the binding
+    /// checks validate against.
+    /// </summary>
+    private static IReadOnlySet<string> ValidateInputs(WorkflowPackageManifest manifest, List<string> errors)
+    {
+        if (manifest.SpecVersion < 7)
+        {
+            if (manifest.Inputs != null)
+            {
+                errors.Add("inputs requires specVersion 7.");
+            }
+
+            return new HashSet<string>(StringComparer.Ordinal) { "consult_draft" };
+        }
+
+        var declared = new HashSet<string>(StringComparer.Ordinal);
+
+        if (manifest.Inputs is not { Count: > 0 })
+        {
+            errors.Add(manifest.Inputs is null
+                ? "inputs is required in specVersion 7."
+                : "inputs must declare at least one input slot in specVersion 7.");
+            return declared;
+        }
+
+        foreach (var input in manifest.Inputs)
+        {
+            if (!WorkflowDeclaredIds.IsValid(input.Id))
+            {
+                errors.Add($"Input id '{input.Id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).");
+                continue; // An ill-formed id joins no vocabulary.
+            }
+
+            if (!declared.Add(input.Id))
+            {
+                errors.Add($"Duplicate input id '{input.Id}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(input.Label))
+            {
+                errors.Add($"Input '{input.Id}' has no label.");
+            }
+        }
+
+        return declared;
+    }
+
+    /// <summary>The v7 result set: authored ids and labels over distinct aggregator nodes (package-format-v7.md § 3).</summary>
+    private static void ValidateResultSet(
+        List<WorkflowResultSpec> results,
+        IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
+        List<string> errors)
+    {
+        if (results.Count == 0)
+        {
+            errors.Add("results must declare at least one deliverable.");
+            return;
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var nodeOwners = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var result in results)
+        {
+            if (!WorkflowDeclaredIds.IsValid(result.Id))
+            {
+                errors.Add($"Result id '{result.Id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).");
+            }
+            else if (!ids.Add(result.Id))
+            {
+                errors.Add($"Duplicate result id '{result.Id}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(result.Label))
+            {
+                errors.Add($"Result '{result.Id}' has no label.");
+            }
+
+            if (result.Node is not { } nodeRef
+                || !nodeRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                || nodeRef.Length == WorkflowNodeBindingSources.NodePrefix.Length)
+            {
+                errors.Add($"Result '{result.Id}' node '{result.Node}' must be 'node:<id>'.");
+                continue;
+            }
+
+            var nodeId = nodeRef[WorkflowNodeBindingSources.NodePrefix.Length..];
+
+            if (!nodesById.TryGetValue(nodeId, out var node))
+            {
+                errors.Add($"Result '{result.Id}' references unknown node '{nodeId}'.");
+                continue;
+            }
+
+            if (node.Aggregate is null)
+            {
+                errors.Add($"Result '{result.Id}' must reference an aggregator node ('{nodeId}' is not one).");
+            }
+
+            if (!nodeOwners.TryAdd(nodeId, result.Id))
+            {
+                errors.Add($"Results '{nodeOwners[nodeId]}' and '{result.Id}' share node '{nodeId}': each deliverable needs its own aggregator.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The reachability closure (v6, union-rooted since v7): every node must
+    /// transitively feed a result through binding or aggregate edges — the
+    /// orphan-prompt philosophy applied to execution (package-format-v6-design.md
+    /// § 7). Each result must also transitively include at least one forEach
+    /// source: a deliverable with no fan has no consult.
     /// </summary>
     private static void ValidateReachability(
         WorkflowPackageManifest manifest,
@@ -393,22 +523,65 @@ public static class WorkflowPackageValidator
         IReadOnlyDictionary<string, HashSet<string>> edges,
         List<string> errors)
     {
-        if (manifest.Result is null
-            || !manifest.Result.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal))
+        // (result id, node id) roots; the string form contributes one unnamed
+        // root. Ill-formed declarations already reported their own errors.
+        var roots = new List<(string? ResultId, string NodeId)>();
+
+        if (manifest.SpecVersion >= 7 && manifest.Results != null)
         {
-            return; // The result's own errors are already reported.
+            foreach (var result in manifest.Results)
+            {
+                if (result.Node is { } nodeRef
+                    && nodeRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                    && nodesById.ContainsKey(nodeRef[WorkflowNodeBindingSources.NodePrefix.Length..]))
+                {
+                    roots.Add((result.Id, nodeRef[WorkflowNodeBindingSources.NodePrefix.Length..]));
+                }
+            }
+        }
+        else if (manifest.Result != null
+            && manifest.Result.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+            && nodesById.ContainsKey(manifest.Result[WorkflowNodeBindingSources.NodePrefix.Length..]))
+        {
+            roots.Add((null, manifest.Result[WorkflowNodeBindingSources.NodePrefix.Length..]));
         }
 
-        var resultNodeId = manifest.Result[WorkflowNodeBindingSources.NodePrefix.Length..];
-
-        if (!nodesById.ContainsKey(resultNodeId))
+        if (roots.Count == 0)
         {
             return;
         }
 
-        var reachable = new HashSet<string>(StringComparer.Ordinal) { resultNodeId };
+        var reachableFromAny = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var (resultId, rootId) in roots)
+        {
+            var reachable = WalkDependencies(rootId, edges);
+            reachableFromAny.UnionWith(reachable);
+
+            if (!reachable.Any(id => nodesById.TryGetValue(id, out var reached) && reached.ForEach != null))
+            {
+                errors.Add(resultId is null
+                    ? $"The result must transitively include at least one forEach source in specVersion {manifest.SpecVersion}."
+                    : $"Result '{resultId}' must transitively include at least one forEach source.");
+            }
+        }
+
+        foreach (var node in nodes)
+        {
+            if (!reachableFromAny.Contains(node.Id))
+            {
+                errors.Add(roots.Count == 1
+                    ? $"Node '{node.Id}' does not feed the result: every node must transitively reach '{roots[0].NodeId}' in specVersion {manifest.SpecVersion}."
+                    : $"Node '{node.Id}' does not feed any result: every node must transitively reach a result node in specVersion {manifest.SpecVersion}.");
+            }
+        }
+    }
+
+    private static HashSet<string> WalkDependencies(string rootId, IReadOnlyDictionary<string, HashSet<string>> edges)
+    {
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { rootId };
         var frontier = new Queue<string>();
-        frontier.Enqueue(resultNodeId);
+        frontier.Enqueue(rootId);
 
         while (frontier.Count > 0)
         {
@@ -428,18 +601,7 @@ public static class WorkflowPackageValidator
             }
         }
 
-        foreach (var node in nodes)
-        {
-            if (!reachable.Contains(node.Id))
-            {
-                errors.Add($"Node '{node.Id}' does not feed the result: every node must transitively reach '{resultNodeId}' in specVersion 6.");
-            }
-        }
-
-        if (!reachable.Any(id => nodesById.TryGetValue(id, out var reached) && reached.ForEach != null))
-        {
-            errors.Add("The result must transitively include at least one forEach source in specVersion 6.");
-        }
+        return reachable;
     }
 
     private static bool TryResolveForEachCollection(
@@ -473,12 +635,34 @@ public static class WorkflowPackageValidator
     private static void ValidateResult(
         WorkflowPackageManifest manifest,
         IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
-        bool v6,
+        bool v6OrLater,
         List<string> errors)
     {
+        if (manifest.SpecVersion >= 7 && manifest.Results != null)
+        {
+            // The list form owns the declaration; the string form stays valid
+            // only as one-entry sugar (package-format-v7.md § 3).
+            if (manifest.Result != null)
+            {
+                errors.Add("Declare result or results, not both.");
+                return;
+            }
+
+            ValidateResultSet(manifest.Results, nodesById, errors);
+            return;
+        }
+
+        if (manifest.Results != null)
+        {
+            errors.Add("results requires specVersion 7.");
+            // The string result still validates below.
+        }
+
         if (manifest.Result is null)
         {
-            errors.Add($"result is required in specVersion {manifest.SpecVersion}.");
+            errors.Add(manifest.SpecVersion >= 7
+                ? "A result or results declaration is required in specVersion 7."
+                : $"result is required in specVersion {manifest.SpecVersion}.");
             return;
         }
 
@@ -497,13 +681,13 @@ public static class WorkflowPackageValidator
             return;
         }
 
-        if (v6)
+        if (v6OrLater)
         {
-            // The deliverable is the assembled document: v6 results always name an
-            // aggregator (package-format-v6-design.md § 4).
+            // The deliverable is the assembled document: v6+ results always name
+            // an aggregator (package-format-v6-design.md § 4).
             if (resultNode.Aggregate is null)
             {
-                errors.Add($"result must reference an aggregator node in specVersion 6 ('{resultNodeId}' is not one).");
+                errors.Add($"result must reference an aggregator node in specVersion {manifest.SpecVersion} ('{resultNodeId}' is not one).");
             }
         }
         else if (resultNode.ForEach is null)

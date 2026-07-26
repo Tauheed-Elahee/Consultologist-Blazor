@@ -15,7 +15,29 @@ public sealed record WorkflowPackageManifest(
     List<WorkflowNodeSpec>? Nodes = null,
     string? DerivedFrom = null,
     Dictionary<string, string>? Data = null,
-    string? Result = null);
+    string? Result = null,
+    List<WorkflowInputSpec>? Inputs = null,
+    List<WorkflowResultSpec>? Results = null);
+
+/// <summary>
+/// One declared input slot of a specVersion-7 package: the id nodes bind as
+/// "input:&lt;id&gt;" and callers supply per job
+/// (docs/customizable-workflow/package-format-v7.md § 2).
+/// </summary>
+public sealed record WorkflowInputSpec(
+    string Id,
+    string Label,
+    bool Required = true);
+
+/// <summary>
+/// One declared deliverable of a specVersion-7 package: an authored id and
+/// label naming an aggregator node. The string "result" form remains valid as
+/// one-entry sugar (docs/customizable-workflow/package-format-v7.md § 3).
+/// </summary>
+public sealed record WorkflowResultSpec(
+    string Id,
+    string Node,
+    string Label);
 
 public sealed record WorkflowTemplatingSpec(
     string Engine,
@@ -144,6 +166,13 @@ public sealed record WorkflowPromptTemplate(
     IReadOnlyList<string> Variables,
     string? PreludeText);
 
+/// <summary>
+/// A deliverable of a resolved package: the declared (or sugar-derived) id and
+/// label with the aggregator node it names. v5/v6 packages resolve with a null
+/// set — ResultNodeId remains their single-result contract.
+/// </summary>
+public sealed record WorkflowResolvedResult(string Id, string NodeId, string Label);
+
 public sealed record WorkflowPackage(
     WorkflowPackageManifest Manifest,
     IReadOnlyDictionary<string, WorkflowPromptTemplate>? Prompts = null,
@@ -151,7 +180,8 @@ public sealed record WorkflowPackage(
     IReadOnlyDictionary<string, string>? SchemaContracts = null,
     WorkflowPackageData? Data = null,
     string? ResultNodeId = null,
-    IReadOnlyDictionary<string, string>? SourceFiles = null)
+    IReadOnlyDictionary<string, string>? SourceFiles = null,
+    IReadOnlyList<WorkflowResolvedResult>? Results = null)
 {
     public string Ref => $"{Manifest.Name}@{Manifest.Version}";
 

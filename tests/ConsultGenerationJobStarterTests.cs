@@ -108,6 +108,32 @@ public class ConsultGenerationJobStarterTests
     }
 
     [Fact]
+    public async Task SpecVersion7Package_IsRejectedByTheInterimGuard()
+    {
+        // #214 posture: the format layer accepts v7, execution does not yet —
+        // removed with the v7 engine work.
+        var manifest = V7Fixtures.Minimal();
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(
+                manifest,
+                Nodes: manifest.Nodes,
+                ResultNodeId: "assemble-note",
+                Results: new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest("draft"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.SpecVersionNotYetExecutable, outcome.Error);
+        Assert.Null(outcome.JobId);
+    }
+
+    [Fact]
     public async Task Success_SignalsInitializeAndSchedulesWithSameJobIdAndDraftHash()
     {
         var request = new ConsultGenerationRequest("The referral body");

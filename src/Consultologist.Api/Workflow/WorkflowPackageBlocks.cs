@@ -12,6 +12,11 @@ public static class WorkflowPackageBlocks
 {
     public static IReadOnlyList<WorkflowDeliverableBlock> Resolve(WorkflowPackage package)
     {
+        if (package.Manifest.SpecVersion >= 7)
+        {
+            return ResolveResultSetBlocks(package);
+        }
+
         if (package.Manifest.SpecVersion == 6)
         {
             return ResolveBlocks(package);
@@ -43,9 +48,47 @@ public static class WorkflowPackageBlocks
             throw new InvalidOperationException($"Package {package.Ref} result node '{resultNode.Id}' is not an aggregator (specVersion 6 requires one).");
         }
 
+        return ExpandAggregator(package, nodesById, resultNode, resultId: null).ToList();
+    }
+
+    /// <summary>
+    /// v7: the union of each deliverable's expansion in result-set order, block
+    /// ids carrying the deliverable dimension — "resultId:nodeId:itemId"
+    /// ("resultId:nodeId" for scalar sources) — so two deliverables sharing a
+    /// source never collide (package-format-v7.md § 4). v5/v6 ids are unchanged.
+    /// </summary>
+    public static IReadOnlyList<WorkflowDeliverableBlock> ResolveResultSetBlocks(WorkflowPackage package)
+    {
+        var results = package.Results
+            ?? throw new InvalidOperationException($"Package {package.Ref} resolved no result set (specVersion 7 requires one).");
+
+        var nodes = package.Nodes ?? new List<WorkflowNodeSpec>();
+        var nodesById = nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
         var blocks = new List<WorkflowDeliverableBlock>();
 
-        foreach (var sourceRef in resultNode.Aggregate)
+        foreach (var result in results)
+        {
+            var resultNode = nodesById.GetValueOrDefault(result.NodeId)
+                ?? throw new InvalidOperationException($"Package {package.Ref} has no result node '{result.NodeId}'.");
+
+            if (resultNode.Aggregate is null)
+            {
+                throw new InvalidOperationException($"Package {package.Ref} result node '{resultNode.Id}' is not an aggregator (specVersion 7 requires one).");
+            }
+
+            blocks.AddRange(ExpandAggregator(package, nodesById, resultNode, result.Id));
+        }
+
+        return blocks;
+    }
+
+    private static IEnumerable<WorkflowDeliverableBlock> ExpandAggregator(
+        WorkflowPackage package,
+        IReadOnlyDictionary<string, WorkflowNodeSpec> nodesById,
+        WorkflowNodeSpec resultNode,
+        string? resultId)
+    {
+        foreach (var sourceRef in resultNode.Aggregate!)
         {
             var sourceId = sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
                 ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
@@ -59,18 +102,22 @@ public static class WorkflowPackageBlocks
                 var collection = package.Data?.Collections.GetValueOrDefault(collectionId)
                     ?? throw new InvalidOperationException($"Package {package.Ref} has no data collection '{collectionId}'.");
 
-                blocks.AddRange(collection.Items.Select(item => new WorkflowDeliverableBlock(
-                    $"{sourceId}:{item.Id}",
-                    item.Fields.GetValueOrDefault("name", item.Id),
-                    item.Fields.GetValueOrDefault("content", string.Empty))));
+                foreach (var item in collection.Items)
+                {
+                    yield return new WorkflowDeliverableBlock(
+                        resultId is null ? $"{sourceId}:{item.Id}" : $"{resultId}:{sourceId}:{item.Id}",
+                        item.Fields.GetValueOrDefault("name", item.Id),
+                        item.Fields.GetValueOrDefault("content", string.Empty));
+                }
             }
             else
             {
-                blocks.Add(new WorkflowDeliverableBlock(sourceId, source.Label, string.Empty));
+                yield return new WorkflowDeliverableBlock(
+                    resultId is null ? sourceId : $"{resultId}:{sourceId}",
+                    source.Label,
+                    string.Empty);
             }
         }
-
-        return blocks;
     }
 
     /// <summary>The result node's forEach collection — the items a v5 job fans over.</summary>

@@ -160,6 +160,7 @@ public sealed class ConsultGenerationJobs
                     ConsultGenerationJobStartError.ForeignPackageRef => HttpStatusCode.Forbidden,
                     ConsultGenerationJobStartError.RegistryUnavailable => HttpStatusCode.ServiceUnavailable,
                     ConsultGenerationJobStartError.PackageNotExecutable => HttpStatusCode.UnprocessableEntity,
+                    ConsultGenerationJobStartError.SpecVersionNotYetExecutable => HttpStatusCode.UnprocessableEntity,
                     _ => HttpStatusCode.InternalServerError
                 };
                 return await CreateJsonResponseAsync(req, status, new { error = outcome.ErrorDetail }, cancellationToken);

@@ -17,7 +17,7 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
     private const string ContainerName = WorkflowPackageBlobContainerFactory.ContainerName;
 
     /// <summary>A manifest declares the rule set it was validated under (package-format-v6-design.md § 9).</summary>
-    public static readonly IReadOnlyList<int> SupportedSpecVersions = new[] { 5, 6 };
+    public static readonly IReadOnlyList<int> SupportedSpecVersions = new[] { 5, 6, 7 };
     private static readonly TimeSpan LatestPointerCacheDuration = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -72,14 +72,47 @@ public sealed class WorkflowPackageStore : IWorkflowPackageStore
         var prompts = loaded.Prompts;
 
         var nodes = manifest.Nodes;
-        var resultNodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
+        var results = ResolveResultSet(manifest);
+        var resultNodeId = results is null
+            ? manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..]
+            : results.Count == 1 ? results[0].NodeId : null;
         var schemaContracts = loaded.SchemaContracts;
 
-        var package = new WorkflowPackage(manifest, prompts, nodes, schemaContracts, loaded.Data, resultNodeId, loaded.Files);
+        var package = new WorkflowPackage(manifest, prompts, nodes, schemaContracts, loaded.Data, resultNodeId, loaded.Files, results);
 
         _packageCache.TryAdd(cacheKey, package);
         _logger.LogInformation("Workflow package resolved. Package={Package}, SpecVersion={SpecVersion}, Prompts={PromptCount}", cacheKey, manifest.SpecVersion, prompts?.Count ?? 0);
         return package;
+    }
+
+    /// <summary>
+    /// The v7 result set: declared entries, or the string result as one-entry
+    /// sugar (id "consult" keeps single-result delivery filenames identical to
+    /// v6's, package-format-v7.md § 3). v5/v6 resolve null — ResultNodeId is
+    /// their contract. Runs after validation, so the declarations are
+    /// well-formed; ResultNodeId is populated only for a single-entry set, so
+    /// a not-yet-migrated consumer fails loud on multi-deliverable packages.
+    /// </summary>
+    private static IReadOnlyList<WorkflowResolvedResult>? ResolveResultSet(WorkflowPackageManifest manifest)
+    {
+        if (manifest.SpecVersion < 7)
+        {
+            return null;
+        }
+
+        if (manifest.Results is { Count: > 0 })
+        {
+            return manifest.Results
+                .Select(result => new WorkflowResolvedResult(
+                    result.Id,
+                    result.Node[WorkflowNodeBindingSources.NodePrefix.Length..],
+                    result.Label))
+                .ToList();
+        }
+
+        var nodeId = manifest.Result![WorkflowNodeBindingSources.NodePrefix.Length..];
+        var label = manifest.Nodes?.FirstOrDefault(node => node.Id == nodeId)?.Label ?? nodeId;
+        return new List<WorkflowResolvedResult> { new("consult", nodeId, label) };
     }
 
     /// <summary>

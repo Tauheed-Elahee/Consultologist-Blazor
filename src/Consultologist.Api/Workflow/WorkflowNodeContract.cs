@@ -1,12 +1,14 @@
+using System.Text.RegularExpressions;
+
 namespace Consultologist.Api.Workflow;
 
 /// <summary>
-/// The specVersion-5 node vocabulary: binding-reference parsing, the closed
-/// concept-renderer set, and the engine defaults. Parsing is namespace-syntactic;
-/// vocabulary closures (collection-declared item fields, declared data entries)
-/// belong to the validator. Pre-v5 vocabularies (map kinds, previous_step_output,
-/// input:sections, the synthesis shims) were retired by the v5-only rebase —
-/// see docs/customizable-workflow/package-format-v5.md.
+/// The node vocabulary: binding-reference parsing, the closed concept-renderer
+/// set, and the engine defaults. Parsing is namespace-syntactic; vocabulary
+/// closures (collection-declared item fields, declared data entries, declared
+/// input slots) belong to the validator. Pre-v5 vocabularies (map kinds,
+/// previous_step_output, input:sections, the synthesis shims) were retired by
+/// the v5-only rebase — see docs/customizable-workflow/package-format-v5.md.
 /// </summary>
 public abstract record WorkflowNodeBindingSource
 {
@@ -22,8 +24,6 @@ public static class WorkflowNodeBindingSources
     public const string ItemName = "item:name";
     public const string NodePrefix = "node:";
     public const string DataPrefix = "data:";
-
-    private static readonly IReadOnlySet<string> InputNames = new HashSet<string>(StringComparer.Ordinal) { "consult_draft" };
 
     public static bool TryParse(string raw, out WorkflowNodeBindingSource? source, out string? error)
     {
@@ -42,12 +42,9 @@ public static class WorkflowNodeBindingSources
 
         switch (ns)
         {
-            case "input" when InputNames.Contains(name):
+            case "input":
                 source = new WorkflowNodeBindingSource.Input(name);
                 return true;
-            case "input":
-                error = $"unknown input '{name}' (expected consult_draft)";
-                return false;
             case "item":
                 source = new WorkflowNodeBindingSource.Item(name);
                 return true;
@@ -62,6 +59,19 @@ public static class WorkflowNodeBindingSources
                 return false;
         }
     }
+}
+
+/// <summary>
+/// The id grammar shared by specVersion-7 declared inputs and results:
+/// snake_case, letter-first (package-format-v7.md § 2). One rule for both
+/// declared-vocabulary sections; result ids additionally feed delivery
+/// filenames, where the absence of '-' keeps "{resultId}-{jobId8}" unambiguous.
+/// </summary>
+public static class WorkflowDeclaredIds
+{
+    private static readonly Regex Pattern = new("^[a-z][a-z0-9_]*$", RegexOptions.Compiled);
+
+    public static bool IsValid(string? id) => id != null && Pattern.IsMatch(id);
 }
 
 public static class WorkflowConceptRenderers
