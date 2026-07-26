@@ -32,5 +32,6 @@ builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>(client =>
 builder.Services.AddHttpClient<IAccountEndpointService, AccountEndpointService>();
 builder.Services.AddHttpClient<ISseDiagnosticsService, SseDiagnosticsService>();
 builder.Services.AddHttpClient<IWorkflowEndpointService, WorkflowEndpointService>();
+builder.Services.AddScoped<Consultologist.Web.Services.AI.ConsultJobSession>();
 
 await builder.Build().RunAsync();

@@ -64,6 +64,16 @@
 	font-size: 0.8rem;
 }
 
+.watch-live-link {
+	font-size: 0.8rem;
+	color: var(--consultologist-accent);
+	text-decoration: none;
+}
+
+.watch-live-link:hover {
+	text-decoration: underline;
+}
+
 .job-source-badge {
 	display: inline-flex;
 	align-items: center;

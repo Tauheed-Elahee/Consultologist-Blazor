@@ -11,10 +11,12 @@
 @inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
 @inject IWorkflowEndpointService WorkflowService
+@inject ConsultJobSession JobSession
 @attribute [Authorize]
 @implements IAsyncDisposable
 
 @page "/consults"
+@page "/consults/{JobId}"
 
 <PageTitle>Consults</PageTitle>
 
@@ -126,13 +128,16 @@
                         <span class="draft-bar__chevron" aria-hidden="true">&#x203A;</span>
                         <span class="draft-bar__label">Draft</span>
                         <span class="draft-bar__snippet">@DraftSnippet</span>
-                        <span @onclick:stopPropagation="true">
-                            <FluentButton Appearance="Appearance.Stealth"
-                                          @onclick="EditDraft"
-                                          Disabled="@isAiRequestLoading">
-                                Edit draft
-                            </FluentButton>
-                        </span>
+                        @if (!string.IsNullOrEmpty(consultDraft))
+                        {
+                            <span @onclick:stopPropagation="true">
+                                <FluentButton Appearance="Appearance.Stealth"
+                                              @onclick="EditDraft"
+                                              Disabled="@isAiRequestLoading">
+                                    Edit draft
+                                </FluentButton>
+                            </span>
+                        }
                     </summary>
                     <div class="draft-bar__full">@consultDraft</div>
                 </details>
@@ -387,11 +392,78 @@
   private SseAttemptState? activeSseAttempt;
   private IReadOnlyList<PackageBlock> activeBlockSnapshots = Array.Empty<PackageBlock>();
 
+  [Parameter]
+  public string? JobId { get; set; }
+
   protected override async Task OnInitializedAsync()
   {
     Navigation.LocationChanged += HandleLocationChanged;
     await LoadPackageBlocksAsync();
     await LoadWorkflowNodesAsync();
+    await TryReattachAsync();
+  }
+
+  // #207: re-attach to an in-flight (or just-finished) job instead of showing
+  // a blank setup. The route job id (History's "watch live") wins over the
+  // per-tab session; when the session matches, it supplies the draft and the
+  // exact block roster the run was submitted with — the job record carries
+  // neither, so a route-only entry renders without draft text and with the
+  // current pin's roster (the polling fallback's existing limitation).
+  private async Task TryReattachAsync()
+  {
+    var memento = JobSession.Current;
+    var targetJobId = !string.IsNullOrWhiteSpace(JobId) ? JobId : memento?.JobId;
+
+    if (targetJobId == null)
+    {
+      return;
+    }
+
+    var sessionMatches = memento != null && memento.JobId == targetJobId;
+
+    if (sessionMatches)
+    {
+      consultDraft = memento!.Draft;
+      workflowPackageRef = memento.WorkflowPackageRef ?? workflowPackageRef;
+    }
+
+    var blockSnapshots = sessionMatches
+      ? memento!.Blocks.Select(block => new PackageBlock(block.Id, block.Name)).ToList()
+      : packageBlocks.ToList();
+
+    try
+    {
+      isAiRequestLoading = true;
+      editingDraft = false;
+      await InvokeAsync(StateHasChanged);
+
+      var snapshot = await AIService.GetConsultGenerationJobAsync(targetJobId);
+      ApplyConsultGenerationJobResponse(snapshot, blockSnapshots);
+
+      if (snapshot.Status is "Completed" or "Failed")
+      {
+        runTerminalStatus = snapshot.Status;
+        return;
+      }
+
+      await RunAttachedJobAsync(targetJobId, blockSnapshots);
+    }
+    catch (AccessTokenNotAvailableException exception)
+    {
+      exception.Redirect();
+    }
+    catch (Exception ex)
+    {
+      aiRequestError = $"Unable to attach to job: {ex.Message}";
+      runTerminalStatus = null;
+      totalBlockCount = 0;
+    }
+    finally
+    {
+      isAiRequestLoading = false;
+      activeSseAttempt = null;
+      activeEventStreamCancellationReason = null;
+    }
   }
 
   // The full node map is display enrichment for the run rail; failures fall
@@ -544,22 +616,15 @@
       // Sections are package data resolved server-side; the request carries only
       // the draft (and the resolved package ref).
       var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, workflowPackageRef);
-      var streamResult = await StreamConsultGenerationJobAsync(job.JobId, blockSnapshots);
 
-      if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
-      {
-        Logger.LogWarning(
-          "Consult generation falling back to polling. JobId={JobId}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, TotalCount={TotalCount}",
-          job.JobId,
-          generatedBlocks.Count,
-          failedBlockErrors.Count,
-          totalBlockCount);
+      // #207: remember the job per-tab so navigating away and back re-attaches.
+      JobSession.Current = new ConsultJobMemento(
+        job.JobId,
+        draftSnapshot,
+        workflowPackageRef,
+        blockSnapshots.Select(block => new ConsultJobBlock(block.Id, block.Name)).ToList());
 
-        aiProgressNotice = "Live updates paused; checking status periodically.";
-        MarkPollingFallbackStarted();
-        await InvokeAsync(StateHasChanged);
-        await PollConsultGenerationJobAsync(job.JobId, blockSnapshots);
-      }
+      await RunAttachedJobAsync(job.JobId, blockSnapshots);
     }
     catch (Exception ex)
     {
@@ -570,6 +635,28 @@
       isAiRequestLoading = false;
       activeSseAttempt = null;
       activeEventStreamCancellationReason = null;
+    }
+  }
+
+  // The live-viewing block shared by submit and re-attach: stream, then fall
+  // back to polling if the stream cannot complete.
+  private async Task RunAttachedJobAsync(string jobId, IReadOnlyList<PackageBlock> blockSnapshots)
+  {
+    var streamResult = await StreamConsultGenerationJobAsync(jobId, blockSnapshots);
+
+    if (streamResult == ConsultGenerationStreamResult.FallbackToPolling && isAiRequestLoading)
+    {
+      Logger.LogWarning(
+        "Consult generation falling back to polling. JobId={JobId}, CompletedCount={CompletedCount}, FailedCount={FailedCount}, TotalCount={TotalCount}",
+        jobId,
+        generatedBlocks.Count,
+        failedBlockErrors.Count,
+        totalBlockCount);
+
+      aiProgressNotice = "Live updates paused; checking status periodically.";
+      MarkPollingFallbackStarted();
+      await InvokeAsync(StateHasChanged);
+      await PollConsultGenerationJobAsync(jobId, blockSnapshots);
     }
   }
 
@@ -990,7 +1077,10 @@
     get
     {
       var flattened = consultDraft.ReplaceLineEndings(" ").Trim();
-      return flattened.Length <= 80 ? flattened : flattened[..80] + "…";
+      // Empty when re-attached from another tab — the record carries no draft.
+      return flattened.Length == 0 ? "—"
+        : flattened.Length <= 80 ? flattened
+        : flattened[..80] + "…";
     }
   }
 
