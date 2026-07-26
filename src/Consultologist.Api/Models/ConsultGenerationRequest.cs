@@ -57,7 +57,16 @@ public record ConsultGenerationJobResponse(
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
     string? Source = null,
     // #157: when a scheduled job was/is due to start (null = immediate job).
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // v7: the per-deliverable documents in result-set order (Completed jobs
+    // only; hash version 3 covers exactly these). Null on v5/v6 jobs.
+    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
+
+/// <summary>One v7 deliverable on the job response: authored id and label plus the text.</summary>
+public sealed record ConsultGenerationResultDocumentResponse(
+    string ResultId,
+    string Label,
+    string Text);
 
 /// <summary>
 /// The identity and display label of one per-item chain step, snapshotted from the

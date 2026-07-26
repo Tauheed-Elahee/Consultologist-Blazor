@@ -115,6 +115,31 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
     }
 
+    /// <summary>
+    /// v7: stores one deliverable's rendered output (package-format-v7.md).
+    /// Upsert keyed by ResultId, ordered by Ordinal; v6's CompleteDocument and
+    /// AssembledDocument are untouched — the two shapes never mix in one record.
+    /// </summary>
+    public async Task CompleteResultDocument(ConsultGenerationResultDocument input)
+    {
+        var state = EnsureState();
+        state.SchemaVersion = 7;
+        state.AssembledDocuments ??= new List<ConsultGenerationResultDocumentState>();
+        state.AssembledDocuments.RemoveAll(d => d.ResultId == input.ResultId);
+        state.AssembledDocuments.Add(new ConsultGenerationResultDocumentState
+        {
+            ResultId = input.ResultId,
+            Label = input.Label,
+            Text = input.Text,
+            Ordinal = input.Ordinal
+        });
+        state.AssembledDocuments.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
+        state.History.Add(new JobHistoryEvent("success", $"Assembled document produced: {input.Label}", null, DateTimeOffset.UtcNow));
+        State = state;
+
+        await _indexStore.UpsertAsync(state.ToIndexEntry(), CancellationToken.None);
+    }
+
     public async Task FailBlock(BlockGenerationResult result)
     {
         var state = EnsureState();
@@ -285,7 +310,13 @@ public sealed record ConsultGenerationOrchestrationInput(
     // and, for email jobs, where the completion reply goes. Append-only for
     // Durable payload compatibility.
     string? Source = null,
-    string? ReplyToAddress = null);
+    string? ReplyToAddress = null,
+    // v7 (package-format-v7.md): the result set (non-null selects per-
+    // deliverable execution) and the effective input map (every declared id
+    // present; absent optional inputs as empty strings). Null on every v5/v6
+    // job — sleeping instances replay through the legacy arms untouched.
+    IReadOnlyList<ConsultResultDescriptor>? Results = null,
+    IReadOnlyDictionary<string, string>? Inputs = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -317,6 +348,17 @@ public sealed record ConsultGenerationNodeFailure(
     IReadOnlyList<ConsultItemStepDescriptor> SkippedNodes);
 
 public sealed record ConsultGenerationJobFinalize(string Status, string? Error = null);
+
+/// <summary>
+/// One completed v7 deliverable: the result aggregator's rendered output with
+/// its authored identity. Ordinal is the result-set position — aggregators
+/// complete in data-dependent order, so the position travels with the payload.
+/// </summary>
+public sealed record ConsultGenerationResultDocument(
+    string ResultId,
+    string Label,
+    string Text,
+    int Ordinal);
 
 /// <summary>
 /// One forEach instance's completion: per-item provenance plus the item's chain
@@ -381,6 +423,10 @@ public sealed class ConsultGenerationJobState
     // v6: the result aggregator's rendered output — the deliverable itself
     // (stored text, the same species as sections' GeneratedText).
     public string? AssembledDocument { get; set; }
+
+    // v7: one entry per completed deliverable, ordered by result-set position.
+    // Never set on the same record as AssembledDocument.
+    public List<ConsultGenerationResultDocumentState>? AssembledDocuments { get; set; }
 
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
     public string? Source { get; set; }
@@ -531,18 +577,30 @@ public sealed class ConsultGenerationJobState
             EffectiveInputHashVersion: EffectiveInputHashVersion,
             CatalogRef: CatalogRef,
             // Derived, never stored: the deliverable hash of a partial job is
-            // undefined, so only completed jobs carry it (provenance.md).
+            // undefined, so only completed jobs carry it (provenance.md). The
+            // three-way dispatch: v7 document set → v3, v6 single document →
+            // v2, v5 sections → v1 (package-format-v7.md).
             WorkflowOutputHash: Status != ConsultGenerationJobStatuses.Completed
                 ? null
-                : AssembledDocument != null
-                    ? ConsultGenerationProvenance.ComputeAssembledDocumentHash(AssembledDocument)
-                    : ConsultGenerationProvenance.ComputeWorkflowOutputHash(completedSections),
+                : AssembledDocuments is { Count: > 0 }
+                    ? ConsultGenerationProvenance.ComputeResultSetHash(
+                        AssembledDocuments.ToDictionary(d => d.ResultId, d => d.Text, StringComparer.Ordinal))
+                    : AssembledDocument != null
+                        ? ConsultGenerationProvenance.ComputeAssembledDocumentHash(AssembledDocument)
+                        : ConsultGenerationProvenance.ComputeWorkflowOutputHash(completedSections),
             WorkflowOutputHashVersion: Status != ConsultGenerationJobStatuses.Completed
                 ? null
-                : AssembledDocument != null
-                    ? ConsultGenerationProvenance.AssembledDocumentHashVersion
-                    : ConsultGenerationProvenance.WorkflowOutputHashVersion,
-            AssembledDocument: Status == ConsultGenerationJobStatuses.Completed ? AssembledDocument : null);
+                : AssembledDocuments is { Count: > 0 }
+                    ? ConsultGenerationProvenance.ResultSetHashVersion
+                    : AssembledDocument != null
+                        ? ConsultGenerationProvenance.AssembledDocumentHashVersion
+                        : ConsultGenerationProvenance.WorkflowOutputHashVersion,
+            AssembledDocument: Status == ConsultGenerationJobStatuses.Completed ? AssembledDocument : null,
+            AssembledDocuments: Status == ConsultGenerationJobStatuses.Completed && AssembledDocuments is { Count: > 0 }
+                ? AssembledDocuments
+                    .Select(d => new ConsultGenerationResultDocumentResponse(d.ResultId, d.Label, d.Text))
+                    .ToList()
+                : null);
     }
 }
 
@@ -555,6 +613,15 @@ public sealed class ConsultGenerationBlockState
     public string? GeneratedText { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
+}
+
+/// <summary>One completed v7 deliverable: authored identity plus the rendered text.</summary>
+public sealed class ConsultGenerationResultDocumentState
+{
+    public string ResultId { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public int Ordinal { get; set; }
 }
 
 /// <summary>One forEach item's chain progress — the section-prose-step source.</summary>
