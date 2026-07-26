@@ -196,10 +196,11 @@ source nodes); a result aggregator that cannot render fails the job.
   completion reply, filename `{resultId}-{jobId8}.pdf` (e.g.
   `consult_note-ab12cd34.pdf`) — snake_case ids cannot contain `-`, so
   the separator parses unambiguously; the result id is authored package
-  content, never patient data, preserving the no-PHI-in-filenames rule. Total-attachment size posture: inline
-  attachments cap ~3 MB base64; if the set exceeds it, attach none and
-  fall back to the link-only reply (degrade whole, never partially —
-  a partial document set misleads).
+  content, never patient data, preserving the no-PHI-in-filenames rule.
+  Total-attachment size posture: inline attachments cap ~3 MB base64;
+  if the set exceeds it, attach none and fall back to the link-only
+  reply (degrade whole, never partially — a partial document set
+  misleads).
 
 ## 6. Provenance
 
