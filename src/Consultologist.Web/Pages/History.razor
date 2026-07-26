@@ -72,6 +72,12 @@
                                         {
                                             <span class="muted-text">@job.FailedBlockCount failed</span>
                                         }
+                                        @if (job.Status is "Running" or "Queued")
+                                        {
+                                            <a class="watch-live-link" href="/consults/@job.JobId"
+                                               @onclick:stopPropagation="true"
+                                               title="Open the live run view in Consults">watch live</a>
+                                        }
                                     </div>
                                     <div class="job-history-item__id">
                                         <span class="muted-text">@job.JobId[..8]&hellip;</span>
