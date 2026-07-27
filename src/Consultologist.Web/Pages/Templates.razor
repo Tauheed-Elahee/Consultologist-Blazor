@@ -923,11 +923,16 @@
         added.Aggregate != null ? null : added.PromptRef ?? added.Id,
         added.ForEach,
         Array.Empty<WorkflowManifestReader.BindingView>(),
-        IsResult: EffectiveResultRef == $"node:{added.Id}",
+        IsResult: DeliverableRootIds.Contains(added.Id),
         HasOutput: added.OutputSchema != null,
         Aggregate: added.Aggregate,
         OutputSchema: added.OutputSchema,
         FailIfEmpty: added.FailIfEmpty);
+
+    // Pending v7 declarations, each the whole list when dirty (the
+    // aggregate-source idiom) and null when unchanged.
+    private List<WorkflowManifestReader.InputView>? inputsEdit;
+    private List<WorkflowManifestReader.ResultView>? resultsEdit;
 
     // The pending deliverable wins over the manifest's result.
     private string? EffectiveResultRef =>
@@ -959,7 +964,7 @@
                     n = n with { Aggregate = sources };
                 }
 
-                return n with { IsResult = EffectiveResultRef == $"node:{n.Id}" };
+                return n with { IsResult = DeliverableRootIds.Contains(n.Id) };
             })
             .Concat(addedNodes.Select(AddedNodeView))
             .ToList();
@@ -980,11 +985,34 @@
                 p.Id, AddedStandalonePromptFile(p.Id), Array.Empty<string>(), null)))
             .ToList();
 
-    // Deliverable candidates by spec version: v6 aggregators, v5 forEach nodes.
+    // Deliverable candidates by spec version: aggregators from v6 on (v7's
+    // results must each name one), forEach nodes in v5 where the fan itself
+    // was the deliverable.
     private IReadOnlyList<WorkflowManifestReader.NodeView> DeliverableCandidates =>
-        (content?.SpecVersion == 6
+        (content?.SpecVersion >= 6
             ? EffectiveNodes.Where(n => n.Aggregate != null)
             : EffectiveNodes.Where(n => n.ForEach != null)).ToList();
+
+    private bool IsV7 => content?.SpecVersion >= 7;
+
+    // The declared deliverables with pending edits applied. Empty for v5/v6 and
+    // for a v7 package still on the string result form.
+    private IReadOnlyList<WorkflowManifestReader.ResultView> EffectiveResults =>
+        resultsEdit ?? (content != null && IsV7
+            ? WorkflowManifestReader.ReadResults(content.Manifest)
+            : Array.Empty<WorkflowManifestReader.ResultView>());
+
+    // Every node a deliverable points at — the roots reachability walks back
+    // from. v7 unions the declared set; v5/v6 use the single result.
+    private IReadOnlyList<string> DeliverableRootIds =>
+        EffectiveResults.Count > 0
+            ? EffectiveResults
+                .Where(result => result.Node.StartsWith("node:", StringComparison.Ordinal))
+                .Select(result => result.Node["node:".Length..])
+                .ToList()
+            : EffectiveResultRef is { } singleRef && singleRef.StartsWith("node:", StringComparison.Ordinal)
+                ? new List<string> { singleRef["node:".Length..] }
+                : Array.Empty<string>();
 
     private async Task OnAggregateChangedAsync(WorkflowNodeSummary.AggregateChange change)
     {
@@ -1025,13 +1053,13 @@
         await PersistDraftAsync();
     }
 
-    // The v6 live guardrail: reverse BFS from the effective deliverable over
-    // effective binding + aggregate edges. Informational — the server's
-    // reachability rule is the authority at publish.
+    // The live guardrail from v6 on: reverse BFS from the effective
+    // deliverables over effective binding + aggregate edges, union-rooted since
+    // v7 can declare several. Informational — the server's reachability rule is
+    // the authority at publish.
     private IReadOnlyList<string> UnreachableNodeLabels()
     {
-        if (content?.SpecVersion != 6 || EffectiveResultRef is not { } resultRef
-            || !resultRef.StartsWith("node:", StringComparison.Ordinal))
+        if (content?.SpecVersion < 6 || DeliverableRootIds.Count == 0)
         {
             return Array.Empty<string>();
         }
@@ -1063,14 +1091,15 @@
             incoming[node.Id] = sources;
         }
 
-        var resultId = resultRef["node:".Length..];
         var reached = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
 
-        if (byId.ContainsKey(resultId))
+        foreach (var rootId in DeliverableRootIds)
         {
-            reached.Add(resultId);
-            queue.Enqueue(resultId);
+            if (byId.ContainsKey(rootId) && reached.Add(rootId))
+            {
+                queue.Enqueue(rootId);
+            }
         }
 
         while (queue.Count > 0)
@@ -2559,7 +2588,8 @@
         if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0
             && addedCollections.Count == 0 && nodeEdits.Count == 0
             && addedNodes.Count == 0 && removedNodeIds.Count == 0 && addedPrompts.Count == 0
-            && aggregateEdits.Count == 0 && resultEdit == null)
+            && aggregateEdits.Count == 0 && resultEdit == null
+            && inputsEdit == null && resultsEdit == null)
         {
             return content!.Manifest;
         }
@@ -2702,8 +2732,37 @@
             }
         }
 
-        // The pending deliverable selection.
-        if (resultEdit != null)
+        // The pending declarations. A v7 package's results list owns the
+        // deliverable — writing the string result beside it would trip the
+        // validator's "Declare result or results, not both".
+        if (inputsEdit != null)
+        {
+            root[root["Inputs"] is not null ? "Inputs" : "inputs"] = new System.Text.Json.Nodes.JsonArray(
+                inputsEdit
+                    .Select(input => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["id"] = input.Id,
+                        ["label"] = input.Label,
+                        ["required"] = input.Required
+                    })
+                    .ToArray());
+        }
+
+        if (resultsEdit != null)
+        {
+            root.AsObject().Remove("result");
+            root.AsObject().Remove("Result");
+            root[root["Results"] is not null ? "Results" : "results"] = new System.Text.Json.Nodes.JsonArray(
+                resultsEdit
+                    .Select(result => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["id"] = result.Id,
+                        ["node"] = result.Node,
+                        ["label"] = result.Label
+                    })
+                    .ToArray());
+        }
+        else if (resultEdit != null)
         {
             root[root["Result"] is not null ? "Result" : "result"] = resultEdit;
         }
