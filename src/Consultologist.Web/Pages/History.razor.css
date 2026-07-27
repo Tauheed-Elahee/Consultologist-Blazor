@@ -189,6 +189,12 @@
 	font-weight: 600;
 }
 
+/* Per-deliverable digests sit under the job-level output hash they compose. */
+.provenance-list__nested {
+	padding-left: 0.9rem;
+	font-weight: 400;
+}
+
 .provenance-list dd {
 	margin: 0;
 	overflow-wrap: anywhere;
