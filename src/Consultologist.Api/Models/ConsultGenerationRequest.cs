@@ -3,11 +3,17 @@ using System.Text.Json.Serialization;
 namespace Consultologist.Api.Models;
 
 public record ConsultGenerationRequest(
-    string ConsultDraft,
+    // Exactly one of ConsultDraft / Inputs per request. The legacy field stays
+    // valid for every package; against a v7 package it back-fills the
+    // consult_draft slot (package-format-v7.md).
+    string? ConsultDraft,
     string? WorkflowPackage = null,
     // #157: run later — the orchestrator sleeps on a durable timer until
     // this time. Null = run immediately; past values also run immediately.
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // v7: the named-input map (declared id → text). Validated against the
+    // package declaration at job start.
+    Dictionary<string, string>? Inputs = null);
 
 public record ConsultGenerationJobStartResponse(
     string JobId,
@@ -51,7 +57,16 @@ public record ConsultGenerationJobResponse(
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
     string? Source = null,
     // #157: when a scheduled job was/is due to start (null = immediate job).
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // v7: the per-deliverable documents in result-set order (Completed jobs
+    // only; hash version 3 covers exactly these). Null on v5/v6 jobs.
+    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
+
+/// <summary>One v7 deliverable on the job response: authored id and label plus the text.</summary>
+public sealed record ConsultGenerationResultDocumentResponse(
+    string ResultId,
+    string Label,
+    string Text);
 
 /// <summary>
 /// The identity and display label of one per-item chain step, snapshotted from the
@@ -76,6 +91,13 @@ public sealed record ConsultNodeDescriptor(
     IReadOnlyList<string>? Aggregate = null);
 
 public sealed record ConsultNodeBindingDescriptor(string From, string? As = null);
+
+/// <summary>
+/// One deliverable of a v7 job, snapshotted from the resolved package's result
+/// set at start — a Jobs-layer type so registry records never enter durable
+/// payloads.
+/// </summary>
+public sealed record ConsultResultDescriptor(string Id, string NodeId, string Label);
 
 /// <summary>
 /// Per-node run status and provenance exposed on the job response — the hashes form

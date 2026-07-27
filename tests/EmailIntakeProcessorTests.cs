@@ -226,6 +226,29 @@ public class EmailIntakeProcessorTests
     }
 
     [Fact]
+    public async Task InputsMismatch_RecordsTheEligibilityOutcome()
+    {
+        // v7 email eligibility: a body-only email cannot satisfy a package
+        // whose declaration needs more — a distinct claim slug, same disposal.
+        SetupSingleUnread();
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(Message());
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        _starter.StartAsync(default!, default!, default!, default!, default)
+            .ReturnsForAnyArgs(new ConsultGenerationJobStartOutcome(
+                null, ConsultGenerationJobStartError.InputsMismatch, "Required input(s) 'labs' missing."));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", "folder-Rejected", Arg.Any<CancellationToken>());
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedInputs),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task StarterError_RejectsAndSendsOneGenericReply()
     {
         SetupSingleUnread();

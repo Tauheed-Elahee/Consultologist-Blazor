@@ -179,8 +179,11 @@ public sealed class EmailIntakeProcessor
                 message.FromAddress,
                 claimKey,
                 start.Error);
+            var outcome = start.Error == ConsultGenerationJobStartError.InputsMismatch
+                ? EmailIntakeOutcomes.RejectedInputs
+                : EmailIntakeOutcomes.StartFailed;
             await _claims.UpdateAsync(
-                new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, match.AppUserId, Outcome: EmailIntakeOutcomes.StartFailed),
+                new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, match.AppUserId, Outcome: outcome),
                 cancellationToken);
             await DisposeMessageAsync(mailbox, message.Id, RejectedFolder, cancellationToken);
             await SendStartFailureReplyAsync(mailbox, message.FromAddress!, cancellationToken);

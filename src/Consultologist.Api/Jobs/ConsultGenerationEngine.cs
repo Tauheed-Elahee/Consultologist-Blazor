@@ -39,8 +39,12 @@ public sealed class ConsultGenerationOrchestrator
         var nodes = input.Nodes is { Count: > 0 }
             ? input.Nodes
             : throw new InvalidOperationException("Consult generation input carries no workflow nodes; the job start snapshots them from the workflow package.");
+        // v7 multi-deliverable jobs carry no single result node — only then may
+        // ResultNodeId be null (package-format-v7.md).
+        var results = input.Results;
+        var v7 = results is { Count: > 0 };
         var resultNodeId = input.ResultNodeId
-            ?? throw new InvalidOperationException("Consult generation input names no result node; the job start snapshots it from the workflow package.");
+            ?? (v7 ? null : throw new InvalidOperationException("Consult generation input names no result node; the job start snapshots it from the workflow package."));
 
         // The work items: v5 jobs carry the one collection's items; v6 jobs carry
         // per-collection sets in Collections and the deliverable's BLOCKS in Items
@@ -50,6 +54,15 @@ public sealed class ConsultGenerationOrchestrator
             : throw new InvalidOperationException("Consult generation input carries no work items; the job start snapshots them from the workflow package.");
         var collections = input.Collections;
         var v6 = collections is { Count: > 0 };
+
+        // The input map: v7 jobs carry the effective map from the starter;
+        // v5/v6 jobs fold the single draft into the conventional slot — a pure
+        // value-identical view, so replaying instances render the same bytes.
+        var effectiveInputs = input.Inputs
+            ?? new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ConsultGenerationJobStarter.ConsultDraftInputId] = request.ConsultDraft ?? string.Empty
+            };
 
         await context.Entities.CallEntityAsync(
             entityId,
@@ -139,15 +152,11 @@ public sealed class ConsultGenerationOrchestrator
         string ItemName(ConsultNodeDescriptor node, string itemId) =>
             FanItems(node).First(item => item["id"] == itemId).GetValueOrDefault("name", itemId);
 
-        // v6 deliverable blocks: the result aggregator's direct sources.
-        var resultNode = nodesById.GetValueOrDefault(resultNodeId);
-        var resultSourceIds = v6 && resultNode?.Aggregate != null
-            ? resultNode.Aggregate
-                .Select(sourceRef => sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
-                    ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
-                    : sourceRef)
-                .ToList()
-            : new List<string>();
+        // The deliverable table: v7 = one entry per result in result-set order
+        // (block ids gain the "{resultId}:" prefix); v6 = one unnamed entry
+        // with an empty prefix, reproducing today's block ids byte-for-byte;
+        // v5 = empty (blocks are the fan items themselves).
+        var deliverables = ConsultDeliverables.Resolve(results, v6 ? resultNodeId : null, nodesById);
 
         void StartInstance(ConsultNodeDescriptor node, IReadOnlyDictionary<string, string>? item)
         {
@@ -155,7 +164,7 @@ public sealed class ConsultGenerationOrchestrator
             started.Add(instanceKey);
 
             var variables = ConsultNodeVariableResolver.Resolve(
-                node, request.ConsultDraft, item, input.DataScalars, nodesById, outputs);
+                node, effectiveInputs, item, input.DataScalars, nodesById, outputs);
 
             pendingTasks[context.CallActivityAsync<NodeRunResult>(
                 ConsultGenerationActivityNames.RunPromptNode,
@@ -253,19 +262,24 @@ public sealed class ConsultGenerationOrchestrator
             }
             else
             {
-                // v6 blocks: every result-source block over this collection fails —
-                // the item can no longer reach the document.
-                foreach (var source in resultSourceIds
-                    .Select(id => nodesById.GetValueOrDefault(id))
-                    .Where(source => source?.ForEach != null
-                        && string.Equals(CollectionIdOf(source), CollectionIdOf(node), StringComparison.Ordinal)))
+                // v6/v7 blocks: every deliverable's result-source block over this
+                // collection fails — the item can no longer reach that document.
+                // A source shared by two deliverables fails once per owner; v6's
+                // single empty-prefix entry reproduces today's ids and order.
+                foreach (var deliverable in deliverables)
                 {
-                    failedBlockCount++;
+                    foreach (var source in deliverable.SourceIds
+                        .Select(id => nodesById.GetValueOrDefault(id))
+                        .Where(source => source?.ForEach != null
+                            && string.Equals(CollectionIdOf(source), CollectionIdOf(node), StringComparison.Ordinal)))
+                    {
+                        failedBlockCount++;
 
-                    await context.Entities.CallEntityAsync(
-                        entityId,
-                        nameof(ConsultGenerationJobEntity.FailBlock),
-                        new BlockGenerationResult($"{source!.Id}:{itemId}", ItemName(node, itemId), false, null, error));
+                        await context.Entities.CallEntityAsync(
+                            entityId,
+                            nameof(ConsultGenerationJobEntity.FailBlock),
+                            new BlockGenerationResult($"{deliverable.BlockPrefix}{source!.Id}:{itemId}", ItemName(node, itemId), false, null, error));
+                    }
                 }
             }
 
@@ -379,7 +393,20 @@ public sealed class ConsultGenerationOrchestrator
                             aggregateResult.InputHash, aggregateResult.OutputHash,
                             completedNodeCount, totalNodeCount));
 
-                    if (string.Equals(aggregator.Id, resultNodeId, StringComparison.Ordinal))
+                    if (v7)
+                    {
+                        // Result nodes are distinct per the validator: at most one
+                        // deliverable owns this aggregator.
+                        var deliverable = deliverables.FirstOrDefault(d => string.Equals(d.NodeId, aggregator.Id, StringComparison.Ordinal));
+                        if (deliverable != null)
+                        {
+                            await context.Entities.CallEntityAsync(
+                                entityId,
+                                nameof(ConsultGenerationJobEntity.CompleteResultDocument),
+                                new ConsultGenerationResultDocument(deliverable.ResultId!, deliverable.Label ?? deliverable.ResultId!, rendered, deliverable.Ordinal));
+                        }
+                    }
+                    else if (string.Equals(aggregator.Id, resultNodeId, StringComparison.Ordinal))
                     {
                         await context.Entities.CallEntityAsync(
                             entityId,
@@ -424,15 +451,19 @@ public sealed class ConsultGenerationOrchestrator
                         node.Id, node.Label, result.Concepts, result.InputHash, result.OutputHash,
                         completedNodeCount, totalNodeCount));
 
-                if (v6 && resultSourceIds.Contains(nodeId))
+                // A scalar source of a result aggregator is one block per owning
+                // deliverable (v6: the single empty-prefix entry; v5: no entries).
+                foreach (var deliverable in deliverables)
                 {
-                    // A scalar source of the result aggregator is one block.
-                    completedBlockCount++;
+                    if (deliverable.SourceIds.Contains(nodeId))
+                    {
+                        completedBlockCount++;
 
-                    await context.Entities.CallEntityAsync(
-                        entityId,
-                        nameof(ConsultGenerationJobEntity.CompleteBlock),
-                        new BlockGenerationResult(nodeId, node.Label, true, result.RawOutput.Trim(), null));
+                        await context.Entities.CallEntityAsync(
+                            entityId,
+                            nameof(ConsultGenerationJobEntity.CompleteBlock),
+                            new BlockGenerationResult($"{deliverable.BlockPrefix}{nodeId}", node.Label, true, result.RawOutput.Trim(), null));
+                    }
                 }
             }
             else
@@ -486,15 +517,22 @@ public sealed class ConsultGenerationOrchestrator
                         nameof(ConsultGenerationJobEntity.CompleteBlock),
                         new BlockGenerationResult(itemId, ItemName(node, itemId), true, result.RawOutput.Trim(), null));
                 }
-                else if (v6 && resultSourceIds.Contains(nodeId))
+                else
                 {
-                    // v6 blocks stream as the result aggregator's sources complete.
-                    completedBlockCount++;
+                    // v6/v7 blocks stream as each deliverable's sources complete
+                    // (v5 has no deliverable entries, so this arm is a no-op there).
+                    foreach (var deliverable in deliverables)
+                    {
+                        if (deliverable.SourceIds.Contains(nodeId))
+                        {
+                            completedBlockCount++;
 
-                    await context.Entities.CallEntityAsync(
-                        entityId,
-                        nameof(ConsultGenerationJobEntity.CompleteBlock),
-                        new BlockGenerationResult($"{nodeId}:{itemId}", ItemName(node, itemId), true, result.RawOutput.Trim(), null));
+                            await context.Entities.CallEntityAsync(
+                                entityId,
+                                nameof(ConsultGenerationJobEntity.CompleteBlock),
+                                new BlockGenerationResult($"{deliverable.BlockPrefix}{nodeId}:{itemId}", ItemName(node, itemId), true, result.RawOutput.Trim(), null));
+                        }
+                    }
                 }
 
                 await MarkFullyCompletedChainNodesAsync();
@@ -521,17 +559,24 @@ public sealed class ConsultGenerationOrchestrator
         string finalStatus;
         string? finalError = null;
 
-        if (v6)
+        if (v7)
+        {
+            // Completed requires every declared deliverable produced; the error
+            // is the first missing deliverable's, by result-set order
+            // (package-format-v7.md).
+            (finalStatus, finalError) = ConsultDeliverables.FinalOutcome(deliverables, outputs, failedAggregators);
+        }
+        else if (v6)
         {
             // The deliverable is the assembled document: no document, no consult
             // (fail-loud all the way to the job, package-format-v6-design.md § 3).
-            var documentProduced = outputs.ContainsKey(resultNodeId);
+            var documentProduced = outputs.ContainsKey(resultNodeId!);
             finalStatus = documentProduced
                 ? ConsultGenerationJobStatuses.Completed
                 : ConsultGenerationJobStatuses.Failed;
             finalError = documentProduced
                 ? null
-                : failedAggregators.GetValueOrDefault(resultNodeId)
+                : failedAggregators.GetValueOrDefault(resultNodeId!)
                     ?? failedAggregators.Values.FirstOrDefault()
                     ?? "The assembled document could not be produced.";
         }
@@ -555,12 +600,19 @@ public sealed class ConsultGenerationOrchestrator
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus, finalError));
 
-        // #159: the completed v6 document rides into the reply activity so it
-        // can be attached as an encrypted PDF when the account has a delivery
-        // password. Sourced from replayed activity outputs — deterministic.
-        var assembledDocument = v6 && outputs.TryGetValue(resultNodeId, out var resultOutput)
-            ? resultOutput.RawOutput
-            : null;
+        // #159: the completed document rides into the reply activity so it can
+        // be attached as an encrypted PDF when the account has a delivery
+        // password. v7 attaches only the single-deliverable case — a multi-
+        // deliverable set replies link-only until the per-deliverable delivery
+        // work (#217; degrade whole, never a partial set). Sourced from
+        // replayed activity outputs — deterministic.
+        var assembledDocument = v7
+            ? deliverables.Count == 1 && outputs.TryGetValue(deliverables[0].NodeId, out var singleResultOutput)
+                ? singleResultOutput.RawOutput
+                : null
+            : v6 && outputs.TryGetValue(resultNodeId!, out var resultOutput)
+                ? resultOutput.RawOutput
+                : null;
 
         await SendEmailIntakeReplyAsync(context, input, finalStatus, logger, assembledDocument);
 
@@ -721,6 +773,82 @@ internal static class ConsultNodeScheduler
 }
 
 /// <summary>
+/// The deliverable table and job outcome — pure functions over the snapshot, so
+/// orchestrator-side use is replay-safe. v7 jobs get one entry per declared
+/// result with the "{resultId}:" block-id prefix; v6 jobs get one unnamed
+/// empty-prefix entry so block ids and signal order reproduce byte-for-byte;
+/// v5 jobs get none (blocks are the fan items themselves).
+/// </summary>
+internal static class ConsultDeliverables
+{
+    internal sealed record Deliverable(
+        string? ResultId,
+        string? Label,
+        string BlockPrefix,
+        string NodeId,
+        IReadOnlyList<string> SourceIds,
+        int Ordinal);
+
+    public static IReadOnlyList<Deliverable> Resolve(
+        IReadOnlyList<ConsultResultDescriptor>? results,
+        string? v6ResultNodeId,
+        IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById)
+    {
+        static IReadOnlyList<string> SourcesOf(ConsultNodeDescriptor? node) =>
+            node?.Aggregate?
+                .Select(sourceRef => sourceRef.StartsWith(WorkflowNodeBindingSources.NodePrefix, StringComparison.Ordinal)
+                    ? sourceRef[WorkflowNodeBindingSources.NodePrefix.Length..]
+                    : sourceRef)
+                .ToList()
+            ?? (IReadOnlyList<string>)new List<string>();
+
+        if (results is { Count: > 0 })
+        {
+            return results
+                .Select((result, ordinal) => new Deliverable(
+                    result.Id,
+                    result.Label,
+                    $"{result.Id}:",
+                    result.NodeId,
+                    SourcesOf(nodesById.GetValueOrDefault(result.NodeId)),
+                    ordinal))
+                .ToList();
+        }
+
+        if (v6ResultNodeId is null
+            || nodesById.GetValueOrDefault(v6ResultNodeId) is not { Aggregate: not null } resultNode)
+        {
+            return Array.Empty<Deliverable>();
+        }
+
+        return new[] { new Deliverable(null, null, string.Empty, v6ResultNodeId, SourcesOf(resultNode), 0) };
+    }
+
+    /// <summary>
+    /// The v7 job outcome: Completed iff every deliverable's aggregator
+    /// produced; otherwise Failed with the first missing deliverable's error
+    /// by result-set order (fallbacks mirroring the v6 selection).
+    /// </summary>
+    public static (string Status, string? Error) FinalOutcome(
+        IReadOnlyList<Deliverable> deliverables,
+        IReadOnlyDictionary<string, NodeRunResult> outputs,
+        IReadOnlyDictionary<string, string> failedAggregators)
+    {
+        var missing = deliverables.Where(d => !outputs.ContainsKey(d.NodeId)).ToList();
+
+        if (missing.Count == 0)
+        {
+            return (ConsultGenerationJobStatuses.Completed, null);
+        }
+
+        var error = failedAggregators.GetValueOrDefault(missing[0].NodeId)
+            ?? failedAggregators.Values.FirstOrDefault()
+            ?? "The assembled documents could not be produced.";
+        return (ConsultGenerationJobStatuses.Failed, error);
+    }
+}
+
+/// <summary>
 /// Resolves a node instance's bindings to rendered variable values — pure functions
 /// over the orchestration input and recorded activity results, so orchestrator-side
 /// use is replay-safe. Renderer implementations stay where the byte-pinning tests
@@ -730,7 +858,7 @@ internal static class ConsultNodeVariableResolver
 {
     public static Dictionary<string, string> Resolve(
         ConsultNodeDescriptor node,
-        string consultDraft,
+        IReadOnlyDictionary<string, string> inputs,
         IReadOnlyDictionary<string, string>? item,
         IReadOnlyDictionary<string, string>? dataScalars,
         IReadOnlyDictionary<string, ConsultNodeDescriptor> nodesById,
@@ -742,7 +870,13 @@ internal static class ConsultNodeVariableResolver
         {
             variables[variable] = binding.From switch
             {
-                WorkflowNodeBindingSources.InputConsultDraft => consultDraft,
+                // v7: any declared input; v5/v6 jobs carry the one-entry
+                // consult_draft map, so the lookup is value-identical to the
+                // old direct draft string.
+                _ when binding.From.StartsWith(WorkflowNodeBindingSources.InputPrefix, StringComparison.Ordinal)
+                    => inputs.GetValueOrDefault(binding.From[WorkflowNodeBindingSources.InputPrefix.Length..])
+                        ?? throw new InvalidOperationException(
+                            $"Node '{node.Id}' binding '{variable}' reads undeclared input '{binding.From[WorkflowNodeBindingSources.InputPrefix.Length..]}'."),
                 _ when binding.From.StartsWith("item:", StringComparison.Ordinal)
                     => (item ?? throw new InvalidOperationException(
                             $"Node '{node.Id}' binding '{variable}' reads '{binding.From}' outside a forEach instance."))

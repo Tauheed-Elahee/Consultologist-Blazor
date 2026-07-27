@@ -29,6 +29,25 @@ internal static class ConsultGenerationProvenance
     }
 
     /// <summary>
+    /// The effective-input hash, definition version 3 (v7 jobs): SHA-256 of the
+    /// canonical JSON of the supplied inputs as an ordinal-sorted {id: text} map.
+    /// Hashes the SUPPLIED map — absent optional inputs are omitted, never
+    /// empty-string-filled — so a job that leaves an optional slot blank and one
+    /// that never had the slot hash identically only when the package agrees
+    /// (package-format-v7.md). v2 (draft only) stays the definition for v5/v6.
+    /// </summary>
+    public const int DeclaredInputsHashVersion = 3;
+
+    public static string ComputeDeclaredInputsHash(IReadOnlyDictionary<string, string> suppliedInputs)
+    {
+        var canonical = suppliedInputs
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+
+        return Sha256Hex(JsonSerializer.Serialize(canonical, CanonicalJsonOptions));
+    }
+
+    /// <summary>
     /// The workflow-output hash, definition version 1: SHA-256 of the canonical JSON
     /// {sectionId: Sha256Hex(sectionText)} with ordinal-sorted keys — a Merkle-style
     /// root over the deliverable. Derived at response time from GeneratedSections
@@ -58,6 +77,18 @@ internal static class ConsultGenerationProvenance
 
     public static string ComputeAssembledDocumentHash(string assembledDocument)
         => Sha256Hex(assembledDocument);
+
+    /// <summary>
+    /// The workflow-output hash, definition version 3 (v7 jobs): SHA-256 of the
+    /// canonical JSON {resultId: Sha256Hex(documentText)} with ordinal-sorted
+    /// keys — the v1 Merkle recipe generalized from section ids to the result
+    /// set. Derived at response time from the stored per-result documents; v2
+    /// remains the definition for v6's single document (package-format-v7.md).
+    /// </summary>
+    public const int ResultSetHashVersion = 3;
+
+    public static string ComputeResultSetHash(IReadOnlyDictionary<string, string> documents)
+        => ComputeWorkflowOutputHash(documents);
 
     /// <summary>
     /// The aggregator's input hash: canonical JSON array of the source instance

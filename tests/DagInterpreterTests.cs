@@ -67,8 +67,11 @@ public class NodeVariableResolverTests
         FailIfEmpty: node.Output?.FailIfEmpty,
         ForEach: node.ForEach);
 
+    private static Dictionary<string, string> DraftInputs(string draft) =>
+        new(StringComparer.Ordinal) { ["consult_draft"] = draft };
+
     private static Dictionary<string, string> Resolve(string nodeId) =>
-        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], Draft, null, null, NodesById, Outputs);
+        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], DraftInputs(Draft), null, null, NodesById, Outputs);
 
     [Fact]
     public void ExtractPatientConcepts_Parity()
@@ -143,7 +146,7 @@ public class NodeVariableResolverTests
             ["id"] = "hpi", ["name"] = "History of Present Illness", ["standard"] = "Chronological prose."
         };
 
-        var variables = ConsultNodeVariableResolver.Resolve(firstStep, Draft, item, null, NodesById, Outputs);
+        var variables = ConsultNodeVariableResolver.Resolve(firstStep, DraftInputs(Draft), item, null, NodesById, Outputs);
 
         // The R3 pin: the concept-context rendering carries source: patient-trajectory.
         Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables["patient_trajectory_concepts"]);
@@ -234,16 +237,78 @@ public class ProvenanceHashTests
             ConsultGenerationProvenance.Sha256Hex("""{"consultDraft":"Draft text."}"""),
             ConsultGenerationProvenance.ComputeDraftOnlyHash(request));
     }
+
+    [Fact]
+    public void DeclaredInputsHash_PinsTheCanonicalShape()
+    {
+        // Canonical shape pin: ordinal-sorted {id: text}, raw values, no wrapper —
+        // the definition v7 jobs record as effectiveInputHashVersion 3. Supplied
+        // map only: an absent optional input never appears.
+        var supplied = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["prior_notes"] = "Old notes.",
+            ["consult_draft"] = "Draft text."
+        };
+
+        Assert.Equal(
+            ConsultGenerationProvenance.Sha256Hex("""{"consult_draft":"Draft text.","prior_notes":"Old notes."}"""),
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(supplied));
+        Assert.Equal(3, ConsultGenerationProvenance.DeclaredInputsHashVersion);
+    }
+
+    [Fact]
+    public void ResultSetHash_PinsTheCanonicalShape()
+    {
+        // Canonical shape pin: ordinal-sorted {resultId: sha256hex(document)} —
+        // the definition v7 jobs record as workflowOutputHashVersion 3.
+        var documents = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["patient_letter"] = "Letter body.",
+            ["consult_note"] = "Note body."
+        };
+
+        var expected = ConsultGenerationProvenance.Sha256Hex(
+            $$"""{"consult_note":"{{ConsultGenerationProvenance.Sha256Hex("Note body.")}}","patient_letter":"{{ConsultGenerationProvenance.Sha256Hex("Letter body.")}}"}""");
+
+        Assert.Equal(expected, ConsultGenerationProvenance.ComputeResultSetHash(documents));
+        Assert.Equal(3, ConsultGenerationProvenance.ResultSetHashVersion);
+    }
 }
 
 public class StartRequestValidationTests
 {
     [Fact]
-    public void ValidateRequest_RequiresBodyAndDraft()
+    public void ValidateRequest_RequiresBodyAndExactlyOneInputForm()
     {
         Assert.Equal("Request body is required.", ConsultGenerationJobs.ValidateRequest(null));
-        Assert.Equal("ConsultDraft is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
+        Assert.Equal("ConsultDraft or Inputs is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
         Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest("Draft.")));
+
+        Assert.Equal(
+            "Send ConsultDraft or Inputs, not both.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                "Draft.",
+                Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." })));
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+            null,
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." })));
+    }
+
+    [Fact]
+    public void ValidateRequest_ChecksInputEntries()
+    {
+        Assert.Equal(
+            "Inputs contains a blank id.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { [" "] = "text" })));
+        Assert.Equal(
+            "Input 'prior_notes' is blank.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { ["prior_notes"] = " " })));
+        Assert.Equal(
+            "Input 'consult_draft' exceeds 256 KB.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null, Inputs: new Dictionary<string, string> { ["consult_draft"] = new string('x', ConsultGenerationJobs.MaxInputLength + 1) })));
     }
 }
 
@@ -559,7 +624,7 @@ public class ForEachInstanceResolutionTests
                 ("standard", "item:standard", null),
                 ("concepts", "node:create-patient-trajectory", "concept-context"),
                 ("previous", "node:standard-section-draft", null)),
-            "Draft consult text.",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "Draft consult text." },
             Item,
             dataScalars: null,
             NodesById,
@@ -586,7 +651,8 @@ public class ForEachInstanceResolutionTests
 
         var variables = ConsultNodeVariableResolver.Resolve(
             Node(("previous", "node:standard-section-draft", null)),
-            "draft", pmhItem, null, NodesById, outputs);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            pmhItem, null, NodesById, outputs);
 
         Assert.Equal("Other section prose.", variables["previous"]);
     }
@@ -598,7 +664,9 @@ public class ForEachInstanceResolutionTests
     public void Resolve_ThrowsOnUnresolvableSources(string from, string expected)
     {
         var ex = Assert.Throws<InvalidOperationException>(() => ConsultNodeVariableResolver.Resolve(
-            Node(("value", from, null)), "draft", Item, null, NodesById, Outputs));
+            Node(("value", from, null)),
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            Item, null, NodesById, Outputs));
 
         Assert.Contains(expected, ex.Message);
     }
@@ -608,11 +676,94 @@ public class ForEachInstanceResolutionTests
     {
         var variables = ConsultNodeVariableResolver.Resolve(
             Node(("value", "data:clinic-guidelines", null)),
-            "draft", Item,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            Item,
             new Dictionary<string, string>(StringComparer.Ordinal) { ["clinic-guidelines"] = "Local guidance." },
             NodesById, Outputs);
 
         Assert.Equal("Local guidance.", variables["value"]);
+    }
+}
+
+public class ConsultDeliverablesTests
+{
+    private static readonly Dictionary<string, ConsultNodeDescriptor> NodesById = new(StringComparer.Ordinal)
+    {
+        ["fan"] = new("fan", "Fan", ForEach: "data:standards"),
+        ["extra"] = new("extra", "Extra"),
+        ["note"] = new("note", "Note", Aggregate: new List<string> { "node:fan" }),
+        ["letter"] = new("letter", "Letter", Aggregate: new List<string> { "node:fan", "node:extra" })
+    };
+
+    private static readonly List<ConsultResultDescriptor> TwoResults = new()
+    {
+        new("consult_note", "note", "Consultation note"),
+        new("patient_letter", "letter", "Patient letter")
+    };
+
+    [Fact]
+    public void V6_ResolvesOneUnnamedEntryWithEmptyPrefix()
+    {
+        // The empty prefix is the byte-parity contract: v6 block ids and
+        // signal order must reproduce exactly through the shared loops.
+        var deliverables = ConsultDeliverables.Resolve(null, "note", NodesById);
+
+        var entry = Assert.Single(deliverables);
+        Assert.Null(entry.ResultId);
+        Assert.Equal(string.Empty, entry.BlockPrefix);
+        Assert.Equal("note", entry.NodeId);
+        Assert.Equal(new[] { "fan" }, entry.SourceIds);
+    }
+
+    [Fact]
+    public void V6_NonAggregatorResult_ResolvesEmpty()
+    {
+        Assert.Empty(ConsultDeliverables.Resolve(null, "fan", NodesById));
+        Assert.Empty(ConsultDeliverables.Resolve(null, null, NodesById));
+    }
+
+    [Fact]
+    public void V7_ResolvesPrefixedEntriesInResultSetOrder()
+    {
+        var deliverables = ConsultDeliverables.Resolve(TwoResults, null, NodesById);
+
+        Assert.Equal(
+            new[] { ("consult_note", "consult_note:", "note", 0), ("patient_letter", "patient_letter:", "letter", 1) },
+            deliverables.Select(d => (d.ResultId, d.BlockPrefix, d.NodeId, d.Ordinal)).ToArray());
+        // The shared forEach source appears in BOTH deliverables' source sets —
+        // the double block emission that prefixed ids exist to disambiguate.
+        Assert.All(deliverables, d => Assert.Contains("fan", d.SourceIds));
+    }
+
+    [Fact]
+    public void FinalOutcome_CompletedOnlyWhenEveryDeliverableProduced()
+    {
+        var deliverables = ConsultDeliverables.Resolve(TwoResults, null, NodesById);
+        var bothProduced = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+        {
+            ["note"] = new("n", null, "i", "o"),
+            ["letter"] = new("l", null, "i", "o")
+        };
+        var oneProduced = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+        {
+            ["letter"] = new("l", null, "i", "o")
+        };
+
+        Assert.Equal(
+            (ConsultGenerationJobStatuses.Completed, (string?)null),
+            ConsultDeliverables.FinalOutcome(deliverables, bothProduced, new Dictionary<string, string>()));
+
+        // The first missing deliverable BY RESULT-SET ORDER selects the error.
+        var (status, error) = ConsultDeliverables.FinalOutcome(
+            deliverables,
+            oneProduced,
+            new Dictionary<string, string> { ["note"] = "Note could not assemble." });
+        Assert.Equal(ConsultGenerationJobStatuses.Failed, status);
+        Assert.Equal("Note could not assemble.", error);
+
+        var (_, fallback) = ConsultDeliverables.FinalOutcome(
+            deliverables, oneProduced, new Dictionary<string, string>());
+        Assert.Equal("The assembled documents could not be produced.", fallback);
     }
 }
 

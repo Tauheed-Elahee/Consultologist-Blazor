@@ -22,6 +22,7 @@ public static class WorkflowNodeBindingSources
 {
     public const string InputConsultDraft = "input:consult_draft";
     public const string ItemName = "item:name";
+    public const string InputPrefix = "input:";
     public const string NodePrefix = "node:";
     public const string DataPrefix = "data:";
 
