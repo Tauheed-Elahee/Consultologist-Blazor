@@ -19,7 +19,7 @@ the local baseline — no silent drift), and the catalog pin
 
 | Repo | Contents | Versioning / tags | Publishes |
 |---|---|---|---|
-| `consultologist-workflows` | Workflow package sources (today: `packages/general/`) | CalVer `vYYYY.MM.N` per package | `workflow-packages` blob container (`{name}/{version}/…` + `latest.json` pointers) |
+| `consultologist-workflows` | Workflow package sources (`packages/general/`, `packages/example-two-documents/`) | CalVer `vYYYY.MM.N` per package | `workflow-packages` blob container (`{name}/{version}/…` + `latest.json` pointers) |
 | `consultologist-agents` | Agent manifests (today: `agents/test-json.yaml`) | Tags matching Foundry integer versions (`test-json/48`) | **Both** the Foundry agent version (via the agents REST API) and the manifest mirror in blob (`agents/{name}/{version}/agent.yaml`) |
 
 Two repos rather than one content repo: clean per-artifact tagging (CalVer vs Foundry
