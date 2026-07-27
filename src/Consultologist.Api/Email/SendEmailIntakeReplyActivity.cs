@@ -14,15 +14,23 @@ public sealed record EmailIntakeReplyInput(
     // document travels as an encrypted attachment. Trailing optional members —
     // Durable payload compatibility.
     string? AppUserId = null,
-    string? AssembledDocument = null);
+    string? AssembledDocument = null,
+    // v7: the deliverable set in result-set order, one attachment each.
+    // v5/v6 jobs leave it null and travel the AssembledDocument path.
+    IReadOnlyList<EmailIntakeReplyDocument>? Documents = null);
+
+/// <summary>One deliverable bound for the reply: authored identity plus its text.</summary>
+public sealed record EmailIntakeReplyDocument(string ResultId, string Label, string Text);
 
 /// <summary>
 /// The completion reply (#158/#157): a fresh no-PHI message — never a Graph
 /// /reply, which would quote the PHI-bearing original — whose body is
 /// boilerplate plus the History deep link. #159: when the account has set a
-/// delivery password and the job produced an assembled document, the document
-/// is attached as an AES-256 password-protected PDF; any failure in that leg
-/// degrades to the link-only reply, never to silence.
+/// delivery password and the job produced documents, each is attached as an
+/// AES-256 password-protected PDF; any failure in that leg degrades to the
+/// link-only reply, never to silence. #217: a v7 job attaches one PDF per
+/// deliverable, and an oversize set degrades WHOLE — a partial document set
+/// would misrepresent what the consult produced.
 /// </summary>
 public sealed class SendEmailIntakeReplyActivity
 {
@@ -59,31 +67,60 @@ public sealed class SendEmailIntakeReplyActivity
             return;
         }
 
-        var attachment = await TryCreateAttachmentAsync(input, context.CancellationToken);
+        var outcome = await TryCreateAttachmentsAsync(input, context.CancellationToken);
 
         var (subject, body) = EmailIntakeReply.Compose(
             appBaseUrl,
             input.JobId,
             input.FinalStatus,
-            includesAttachment: attachment != null);
-        await _mail.SendMailAsync(mailbox, input.ToAddress, subject, body, context.CancellationToken, attachment);
+            outcome.Labels,
+            outcome.OmittedForSize);
+        await _mail.SendMailAsync(mailbox, input.ToAddress, subject, body, context.CancellationToken, outcome.Attachments);
 
         _logger.LogInformation(
-            "Email intake reply sent. JobId={JobId}, FinalStatus={FinalStatus}, Attached={Attached}",
+            "Email intake reply sent. JobId={JobId}, FinalStatus={FinalStatus}, Attached={Attached}, OmittedForSize={OmittedForSize}",
             input.JobId,
             input.FinalStatus,
-            attachment != null);
+            outcome.Attachments.Count,
+            outcome.OmittedForSize);
     }
 
-    private async Task<GraphMailAttachment?> TryCreateAttachmentAsync(
+    /// <summary>
+    /// The whole-message budget for inline attachments: Graph caps a sendMail
+    /// request around 3 MB and base64 inflates by ~1.33x, so 2 MB of raw PDF
+    /// leaves room for the encoding and the envelope. A set over budget is
+    /// dropped ENTIRELY — attaching the ones that fit would misrepresent the
+    /// consult, and letting Graph reject the request would cost the reply too.
+    /// </summary>
+    internal const int MaxAttachmentBytes = 2 * 1024 * 1024;
+
+    internal sealed record AttachmentOutcome(
+        IReadOnlyList<GraphMailAttachment> Attachments,
+        IReadOnlyList<string> Labels,
+        bool OmittedForSize)
+    {
+        public static readonly AttachmentOutcome None =
+            new(Array.Empty<GraphMailAttachment>(), Array.Empty<string>(), false);
+    }
+
+    private async Task<AttachmentOutcome> TryCreateAttachmentsAsync(
         EmailIntakeReplyInput input,
         CancellationToken cancellationToken)
     {
+        // v7 carries the deliverable set; v5/v6 the single assembled document.
+        // The v7 sugar id is "consult", so a single-deliverable job produces the
+        // same filename either way.
+        var documents = input.Documents is { Count: > 0 }
+            ? input.Documents
+            : !string.IsNullOrWhiteSpace(input.AssembledDocument)
+                ? new[] { new EmailIntakeReplyDocument("consult", "Consultation note", input.AssembledDocument) }
+                : Array.Empty<EmailIntakeReplyDocument>();
+
         if (input.FinalStatus != ConsultGenerationJobStatuses.Completed
-            || string.IsNullOrWhiteSpace(input.AssembledDocument)
+            || documents.Count == 0
             || string.IsNullOrWhiteSpace(input.AppUserId))
         {
-            return null;
+            return AttachmentOutcome.None;
         }
 
         try
@@ -96,20 +133,43 @@ public sealed class SendEmailIntakeReplyActivity
             if (string.IsNullOrEmpty(password?.Value))
             {
                 // Explicit over default: no password → link-only reply.
-                return null;
+                return AttachmentOutcome.None;
             }
 
-            var pdf = ConsultDocumentPdf.Render(input.AssembledDocument, password.Value);
-            // Filename carries no PHI — just the short job id.
-            return new GraphMailAttachment($"consult-{input.JobId[..Math.Min(8, input.JobId.Length)]}.pdf", pdf);
+            var jobIdPrefix = input.JobId[..Math.Min(8, input.JobId.Length)];
+            var attachments = new List<GraphMailAttachment>(documents.Count);
+            var totalBytes = 0L;
+
+            foreach (var document in documents)
+            {
+                var pdf = ConsultDocumentPdf.Render(document.Text, password.Value);
+                totalBytes += pdf.Length;
+                // Filenames carry no PHI — an authored result id and the short job id.
+                attachments.Add(new GraphMailAttachment($"{document.ResultId}-{jobIdPrefix}.pdf", pdf));
+            }
+
+            if (totalBytes > MaxAttachmentBytes)
+            {
+                _logger.LogWarning(
+                    "Encrypted attachments exceed the message budget; sending link-only reply. JobId={JobId}, Documents={Documents}, Bytes={Bytes}",
+                    input.JobId,
+                    attachments.Count,
+                    totalBytes);
+                return new AttachmentOutcome(Array.Empty<GraphMailAttachment>(), Array.Empty<string>(), true);
+            }
+
+            return new AttachmentOutcome(
+                attachments,
+                documents.Select(document => document.Label).ToList(),
+                false);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(
                 ex,
-                "Encrypted attachment could not be produced; sending link-only reply. JobId={JobId}",
+                "Encrypted attachments could not be produced; sending link-only reply. JobId={JobId}",
                 input.JobId);
-            return null;
+            return AttachmentOutcome.None;
         }
     }
 }
@@ -120,15 +180,26 @@ internal static class EmailIntakeReply
         string appBaseUrl,
         string jobId,
         string finalStatus,
-        bool includesAttachment = false)
+        IReadOnlyList<string>? attachedLabels = null,
+        bool omittedForSize = false)
     {
         var link = $"{appBaseUrl.TrimEnd('/')}/history/{jobId}";
+        var labels = attachedLabels ?? Array.Empty<string>();
+        var includesAttachment = labels.Count > 0;
 
         if (finalStatus == ConsultGenerationJobStatuses.Completed)
         {
-            var attachmentNote = includesAttachment
-                ? "The consult document is attached, encrypted with your delivery password.\n\n"
-                : string.Empty;
+            // Authored package labels are never patient data, so naming the
+            // documents lets the recipient see the set is complete before
+            // decrypting anything.
+            var attachmentNote = labels.Count switch
+            {
+                0 when omittedForSize =>
+                    "The consult documents were too large to send by email — open them in History.\n\n",
+                0 => string.Empty,
+                1 => "The consult document is attached, encrypted with your delivery password.\n\n",
+                _ => $"{string.Join(", ", labels)} are attached, encrypted with your delivery password.\n\n"
+            };
 
             return (
                 "Your consult is ready",

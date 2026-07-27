@@ -41,7 +41,7 @@ public interface IGraphMailClient
         string subject,
         string textBody,
         CancellationToken cancellationToken,
-        GraphMailAttachment? attachment = null);
+        IReadOnlyList<GraphMailAttachment>? attachments = null);
 }
 
 public sealed record GraphMailAttachment(string Name, byte[] Content);
@@ -213,13 +213,14 @@ public sealed class GraphMailClient : IGraphMailClient
         string subject,
         string textBody,
         CancellationToken cancellationToken,
-        GraphMailAttachment? attachment = null)
+        IReadOnlyList<GraphMailAttachment>? attachments = null)
     {
         var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/sendMail";
 
         // Dictionaries rather than anonymous types: the attachment's mandatory
         // "@odata.type" is not a legal anonymous-property name. Inline
-        // attachments cap around 3 MB of request — a consult PDF is far under.
+        // attachments cap around 3 MB of REQUEST — a whole-message budget the
+        // caller shares across the set (see the reply activity's cap).
         var message = new Dictionary<string, object?>
         {
             ["subject"] = subject,
@@ -227,18 +228,17 @@ public sealed class GraphMailClient : IGraphMailClient
             ["toRecipients"] = new[] { new { emailAddress = new { address = toAddress } } }
         };
 
-        if (attachment != null)
+        if (attachments is { Count: > 0 })
         {
-            message["attachments"] = new[]
-            {
-                new Dictionary<string, object?>
+            message["attachments"] = attachments
+                .Select(attachment => new Dictionary<string, object?>
                 {
                     ["@odata.type"] = "#microsoft.graph.fileAttachment",
                     ["name"] = attachment.Name,
                     ["contentType"] = "application/pdf",
                     ["contentBytes"] = Convert.ToBase64String(attachment.Content)
-                }
-            };
+                })
+                .ToList();
         }
 
         var body = JsonSerializer.Serialize(new Dictionary<string, object?>
