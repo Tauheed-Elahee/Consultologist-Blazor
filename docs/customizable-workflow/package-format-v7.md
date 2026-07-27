@@ -14,10 +14,12 @@ under their frozen rules — including the fixed `input:consult_draft`
 vocabulary and unchanged block ids. A package needs 7 only when it uses
 what 7 opens.
 
-> **Executability**: while the v7 engine work is in flight, the format
-> layer (validation, publish, load) accepts specVersion 7 but job start
-> rejects it with `specVersion 7 execution is not yet enabled` (HTTP 422).
-> The engine sub-issue removes that guard; this note goes with it.
+v7 packages execute: the engine resolves any declared input, runs every
+declared deliverable, and records per-result documents. Until the
+per-deliverable delivery work (#217), the email completion reply attaches
+the encrypted PDF only for a **single**-deliverable result set;
+multi-deliverable jobs reply link-only (degrade whole, never a partial
+set).
 
 ## Declared ids (shared grammar)
 
@@ -101,13 +103,55 @@ or the sugar's one entry). `ResultNodeId` is populated only when the set
 is single, so a consumer that is not yet set-aware fails loud on
 multi-deliverable packages instead of silently picking one.
 
-## Request contract and provenance
+## Request contract (normative)
 
-The job-side contract — the request `inputs` map with `consultDraft`
-back-compat, per-input validation and size caps, effective-input hash v3,
-per-deliverable execution state, and workflow-output hash v3 (including
-the canonical-JSON byte-level rules both hashes require) — lands with the
-**v7 engine and provenance work** and is specified there when it does.
-Until then, [package-format-v7-design.md](package-format-v7-design.md)
-§§ 3–6 records the agreed design. A hash definition is its bytes; this
-spec deliberately freezes none before the code that computes them exists.
+The job request carries **exactly one** of:
+
+- `consultDraft` — the legacy field, valid for every package. Against a
+  v7 package it back-fills the `consult_draft` slot **iff declared**;
+  the convention gets no engine exemption.
+- `inputs` — a `{declaredId: text}` map (v7 packages; a v5/v6 package
+  accepts only a `consult_draft`-only map, folded into the draft path).
+
+Error split:
+
+- **400** (request shape, before any package is consulted): both forms
+  sent; neither sent; a blank id or blank value; any value over
+  **256 KB** (the email-intake body bound).
+- **422** (`InputsMismatch` — well-formed but unsatisfiable against the
+  resolved package's declaration): a required declared input missing or
+  blank; an undeclared id (the error lists the declaration); any
+  non-`consult_draft` id against a v5/v6 package.
+
+Resolution: the engine receives the **effective map** — every declared
+id present, absent optional inputs as empty strings (the prompt renders
+them empty; the package author owns absence). **Email intake** supplies
+only the message body as `consult_draft`; an ineligible package (no
+`consult_draft` slot, or any other required input) records the
+`rejected-inputs` claim outcome and the message moves to Rejected.
+
+## Provenance (normative bytes)
+
+Canonical JSON throughout means: System.Text.Json with no indentation,
+UTF-8, dictionary keys verbatim (never case-mapped), map keys
+ordinal-sorted before serialization; hashes are lowercase-hex SHA-256 of
+the UTF-8 bytes.
+
+- **Effective-input hash v3** (`effectiveInputHashVersion: 3`, every v7
+  job): SHA-256 of the canonical JSON of the **supplied** inputs as an
+  ordinal-sorted `{id: text}` map — absent optional inputs are omitted,
+  never empty-string-filled (the back-filled legacy draft hashes as
+  `{"consult_draft": …}`). v2 (draft-only) stays the v5/v6 definition.
+- **Workflow-output hash v3** (`workflowOutputHashVersion: 3`, completed
+  v7 jobs): SHA-256 of the canonical JSON of the ordinal-sorted
+  `{resultId: sha256hex(documentText)}` digest map — the v1 Merkle
+  recipe generalized from section ids to the result set. v2 (single
+  document bytes) stays the v6 definition; v1 the v5 definition.
+- **Response discriminator** (derived at response time, never stored):
+  per-result document set present → v3; single assembled document → v2;
+  else → v1. Completed jobs only; the response's `assembledDocuments`
+  list (id, label, text, result-set order) carries exactly the bytes v3
+  covers.
+
+Byte-pinned by `ProvenanceHashTests`; rationale in
+[package-format-v7-design.md](package-format-v7-design.md) §§ 3–6.
