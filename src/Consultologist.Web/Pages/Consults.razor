@@ -220,29 +220,21 @@
                                 }
                                 else
                                 {
-                                    <div class="document-tabs" role="tablist">
+                                    @* FluentTabs carries the whole ARIA tab pattern —
+                                       roving tabindex, arrow/Home/End keys, overflow
+                                       when the labels outgrow the panel. *@
+                                    <FluentTabs @bind-ActiveTabId="activeDocumentId" class="document-tabs">
                                         @foreach (var document in assembledDocuments)
                                         {
-                                            var isActive = document.ResultId == ActiveDocument?.ResultId;
-                                            <button type="button"
-                                                    role="tab"
-                                                    id="@($"document-tab-{document.ResultId}")"
-                                                    aria-selected="@isActive.ToString().ToLowerInvariant()"
-                                                    aria-controls="document-panel"
-                                                    class="document-tab @(isActive ? "document-tab--active" : "")"
-                                                    @key="document.ResultId"
-                                                    @onclick="@(() => SelectDocument(document.ResultId))">
-                                                @document.Label
-                                            </button>
+                                            <FluentTab Id="@document.ResultId"
+                                                       Label="@document.Label"
+                                                       @key="document.ResultId">
+                                                <article class="note-preview generated-note generated-note--assembled">
+                                                    @((MarkupString)MarkdownPreview.Render(document.Text))
+                                                </article>
+                                            </FluentTab>
                                         }
-                                    </div>
-
-                                    <article class="note-preview generated-note generated-note--assembled"
-                                             id="document-panel"
-                                             role="tabpanel"
-                                             aria-labelledby="@($"document-tab-{ActiveDocument?.ResultId}")">
-                                        @((MarkupString)MarkdownPreview.Render(ActiveDocument?.Text ?? string.Empty))
-                                    </article>
+                                    </FluentTabs>
                                 }
                             </div>
                         }
@@ -1273,8 +1265,6 @@
   private ConsultGenerationResultDocumentResponse? ActiveDocument =>
     assembledDocuments.FirstOrDefault(document => document.ResultId == activeDocumentId)
       ?? assembledDocuments.FirstOrDefault();
-
-  private void SelectDocument(string resultId) => activeDocumentId = resultId;
 
   private string CopyButtonLabel => copyFeedback ?? "Copy note";
 
