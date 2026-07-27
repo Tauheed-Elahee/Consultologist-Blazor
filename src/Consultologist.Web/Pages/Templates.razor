@@ -2522,7 +2522,15 @@
         List<string>? RemovedNodes = null,
         Dictionary<string, List<string>>? AggregateEdits = null,
         string? ResultEdit = null,
-        List<DraftAddedPrompt>? AddedPrompts = null);
+        List<DraftAddedPrompt>? AddedPrompts = null,
+        // v7 declarations (#218). Trailing optionals, so a draft written
+        // before them still restores — nothing gates on Version.
+        List<DraftInput>? Inputs = null,
+        List<DraftResult>? Results = null);
+
+    private sealed record DraftInput(string Id, string Label, bool Required);
+
+    private sealed record DraftResult(string Id, string Node, string Label);
 
     private async Task RestoreDraftAsync()
     {
@@ -2546,6 +2554,8 @@
         Dictionary<string, List<string>>? draftAggregateEdits = null;
         string? draftResultEdit = null;
         List<DraftAddedPrompt>? draftAddedPrompts = null;
+        List<DraftInput>? draftInputs = null;
+        List<DraftResult>? draftResults = null;
 
         try
         {
@@ -2566,6 +2576,8 @@
                 draftAggregateEdits = payload?.AggregateEdits;
                 draftResultEdit = payload?.ResultEdit;
                 draftAddedPrompts = payload?.AddedPrompts;
+                draftInputs = payload?.Inputs;
+                draftResults = payload?.Results;
             }
             else
             {
@@ -2727,6 +2739,24 @@
             resultEdit = draftResultEdit;
         }
 
+        // Declared sections: only meaningful against a v7 package, so a draft
+        // written before the pin moved to a v5/v6 package is dropped rather
+        // than composed into a manifest that cannot hold it.
+        if (IsV7 && draftInputs is { Count: > 0 })
+        {
+            inputsEdit = draftInputs
+                .Select(input => new WorkflowManifestReader.InputView(input.Id, input.Label, input.Required))
+                .ToList();
+        }
+
+        if (IsV7 && draftResults is { Count: > 0 }
+            && draftResults.All(result => EffectiveNodes.Any(node => $"node:{node.Id}" == result.Node)))
+        {
+            resultsEdit = draftResults
+                .Select(result => new WorkflowManifestReader.ResultView(result.Id, result.Node, result.Label))
+                .ToList();
+        }
+
         // Node-field edits: kept only when the node still exists and the
         // tuple still differs from the loaded version.
         foreach (var draftNodeEdit in draftNodeEdits ?? new List<DraftNodeEdit>())
@@ -2778,7 +2808,7 @@
         }
 
         var payload = new DraftPayload(
-            9,
+            10,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -2795,7 +2825,9 @@
             removedNodeIds.ToList(),
             aggregateEdits.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()),
             resultEdit,
-            addedPrompts.Select(p => new DraftAddedPrompt(p.Id, p.Text)).ToList());
+            addedPrompts.Select(p => new DraftAddedPrompt(p.Id, p.Text)).ToList(),
+            inputsEdit?.Select(i => new DraftInput(i.Id, i.Label, i.Required)).ToList(),
+            resultsEdit?.Select(r => new DraftResult(r.Id, r.Node, r.Label)).ToList());
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
