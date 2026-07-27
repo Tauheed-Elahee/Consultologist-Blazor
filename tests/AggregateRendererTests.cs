@@ -190,10 +190,17 @@ public class AssembledDocumentEntityTests
         Assert.Equal(
             new[]
             {
-                new ConsultGenerationResultDocumentResponse("consult_note", "Consultation note", "Note."),
-                new ConsultGenerationResultDocumentResponse("patient_letter", "Patient letter", "Letter.")
+                new ConsultGenerationResultDocumentResponse("consult_note", "Consultation note", "Note.",
+                    ConsultGenerationProvenance.Sha256Hex("Note.")),
+                new ConsultGenerationResultDocumentResponse("patient_letter", "Patient letter", "Letter.",
+                    ConsultGenerationProvenance.Sha256Hex("Letter."))
             },
             response.AssembledDocuments!.ToArray());
+        // The per-document digests are exactly what the v3 aggregate covers.
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeResultSetHash(
+                response.AssembledDocuments.ToDictionary(d => d.ResultId, d => d.Text)),
+            response.WorkflowOutputHash);
         Assert.Equal(3, response.WorkflowOutputHashVersion);
         Assert.Equal(
             ConsultGenerationProvenance.ComputeResultSetHash(new Dictionary<string, string>

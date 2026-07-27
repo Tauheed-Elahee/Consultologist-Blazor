@@ -62,11 +62,16 @@ public record ConsultGenerationJobResponse(
     // only; hash version 3 covers exactly these). Null on v5/v6 jobs.
     IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
 
-/// <summary>One v7 deliverable on the job response: authored id and label plus the text.</summary>
+/// <summary>
+/// One v7 deliverable on the job response: authored id and label, the text, and
+/// its digest — the same per-document hash the v3 result-set hash is computed
+/// over, so History displays the definition rather than a parallel one.
+/// </summary>
 public sealed record ConsultGenerationResultDocumentResponse(
     string ResultId,
     string Label,
-    string Text);
+    string Text,
+    string? DocumentHash = null);
 
 /// <summary>
 /// The identity and display label of one per-item chain step, snapshotted from the

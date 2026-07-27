@@ -42,12 +42,26 @@
                             Paste the referral, history, or draft note. Each output section uses this draft as the source of truth.
                         </p>
 
-                        <label class="input-field">
-                            <span>Consult draft</span>
-                            <FluentTextArea @bind-Value="consultDraft"
-                                            Placeholder="Enter referral details, clinical context, and the consult question..."
-                                            Rows="16" />
-                        </label>
+                        @* One field per declared input, all visible: the package
+                           states its intake form, and a single input keeps the
+                           full-height writing area the page has always had. *@
+                        @foreach (var input in DeclaredInputs)
+                        {
+                            <label class="input-field" @key="input.Id">
+                                <span>
+                                    @input.Label
+                                    @if (!input.Required)
+                                    {
+                                        <span class="muted-text input-field__optional">(optional)</span>
+                                    }
+                                </span>
+                                @* SyncInputKeys guarantees the entry exists, so the
+                                   indexer is a safe two-way binding target. *@
+                                <FluentTextArea @bind-Value="inputValues[input.Id]"
+                                                Placeholder="@(input.Id == "consult_draft" ? "Enter referral details, clinical context, and the consult question..." : $"Enter {input.Label.ToLowerInvariant()}...")"
+                                                Rows="@(DeclaredInputs.Count == 1 ? 16 : 6)" />
+                            </label>
+                        }
 
                         @if (isBlocksLoading)
                         {
@@ -76,16 +90,37 @@
                                     <WorkflowPackagePicker @key="workflowPackageRef"
                                                            Disabled="@isAiRequestLoading"
                                                            OnPinned="OnPackagePinnedAsync" />
-                                    <span class="muted-text">· @packageBlocks.Count sections</span>
+                                    <span class="muted-text">· @SectionSummary</span>
                                 </span>
                                 <details class="setup-sections">
                                     <summary>Sections it will generate</summary>
-                                    <ul>
-                                        @foreach (var standard in packageBlocks)
+                                    @if (IsMultiDeliverable)
+                                    {
+                                        @* Each section is generated once per deliverable, so
+                                           the roster groups under the authored document labels
+                                           rather than repeating names in one flat list. *@
+                                        @foreach (var deliverable in declaredResults!)
                                         {
-                                            <li>@standard.Name</li>
+                                            <div class="setup-sections__group">
+                                                <span class="setup-sections__group-label">@deliverable.Label</span>
+                                                <ul>
+                                                    @foreach (var standard in BlocksFor(deliverable.Id))
+                                                    {
+                                                        <li>@standard.Name</li>
+                                                    }
+                                                </ul>
+                                            </div>
                                         }
-                                    </ul>
+                                    }
+                                    else
+                                    {
+                                        <ul>
+                                            @foreach (var standard in packageBlocks)
+                                            {
+                                                <li>@standard.Name</li>
+                                            }
+                                        </ul>
+                                    }
                                 </details>
                             </div>
                         }
@@ -112,7 +147,7 @@
                             }
                             <FluentButton Appearance="Appearance.Accent"
                                           @onclick="CreateConsultAsync"
-                                          Disabled="@(isBlocksLoading || isAiRequestLoading || isSchedulingRequest || string.IsNullOrWhiteSpace(consultDraft) || packageBlocks.Count == 0)">
+                                          Disabled="@(isBlocksLoading || isAiRequestLoading || isSchedulingRequest || !HasEveryRequiredInput || packageBlocks.Count == 0)">
                                 @(runOvernight ? "Schedule consult" : "Create consult")
                             </FluentButton>
                         </div>
@@ -126,30 +161,49 @@
                 <details class="draft-bar">
                     <summary class="draft-bar__summary">
                         <span class="draft-bar__chevron" aria-hidden="true">&#x203A;</span>
-                        <span class="draft-bar__label">Draft</span>
+                        <span class="draft-bar__label">@(DeclaredInputs.Count == 1 ? "Draft" : "Inputs")</span>
                         <span class="draft-bar__snippet">@DraftSnippet</span>
-                        @if (!string.IsNullOrEmpty(consultDraft))
+                        @if (HasAnyInput)
                         {
                             <span @onclick:stopPropagation="true">
                                 <FluentButton Appearance="Appearance.Stealth"
                                               @onclick="EditDraft"
                                               Disabled="@isAiRequestLoading">
-                                    Edit draft
+                                    @(DeclaredInputs.Count == 1 ? "Edit draft" : "Edit inputs")
                                 </FluentButton>
                             </span>
                         }
                     </summary>
-                    <div class="draft-bar__full">@consultDraft</div>
+                    <div class="draft-bar__full">
+                        @if (DeclaredInputs.Count == 1)
+                        {
+                            @InputValue(DeclaredInputs[0].Id)
+                        }
+                        else
+                        {
+                            @* Each supplied input under its authored label; an
+                               absent optional input simply does not appear. *@
+                            @foreach (var input in DeclaredInputs.Where(i => !string.IsNullOrWhiteSpace(InputValue(i.Id))))
+                            {
+                                <div class="draft-bar__input" @key="input.Id">
+                                    <span class="draft-bar__input-label">@input.Label</span>
+                                    <span>@InputValue(input.Id)</span>
+                                </div>
+                            }
+                        }
+                    </div>
                 </details>
 
                 <div class="consult-run__grid">
                     <section class="result-panel">
-                        @if (assembledDocument != null)
+                        @if (assembledDocuments.Count > 0)
                         {
-                            @* v6: the deliverable is one server-assembled document. *@
+                            @* The deliverables: one server-assembled document in
+                               v6 and single-result v7, one tab each when the
+                               package declares several. *@
                             <div>
                                 <div class="result-header">
-                                    <h2 class="panel-title">Consultation note</h2>
+                                    <h2 class="panel-title">@(assembledDocuments.Count == 1 ? assembledDocuments[0].Label : "Documents")</h2>
                                     <div class="result-header__actions">
                                         <FluentBadge Appearance="Appearance.Accent">assembled</FluentBadge>
                                         <FluentButton Appearance="Appearance.Accent" @onclick="CopyNoteAsync">
@@ -158,9 +212,30 @@
                                     </div>
                                 </div>
 
-                                <article class="note-preview generated-note generated-note--assembled">
-                                    @((MarkupString)MarkdownPreview.Render(assembledDocument))
-                                </article>
+                                @if (assembledDocuments.Count == 1)
+                                {
+                                    <article class="note-preview generated-note generated-note--assembled">
+                                        @((MarkupString)MarkdownPreview.Render(assembledDocuments[0].Text))
+                                    </article>
+                                }
+                                else
+                                {
+                                    @* FluentTabs carries the whole ARIA tab pattern —
+                                       roving tabindex, arrow/Home/End keys, overflow
+                                       when the labels outgrow the panel. *@
+                                    <FluentTabs @bind-ActiveTabId="activeDocumentId" class="document-tabs">
+                                        @foreach (var document in assembledDocuments)
+                                        {
+                                            <FluentTab Id="@document.ResultId"
+                                                       Label="@document.Label"
+                                                       @key="document.ResultId">
+                                                <article class="note-preview generated-note generated-note--assembled">
+                                                    @((MarkupString)MarkdownPreview.Render(document.Text))
+                                                </article>
+                                            </FluentTab>
+                                        }
+                                    </FluentTabs>
+                                }
                             </div>
                         }
                         else if (generatedBlocks.Count > 0)
@@ -358,13 +433,24 @@
     PropertyNameCaseInsensitive = true
   };
 
-  private string consultDraft = string.Empty;
+  // The package's declared inputs and the values typed into them, keyed by
+  // declared id. v5/v6 packages declare nothing, so DeclaredInputs synthesizes
+  // the frozen consult_draft slot and one code path renders both eras.
+  private IReadOnlyList<WorkflowPackageInputResponse>? declaredInputs;
+  // Seeded with the legacy slot: the form renders once before the package
+  // resolves, and the field bindings index this dictionary directly.
+  private Dictionary<string, string> inputValues = new(StringComparer.Ordinal)
+  {
+    ["consult_draft"] = string.Empty
+  };
+  private IReadOnlyList<WorkflowPackageResultResponse>? declaredResults;
   private bool editingDraft;
   private bool runEventSeen;
   private string? runTerminalStatus;
   private string? copyFeedback;
   private int copyFeedbackToken;
-  private string? assembledDocument;
+  private IReadOnlyList<ConsultGenerationResultDocumentResponse> assembledDocuments = Array.Empty<ConsultGenerationResultDocumentResponse>();
+  private string? activeDocumentId;
   private List<PackageBlock> packageBlocks = new();
   private string? workflowPackageRef;
   private IReadOnlyList<WorkflowManifestReader.NodeView>? workflowNodes;
@@ -423,7 +509,8 @@
 
     if (sessionMatches)
     {
-      consultDraft = memento!.Draft;
+      inputValues = new Dictionary<string, string>(memento!.Inputs, StringComparer.Ordinal);
+      SyncInputKeys();
       workflowPackageRef = memento.WorkflowPackageRef ?? workflowPackageRef;
     }
 
@@ -521,6 +608,13 @@
       packageBlocks = (package.Blocks ?? Array.Empty<WorkflowPackageBlockResponse>())
         .Select(block => new PackageBlock(block.Id, block.Name))
         .ToList();
+
+      // v7: the declaration the form renders from and the deliverables it
+      // groups by. Null on v5/v6 — DeclaredInputs then synthesizes the frozen
+      // consult_draft slot.
+      declaredInputs = package.Inputs;
+      declaredResults = package.Results;
+      SyncInputKeys();
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -554,7 +648,8 @@
     editingDraft = false;
     runEventSeen = false;
     runTerminalStatus = null;
-    assembledDocument = null;
+    assembledDocuments = Array.Empty<ConsultGenerationResultDocumentResponse>();
+    activeDocumentId = null;
     completedNodeItems = new();
     aiRequestError = null;
     aiProgressNotice = null;
@@ -567,9 +662,12 @@
     totalAnalysisStageCount = 0;
     nodeLabels = null;
 
-    if (string.IsNullOrWhiteSpace(consultDraft))
+    if (!HasEveryRequiredInput)
     {
-      aiRequestError = "Consult draft is required.";
+      var missing = DeclaredInputs
+        .Where(input => input.Required && string.IsNullOrWhiteSpace(InputValue(input.Id)))
+        .Select(input => input.Label);
+      aiRequestError = $"{string.Join(", ", missing)} is required.";
       return;
     }
 
@@ -587,11 +685,11 @@
       {
         isSchedulingRequest = true;
         var scheduledAtUtc = NextOvernightRunUtc();
-        var job = await AIService.StartConsultGenerationJobAsync(consultDraft, workflowPackageRef, scheduledAtUtc);
+        var job = await AIService.StartConsultGenerationJobAsync(SuppliedInputs(), workflowPackageRef, scheduledAtUtc);
         scheduleConfirmation =
           $"Consult scheduled for {scheduledAtUtc.ToLocalTime():MMM d, h:mm tt} — it will appear in History, and you'll receive an email when it's ready.";
         runOvernight = false;
-        consultDraft = string.Empty;
+        ClearInputs();
       }
       catch (Exception ex)
       {
@@ -608,19 +706,19 @@
     try
     {
       isAiRequestLoading = true;
-      var draftSnapshot = consultDraft;
+      var inputSnapshot = SuppliedInputs();
       var blockSnapshots = packageBlocks.ToList();
       totalBlockCount = blockSnapshots.Count;
       await InvokeAsync(StateHasChanged);
 
       // Sections are package data resolved server-side; the request carries only
-      // the draft (and the resolved package ref).
-      var job = await AIService.StartConsultGenerationJobAsync(draftSnapshot, workflowPackageRef);
+      // the declared inputs (and the resolved package ref).
+      var job = await AIService.StartConsultGenerationJobAsync(inputSnapshot, workflowPackageRef);
 
       // #207: remember the job per-tab so navigating away and back re-attaches.
       JobSession.Current = new ConsultJobMemento(
         job.JobId,
-        draftSnapshot,
+        inputSnapshot,
         workflowPackageRef,
         blockSnapshots.Select(block => new ConsultJobBlock(block.Id, block.Name)).ToList());
 
@@ -1022,10 +1120,19 @@
     runEventSeen = true;
     generatedBlocks = response.GeneratedBlocks;
 
-    if (response.AssembledDocument != null)
+    // The deliverables, present on Completed payloads only and kept once seen.
+    // v7 sends the set; v6 sends one string, which becomes a one-entry set so
+    // the render path is shared.
+    if (response.AssembledDocuments is { Count: > 0 })
     {
-      // v6 deliverable: present on Completed payloads only, kept once seen.
-      assembledDocument = response.AssembledDocument;
+      assembledDocuments = response.AssembledDocuments;
+    }
+    else if (response.AssembledDocument != null)
+    {
+      assembledDocuments = new[]
+      {
+        new ConsultGenerationResultDocumentResponse("consult", "Consultation note", response.AssembledDocument)
+      };
     }
     failedBlockErrors = response.FailedBlocks;
     totalBlockCount = response.TotalBlockCount == 0 ? blockSnapshots.Count : response.TotalBlockCount;
@@ -1072,12 +1179,72 @@
 
   private bool IsRunPhase => !editingDraft && (isAiRequestLoading || totalBlockCount > 0);
 
+  // The frozen v5/v6 slot, synthesized when a package declares nothing: one
+  // required input labelled as the page always labelled it.
+  private static readonly IReadOnlyList<WorkflowPackageInputResponse> LegacyInputs =
+    new[] { new WorkflowPackageInputResponse("consult_draft", "Consult draft", true) };
+
+  private IReadOnlyList<WorkflowPackageInputResponse> DeclaredInputs =>
+    declaredInputs is { Count: > 0 } ? declaredInputs : LegacyInputs;
+
+  private bool IsMultiDeliverable => declaredResults is { Count: > 1 };
+
+  // v7 block ids carry the deliverable: "{resultId}:{nodeId}[:{itemId}]".
+  private IEnumerable<PackageBlock> BlocksFor(string resultId) =>
+    packageBlocks.Where(block => block.Id.StartsWith($"{resultId}:", StringComparison.Ordinal));
+
+  private string SectionSummary =>
+    IsMultiDeliverable
+      ? $"{declaredResults!.Count} documents · {BlocksFor(declaredResults[0].Id).Count()} sections each"
+      : $"{packageBlocks.Count} sections";
+
+  private string InputValue(string id) => inputValues.GetValueOrDefault(id, string.Empty);
+
+  // Every declared id gets an entry (so the field's @bind indexer is always a
+  // valid target) and only declared ids survive — switching packages never
+  // smuggles a stale input into a run.
+  private void SyncInputKeys()
+  {
+    inputValues = DeclaredInputs.ToDictionary(
+      input => input.Id,
+      input => inputValues.GetValueOrDefault(input.Id, string.Empty),
+      StringComparer.Ordinal);
+  }
+
+  // Empties every field while keeping the keys the bindings read.
+  private void ClearInputs()
+  {
+    inputValues = DeclaredInputs.ToDictionary(
+      input => input.Id,
+      _ => string.Empty,
+      StringComparer.Ordinal);
+  }
+
+  // What the request carries: declared ids with text. Blank optional inputs are
+  // omitted, not sent empty — the API rejects blank values, and the
+  // effective-input hash covers exactly what was supplied.
+  private Dictionary<string, string> SuppliedInputs() =>
+    DeclaredInputs
+      .Where(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)))
+      .ToDictionary(input => input.Id, input => InputValue(input.Id), StringComparer.Ordinal);
+
+  private bool HasEveryRequiredInput =>
+    DeclaredInputs.Where(input => input.Required).All(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)));
+
+  private bool HasAnyInput =>
+    DeclaredInputs.Any(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)));
+
+  // The draft bar summarizes the first supplied input — the primary slot in
+  // every package shape we ship.
   private string DraftSnippet
   {
     get
     {
-      var flattened = consultDraft.ReplaceLineEndings(" ").Trim();
-      // Empty when re-attached from another tab — the record carries no draft.
+      var first = DeclaredInputs
+        .Select(input => InputValue(input.Id))
+        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+      var flattened = first.ReplaceLineEndings(" ").Trim();
+      // Empty when re-attached from another tab — the record carries no inputs.
       return flattened.Length == 0 ? "—"
         : flattened.Length <= 80 ? flattened
         : flattened[..80] + "…";
@@ -1094,14 +1261,19 @@
     editingDraft = false;
   }
 
+  // The tab in view: the selected deliverable, else the first (result-set order).
+  private ConsultGenerationResultDocumentResponse? ActiveDocument =>
+    assembledDocuments.FirstOrDefault(document => document.ResultId == activeDocumentId)
+      ?? assembledDocuments.FirstOrDefault();
+
   private string CopyButtonLabel => copyFeedback ?? "Copy note";
 
-  // Copies the finished note as plain text: the assembled document verbatim
-  // (v6), or note-ordered sections — name on its own line, prose below,
-  // blank line between (v5).
+  // Copies the finished note as plain text: the document in view verbatim (the
+  // active tab when a package declares several), or note-ordered sections —
+  // name on its own line, prose below, blank line between (v5).
   private async Task CopyNoteAsync()
   {
-    var text = assembledDocument ?? string.Join("\n\n", packageBlocks
+    var text = ActiveDocument?.Text ?? string.Join("\n\n", packageBlocks
       .Where(standard => generatedBlocks.TryGetValue(standard.Id, out var prose) && !string.IsNullOrWhiteSpace(prose))
       .Select(standard => $"{standard.Name}\n{generatedBlocks[standard.Id].Trim()}"));
 
@@ -1140,11 +1312,13 @@
     return runEventSeen || !isAiRequestLoading ? "Completed" : "Running";
   }
 
-  // v6 block ids are composite ("resultSourceNodeId:itemId") while the live
-  // prose-step events carry the plain item id — match on the item part.
+  // Block ids are composite — "nodeId:itemId" in v6, "resultId:nodeId:itemId"
+  // in v7 — while the live prose-step events carry the plain item id. The item
+  // is always the last segment, so matching on it covers every spec version
+  // (v5's plain ids have no separator at all).
   private static string ItemPart(string sectionId)
   {
-    var separator = sectionId.IndexOf(':');
+    var separator = sectionId.LastIndexOf(':');
     return separator < 0 ? sectionId : sectionId[(separator + 1)..];
   }
 

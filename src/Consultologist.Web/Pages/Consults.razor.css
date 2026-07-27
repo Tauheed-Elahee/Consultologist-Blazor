@@ -41,6 +41,21 @@
 	break-inside: avoid;
 }
 
+/* Multi-deliverable: the roster groups under each document's authored label. */
+.setup-sections__group {
+	margin-top: 0.5rem;
+}
+
+.setup-sections__group-label {
+	font-weight: 600;
+	font-size: 0.8rem;
+}
+
+.input-field__optional {
+	margin-left: 0.35rem;
+	font-weight: 400;
+}
+
 /* Run phase: collapsed draft bar over a note | run-rail grid. */
 .consult-run {
 	display: flex;
@@ -139,6 +154,26 @@
 	display: flex;
 	align-items: center;
 	gap: 0.75rem;
+}
+
+/* One tab per deliverable; the strip only appears when there are several.
+   FluentTabs owns the strip's own chrome — this only spaces the panel. */
+.document-tabs::part(tabpanel) {
+	padding-top: 0.75rem;
+}
+
+/* Multi-input runs list each supplied input under its authored label. */
+.draft-bar__input + .draft-bar__input {
+	margin-top: 0.6rem;
+}
+
+.draft-bar__input-label {
+	display: block;
+	font-size: 0.75rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--consultologist-text-muted);
 }
 
 .empty-note-state {

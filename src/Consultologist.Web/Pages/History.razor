@@ -134,6 +134,14 @@
                                                     <dt>Output hash (v@(detail.WorkflowOutputHashVersion?.ToString() ?? "—"))</dt>
                                                     <dd class="hash-text">@detail.WorkflowOutputHash</dd>
                                                 }
+                                                @* v7: the per-deliverable digests the v3 output hash
+                                                   above is computed over — the aggregate and its
+                                                   constituents, both verifiable. *@
+                                                @foreach (var document in detail.AssembledDocuments ?? Array.Empty<ConsultGenerationResultDocumentResponse>())
+                                                {
+                                                    <dt class="provenance-list__nested">@document.Label</dt>
+                                                    <dd class="hash-text">@(document.DocumentHash ?? "—")</dd>
+                                                }
                                                 @if (LineageFor(detail.WorkflowPackage) is { Count: > 1 } lineage)
                                                 {
                                                     <dt>Lineage</dt>

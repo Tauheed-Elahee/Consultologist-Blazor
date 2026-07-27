@@ -50,11 +50,21 @@ public record PublicContractView(string? AgentName);
 
 public record WorkflowPackageBlockResponse(string Id, string Name);
 
+/// <summary>One declared input slot — the setup form renders a field per entry.</summary>
+public record WorkflowPackageInputResponse(string Id, string Label, bool Required);
+
+/// <summary>One declared deliverable — blocks and result tabs group by these.</summary>
+public record WorkflowPackageResultResponse(string Id, string Label);
+
 public record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null)
+    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null,
+    // v7 only; null on v5/v6, whose single input is the consult_draft
+    // convention and whose single deliverable needs no grouping.
+    IReadOnlyList<WorkflowPackageInputResponse>? Inputs = null,
+    IReadOnlyList<WorkflowPackageResultResponse>? Results = null)
 {
     public string Ref => $"{Name}@{Version}";
 }

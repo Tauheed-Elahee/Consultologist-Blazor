@@ -190,11 +190,27 @@ public sealed record WorkflowPackage(
 
 public sealed record WorkflowPackageBlockResponse(string Id, string Name);
 
+/// <summary>
+/// One declared input slot on the current-package response — what the consult
+/// setup form renders a field for (package-format-v7.md § inputs). Null on
+/// v5/v6 packages, whose single slot is the frozen consult_draft convention.
+/// </summary>
+public sealed record WorkflowPackageInputResponse(string Id, string Label, bool Required);
+
+/// <summary>
+/// One declared deliverable on the current-package response: the authored
+/// identity the client groups blocks and result tabs by. The result node is
+/// engine-side and never leaves the API.
+/// </summary>
+public sealed record WorkflowPackageResultResponse(string Id, string Label);
+
 public sealed record WorkflowPackageResponse(
     string Name,
     string Version,
     int SpecVersion,
-    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null);
+    IReadOnlyList<WorkflowPackageBlockResponse>? Blocks = null,
+    IReadOnlyList<WorkflowPackageInputResponse>? Inputs = null,
+    IReadOnlyList<WorkflowPackageResultResponse>? Results = null);
 
 /// <summary>
 /// The pin-resolved package's full editable content: the typed manifest (the
