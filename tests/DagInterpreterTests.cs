@@ -685,6 +685,88 @@ public class ForEachInstanceResolutionTests
     }
 }
 
+public class ConsultDeliverablesTests
+{
+    private static readonly Dictionary<string, ConsultNodeDescriptor> NodesById = new(StringComparer.Ordinal)
+    {
+        ["fan"] = new("fan", "Fan", ForEach: "data:standards"),
+        ["extra"] = new("extra", "Extra"),
+        ["note"] = new("note", "Note", Aggregate: new List<string> { "node:fan" }),
+        ["letter"] = new("letter", "Letter", Aggregate: new List<string> { "node:fan", "node:extra" })
+    };
+
+    private static readonly List<ConsultResultDescriptor> TwoResults = new()
+    {
+        new("consult_note", "note", "Consultation note"),
+        new("patient_letter", "letter", "Patient letter")
+    };
+
+    [Fact]
+    public void V6_ResolvesOneUnnamedEntryWithEmptyPrefix()
+    {
+        // The empty prefix is the byte-parity contract: v6 block ids and
+        // signal order must reproduce exactly through the shared loops.
+        var deliverables = ConsultDeliverables.Resolve(null, "note", NodesById);
+
+        var entry = Assert.Single(deliverables);
+        Assert.Null(entry.ResultId);
+        Assert.Equal(string.Empty, entry.BlockPrefix);
+        Assert.Equal("note", entry.NodeId);
+        Assert.Equal(new[] { "fan" }, entry.SourceIds);
+    }
+
+    [Fact]
+    public void V6_NonAggregatorResult_ResolvesEmpty()
+    {
+        Assert.Empty(ConsultDeliverables.Resolve(null, "fan", NodesById));
+        Assert.Empty(ConsultDeliverables.Resolve(null, null, NodesById));
+    }
+
+    [Fact]
+    public void V7_ResolvesPrefixedEntriesInResultSetOrder()
+    {
+        var deliverables = ConsultDeliverables.Resolve(TwoResults, null, NodesById);
+
+        Assert.Equal(
+            new[] { ("consult_note", "consult_note:", "note", 0), ("patient_letter", "patient_letter:", "letter", 1) },
+            deliverables.Select(d => (d.ResultId, d.BlockPrefix, d.NodeId, d.Ordinal)).ToArray());
+        // The shared forEach source appears in BOTH deliverables' source sets —
+        // the double block emission that prefixed ids exist to disambiguate.
+        Assert.All(deliverables, d => Assert.Contains("fan", d.SourceIds));
+    }
+
+    [Fact]
+    public void FinalOutcome_CompletedOnlyWhenEveryDeliverableProduced()
+    {
+        var deliverables = ConsultDeliverables.Resolve(TwoResults, null, NodesById);
+        var bothProduced = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+        {
+            ["note"] = new("n", null, "i", "o"),
+            ["letter"] = new("l", null, "i", "o")
+        };
+        var oneProduced = new Dictionary<string, NodeRunResult>(StringComparer.Ordinal)
+        {
+            ["letter"] = new("l", null, "i", "o")
+        };
+
+        Assert.Equal(
+            (ConsultGenerationJobStatuses.Completed, (string?)null),
+            ConsultDeliverables.FinalOutcome(deliverables, bothProduced, new Dictionary<string, string>()));
+
+        // The first missing deliverable BY RESULT-SET ORDER selects the error.
+        var (status, error) = ConsultDeliverables.FinalOutcome(
+            deliverables,
+            oneProduced,
+            new Dictionary<string, string> { ["note"] = "Note could not assemble." });
+        Assert.Equal(ConsultGenerationJobStatuses.Failed, status);
+        Assert.Equal("Note could not assemble.", error);
+
+        var (_, fallback) = ConsultDeliverables.FinalOutcome(
+            deliverables, oneProduced, new Dictionary<string, string>());
+        Assert.Equal("The assembled documents could not be produced.", fallback);
+    }
+}
+
 public class SectionProseStepEventTests
 {
     private static ConsultGenerationJobResponse Response(

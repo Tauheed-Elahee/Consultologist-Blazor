@@ -181,6 +181,75 @@ public class ConsultGenerationJobStarterTests
     }
 
     [Fact]
+    public async Task SpecVersion7MultiResultPackage_StartsWithBothDeliverables()
+    {
+        // ResultNodeId is null by design for a multi-result set — the result
+        // set itself is the executability signal.
+        var request = new ConsultGenerationRequest(
+            null,
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = "The referral body" });
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV7Package(
+                V7Fixtures.MultiDeliverable(),
+                new List<WorkflowResolvedResult>
+                {
+                    new("consult_note", "assemble-note", "Consultation note"),
+                    new("patient_letter", "assemble-letter", "Patient letter")
+                }));
+
+        ConsultGenerationOrchestrationInput? orchestrationInput = null;
+        _client.ScheduleNewOrchestrationInstanceAsync(
+                Arg.Any<TaskName>(),
+                Arg.Do<object?>(payload => orchestrationInput = payload as ConsultGenerationOrchestrationInput),
+                Arg.Any<StartOrchestrationOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(((StartOrchestrationOptions?)callInfo[2])!.InstanceId!));
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            request,
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Null(outcome.Error);
+        Assert.NotNull(orchestrationInput);
+        Assert.Null(orchestrationInput.ResultNodeId);
+        Assert.Equal(2, orchestrationInput.Results!.Count);
+        // The optional prior_notes input was not supplied: the effective map
+        // carries it empty for the resolver; the hash covers the supplied map.
+        Assert.Equal(string.Empty, orchestrationInput.Inputs!["prior_notes"]);
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(
+                new Dictionary<string, string> { ["consult_draft"] = "The referral body" }),
+            orchestrationInput.EffectiveInputHash);
+    }
+
+    [Fact]
+    public async Task SpecVersion7Package_UnknownInput_ReturnsInputsMismatch()
+    {
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV7Package(
+                V7Fixtures.Minimal(),
+                new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest(null, Inputs: new Dictionary<string, string> { ["labs"] = "CBC normal." }),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.InputsMismatch, outcome.Error);
+        Assert.Contains("'labs'", outcome.ErrorDetail);
+        Assert.Contains("declared: consult_draft", outcome.ErrorDetail);
+    }
+
+    [Fact]
     public async Task Success_SignalsInitializeAndSchedulesWithSameJobIdAndDraftHash()
     {
         var request = new ConsultGenerationRequest("The referral body");
@@ -225,6 +294,84 @@ public class ConsultGenerationJobStarterTests
             ConsultGenerationProvenance.ComputeDraftOnlyHash(request),
             orchestrationInput.EffectiveInputHash);
         Assert.Equal(initialize.EffectiveInputHash, orchestrationInput.EffectiveInputHash);
+    }
+}
+
+public class ResolveEffectiveInputsTests
+{
+    [Fact]
+    public void LegacyPackage_DraftOnly_ResolvesNullMaps()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest("Draft."), V5Fixtures.Manifest());
+
+        Assert.Null(resolution.Error);
+        Assert.Null(resolution.Effective);
+        Assert.Null(resolution.Supplied);
+    }
+
+    [Fact]
+    public void LegacyPackage_ForeignInputId_IsRejected()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest(null, Inputs: new Dictionary<string, string>
+            {
+                ["consult_draft"] = "Draft.",
+                ["labs"] = "CBC normal."
+            }),
+            V6Fixtures.SingleCollection());
+
+        Assert.Contains("'labs'", resolution.Error);
+        Assert.Contains("accepts only consult_draft", resolution.Error);
+    }
+
+    [Fact]
+    public void V7_LegacyDraft_BackFillsTheConventionalSlot()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest("Draft."), V7Fixtures.Minimal());
+
+        Assert.Null(resolution.Error);
+        Assert.Equal(new Dictionary<string, string> { ["consult_draft"] = "Draft." }, resolution.Supplied);
+        Assert.Equal(new Dictionary<string, string> { ["consult_draft"] = "Draft." }, resolution.Effective);
+    }
+
+    [Fact]
+    public void V7_AbsentOptionalInput_IsEmptyInEffectiveAndOmittedInSupplied()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest(null, Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." }),
+            V7Fixtures.MultiDeliverable());
+
+        Assert.Null(resolution.Error);
+        Assert.False(resolution.Supplied!.ContainsKey("prior_notes"));
+        Assert.Equal(string.Empty, resolution.Effective!["prior_notes"]);
+        Assert.Equal("Draft.", resolution.Effective["consult_draft"]);
+    }
+
+    [Fact]
+    public void V7_MissingRequiredInput_IsRejected()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest(null, Inputs: new Dictionary<string, string> { ["prior_notes"] = "Old notes." }),
+            V7Fixtures.MultiDeliverable());
+
+        Assert.Contains("Required input(s) 'consult_draft' missing", resolution.Error);
+    }
+
+    [Fact]
+    public void V7_UnknownInput_IsRejectedListingTheDeclaration()
+    {
+        var resolution = ConsultGenerationJobStarter.ResolveEffectiveInputs(
+            new ConsultGenerationRequest(null, Inputs: new Dictionary<string, string>
+            {
+                ["consult_draft"] = "Draft.",
+                ["labs"] = "CBC normal."
+            }),
+            V7Fixtures.MultiDeliverable());
+
+        Assert.Contains("Unknown input(s) 'labs'", resolution.Error);
+        Assert.Contains("declared: consult_draft, prior_notes", resolution.Error);
     }
 }
 

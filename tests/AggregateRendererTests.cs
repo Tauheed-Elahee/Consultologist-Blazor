@@ -157,4 +157,63 @@ public class AssembledDocumentEntityTests
         Assert.Null(response.AssembledDocument);
         Assert.Equal(1, response.WorkflowOutputHashVersion);
     }
+
+    [Fact]
+    public async Task CompleteResultDocument_OrdersByOrdinalAndUpsertsByResultId()
+    {
+        var (entity, state) = CreateEntity();
+
+        // Aggregators complete in data-dependent order; a replayed signal for
+        // the same result replaces, never duplicates.
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("patient_letter", "Patient letter", "Letter.", 1));
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("consult_note", "Consultation note", "Stale.", 0));
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("consult_note", "Consultation note", "Note.", 0));
+
+        Assert.Equal(7, state().SchemaVersion);
+        Assert.Null(state().AssembledDocument);
+        Assert.Equal(
+            new[] { ("consult_note", "Note."), ("patient_letter", "Letter.") },
+            state().AssembledDocuments!.Select(d => (d.ResultId, d.Text)).ToArray());
+    }
+
+    [Fact]
+    public async Task ToResponse_CompletedV7Job_CarriesDocumentSetAndHashV3()
+    {
+        var (entity, state) = CreateEntity();
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("consult_note", "Consultation note", "Note.", 0));
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("patient_letter", "Patient letter", "Letter.", 1));
+        state().Status = ConsultGenerationJobStatuses.Completed;
+
+        var response = state().ToResponse();
+
+        Assert.Null(response.AssembledDocument);
+        Assert.Equal(
+            new[]
+            {
+                new ConsultGenerationResultDocumentResponse("consult_note", "Consultation note", "Note."),
+                new ConsultGenerationResultDocumentResponse("patient_letter", "Patient letter", "Letter.")
+            },
+            response.AssembledDocuments!.ToArray());
+        Assert.Equal(3, response.WorkflowOutputHashVersion);
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeResultSetHash(new Dictionary<string, string>
+            {
+                ["consult_note"] = "Note.",
+                ["patient_letter"] = "Letter."
+            }),
+            response.WorkflowOutputHash);
+    }
+
+    [Fact]
+    public async Task ToResponse_RunningV7Job_WithholdsTheDocumentSet()
+    {
+        var (entity, state) = CreateEntity();
+        await entity.CompleteResultDocument(new ConsultGenerationResultDocument("consult_note", "Consultation note", "Partial.", 0));
+        state().Status = ConsultGenerationJobStatuses.Running;
+
+        var response = state().ToResponse();
+
+        Assert.Null(response.AssembledDocuments);
+        Assert.Null(response.WorkflowOutputHash);
+    }
 }
