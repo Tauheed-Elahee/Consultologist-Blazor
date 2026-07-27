@@ -121,6 +121,25 @@ activity, `Account/DeliveryPassword` endpoints):
   runs and password-less accounts get link-only replies; any failure in
   the attachment leg degrades to link-only, never silence.
 
+### Per-deliverable delivery (#217) — IMPLEMENTED 2026-07-27
+
+Format v7 (#209) made a package's deliverable a *set*, so the reply
+carries one encrypted PDF per deliverable:
+
+- **Filename `{resultId}-{jobId8}.pdf`** — the authored result id is
+  package content, never patient data. v7's single-result sugar id is
+  `consult`, so a single-deliverable job produces byte-identical
+  filenames to v6's `consult-{jobId8}.pdf`.
+- **The body names the documents** by authored label ("Consultation
+  note, Patient letter are attached…") so the recipient can see the set
+  is complete before decrypting anything.
+- **Degrade whole, at a 2 MB raw budget.** Graph caps a sendMail request
+  near 3 MB and base64 inflates bytes by ~1.33x, so the rendered set is
+  dropped entirely when it exceeds 2 MB and the reply says the documents
+  were too large to send by email. Attaching only what fits would
+  misrepresent the consult; letting Graph reject the request would cost
+  the reply itself, and the retry would fail identically.
+
 - **Format**: password-protected PDF, AES-256 (PDF 2.0's KDF) — the flow
   clinicians already know, opening everywhere with no tooling. The
   assembled markdown renders to PDF server-side (license-friendly library,
