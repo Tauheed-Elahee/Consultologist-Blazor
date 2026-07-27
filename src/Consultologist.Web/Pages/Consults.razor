@@ -45,21 +45,22 @@
                         @* One field per declared input, all visible: the package
                            states its intake form, and a single input keeps the
                            full-height writing area the page has always had. *@
-                        @foreach (var input in DeclaredInputs)
+                        @foreach (var field in inputFields)
                         {
-                            <label class="input-field" @key="input.Id">
+                            <label class="input-field" @key="field.Id">
                                 <span>
-                                    @input.Label
-                                    @if (!input.Required)
+                                    @field.Label
+                                    @if (!field.Required)
                                     {
                                         <span class="muted-text input-field__optional">(optional)</span>
                                     }
                                 </span>
-                                @* SyncInputKeys guarantees the entry exists, so the
-                                   indexer is a safe two-way binding target. *@
-                                <FluentTextArea @bind-Value="inputValues[input.Id]"
-                                                Placeholder="@(input.Id == "consult_draft" ? "Enter referral details, clinical context, and the consult question..." : $"Enter {input.Label.ToLowerInvariant()}...")"
-                                                Rows="@(DeclaredInputs.Count == 1 ? 16 : 6)" />
+                                @* Bound to the field object's own property: Blazor's
+                                   expression formatter cannot parse an indexer whose
+                                   argument is a property access. *@
+                                <FluentTextArea @bind-Value="field.Value"
+                                                Placeholder="@field.Placeholder"
+                                                Rows="@(inputFields.Count == 1 ? 16 : 6)" />
                             </label>
                         }
 
@@ -161,7 +162,7 @@
                 <details class="draft-bar">
                     <summary class="draft-bar__summary">
                         <span class="draft-bar__chevron" aria-hidden="true">&#x203A;</span>
-                        <span class="draft-bar__label">@(DeclaredInputs.Count == 1 ? "Draft" : "Inputs")</span>
+                        <span class="draft-bar__label">@(inputFields.Count == 1 ? "Draft" : "Inputs")</span>
                         <span class="draft-bar__snippet">@DraftSnippet</span>
                         @if (HasAnyInput)
                         {
@@ -169,25 +170,25 @@
                                 <FluentButton Appearance="Appearance.Stealth"
                                               @onclick="EditDraft"
                                               Disabled="@isAiRequestLoading">
-                                    @(DeclaredInputs.Count == 1 ? "Edit draft" : "Edit inputs")
+                                    @(inputFields.Count == 1 ? "Edit draft" : "Edit inputs")
                                 </FluentButton>
                             </span>
                         }
                     </summary>
                     <div class="draft-bar__full">
-                        @if (DeclaredInputs.Count == 1)
+                        @if (inputFields.Count == 1)
                         {
-                            @InputValue(DeclaredInputs[0].Id)
+                            @inputFields[0].Value
                         }
                         else
                         {
                             @* Each supplied input under its authored label; an
                                absent optional input simply does not appear. *@
-                            @foreach (var input in DeclaredInputs.Where(i => !string.IsNullOrWhiteSpace(InputValue(i.Id))))
+                            @foreach (var field in inputFields.Where(f => !string.IsNullOrWhiteSpace(f.Value)))
                             {
-                                <div class="draft-bar__input" @key="input.Id">
-                                    <span class="draft-bar__input-label">@input.Label</span>
-                                    <span>@InputValue(input.Id)</span>
+                                <div class="draft-bar__input" @key="field.Id">
+                                    <span class="draft-bar__input-label">@field.Label</span>
+                                    <span>@field.Value</span>
                                 </div>
                             }
                         }
@@ -433,16 +434,13 @@
     PropertyNameCaseInsensitive = true
   };
 
-  // The package's declared inputs and the values typed into them, keyed by
-  // declared id. v5/v6 packages declare nothing, so DeclaredInputs synthesizes
-  // the frozen consult_draft slot and one code path renders both eras.
-  private IReadOnlyList<WorkflowPackageInputResponse>? declaredInputs;
-  // Seeded with the legacy slot: the form renders once before the package
-  // resolves, and the field bindings index this dictionary directly.
-  private Dictionary<string, string> inputValues = new(StringComparer.Ordinal)
-  {
-    ["consult_draft"] = string.Empty
-  };
+  // One editable field per declared input. v5/v6 packages declare nothing, so
+  // the fields fall back to the frozen consult_draft slot and one code path
+  // renders both eras. Seeded before the package resolves — the setup form
+  // renders once first.
+  private List<ConsultInputField> inputFields = LegacyInputs
+    .Select(input => new ConsultInputField(input.Id, input.Label, input.Required))
+    .ToList();
   private IReadOnlyList<WorkflowPackageResultResponse>? declaredResults;
   private bool editingDraft;
   private bool runEventSeen;
@@ -509,8 +507,7 @@
 
     if (sessionMatches)
     {
-      inputValues = new Dictionary<string, string>(memento!.Inputs, StringComparer.Ordinal);
-      SyncInputKeys();
+      ApplyInputValues(memento!.Inputs);
       workflowPackageRef = memento.WorkflowPackageRef ?? workflowPackageRef;
     }
 
@@ -610,11 +607,10 @@
         .ToList();
 
       // v7: the declaration the form renders from and the deliverables it
-      // groups by. Null on v5/v6 — DeclaredInputs then synthesizes the frozen
+      // groups by. Null on v5/v6 — the fields then fall back to the frozen
       // consult_draft slot.
-      declaredInputs = package.Inputs;
       declaredResults = package.Results;
-      SyncInputKeys();
+      SyncInputFields(package.Inputs);
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -664,9 +660,9 @@
 
     if (!HasEveryRequiredInput)
     {
-      var missing = DeclaredInputs
-        .Where(input => input.Required && string.IsNullOrWhiteSpace(InputValue(input.Id)))
-        .Select(input => input.Label);
+      var missing = inputFields
+        .Where(field => field.Required && string.IsNullOrWhiteSpace(field.Value))
+        .Select(field => field.Label);
       aiRequestError = $"{string.Join(", ", missing)} is required.";
       return;
     }
@@ -1184,9 +1180,6 @@
   private static readonly IReadOnlyList<WorkflowPackageInputResponse> LegacyInputs =
     new[] { new WorkflowPackageInputResponse("consult_draft", "Consult draft", true) };
 
-  private IReadOnlyList<WorkflowPackageInputResponse> DeclaredInputs =>
-    declaredInputs is { Count: > 0 } ? declaredInputs : LegacyInputs;
-
   private bool IsMultiDeliverable => declaredResults is { Count: > 1 };
 
   // v7 block ids carry the deliverable: "{resultId}:{nodeId}[:{itemId}]".
@@ -1198,41 +1191,52 @@
       ? $"{declaredResults!.Count} documents · {BlocksFor(declaredResults[0].Id).Count()} sections each"
       : $"{packageBlocks.Count} sections";
 
-  private string InputValue(string id) => inputValues.GetValueOrDefault(id, string.Empty);
-
-  // Every declared id gets an entry (so the field's @bind indexer is always a
-  // valid target) and only declared ids survive — switching packages never
-  // smuggles a stale input into a run.
-  private void SyncInputKeys()
+  // Rebuilds the fields for a package's declaration, carrying over any text
+  // already typed into an id the new package still declares — switching
+  // packages never smuggles a stale input into a run.
+  private void SyncInputFields(IReadOnlyList<WorkflowPackageInputResponse>? declaration)
   {
-    inputValues = DeclaredInputs.ToDictionary(
-      input => input.Id,
-      input => inputValues.GetValueOrDefault(input.Id, string.Empty),
-      StringComparer.Ordinal);
+    var carried = inputFields.ToDictionary(field => field.Id, field => field.Value, StringComparer.Ordinal);
+
+    inputFields = (declaration is { Count: > 0 } ? declaration : LegacyInputs)
+      .Select(input => new ConsultInputField(input.Id, input.Label, input.Required)
+      {
+        Value = carried.GetValueOrDefault(input.Id, string.Empty)
+      })
+      .ToList();
   }
 
-  // Empties every field while keeping the keys the bindings read.
+  private void ApplyInputValues(IReadOnlyDictionary<string, string> values)
+  {
+    foreach (var field in inputFields)
+    {
+      field.Value = values.GetValueOrDefault(field.Id, string.Empty);
+    }
+  }
+
   private void ClearInputs()
   {
-    inputValues = DeclaredInputs.ToDictionary(
-      input => input.Id,
-      _ => string.Empty,
-      StringComparer.Ordinal);
+    foreach (var field in inputFields)
+    {
+      field.Value = string.Empty;
+    }
   }
 
   // What the request carries: declared ids with text. Blank optional inputs are
   // omitted, not sent empty — the API rejects blank values, and the
   // effective-input hash covers exactly what was supplied.
   private Dictionary<string, string> SuppliedInputs() =>
-    DeclaredInputs
-      .Where(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)))
-      .ToDictionary(input => input.Id, input => InputValue(input.Id), StringComparer.Ordinal);
+    inputFields
+      .Where(field => !string.IsNullOrWhiteSpace(field.Value))
+      .ToDictionary(field => field.Id, field => field.Value, StringComparer.Ordinal);
 
+  // NB: 'field' is a contextual keyword inside property accessors (C# 14), so
+  // the lambdas below name their parameter 'entry'.
   private bool HasEveryRequiredInput =>
-    DeclaredInputs.Where(input => input.Required).All(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)));
+    inputFields.Where(entry => entry.Required).All(entry => !string.IsNullOrWhiteSpace(entry.Value));
 
   private bool HasAnyInput =>
-    DeclaredInputs.Any(input => !string.IsNullOrWhiteSpace(InputValue(input.Id)));
+    inputFields.Any(entry => !string.IsNullOrWhiteSpace(entry.Value));
 
   // The draft bar summarizes the first supplied input — the primary slot in
   // every package shape we ship.
@@ -1240,8 +1244,8 @@
   {
     get
     {
-      var first = DeclaredInputs
-        .Select(input => InputValue(input.Id))
+      var first = inputFields
+        .Select(entry => entry.Value)
         .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
       var flattened = first.ReplaceLineEndings(" ").Trim();
       // Empty when re-attached from another tab — the record carries no inputs.
@@ -1560,6 +1564,31 @@
   // One deliverable block of the pinned package (v5: a section; v6: the
   // result aggregator's expansion) — the note-stream and tally roster.
   private sealed record PackageBlock(string Id, string Name);
+
+  /// <summary>
+  /// One editable setup field. A mutable class, not a record: the text area
+  /// binds to Value directly, which is the only shape Blazor's expression
+  /// formatter accepts inside a loop (an indexer keyed by a property access
+  /// throws at render time).
+  /// </summary>
+  private sealed class ConsultInputField
+  {
+    public ConsultInputField(string id, string label, bool required)
+    {
+      Id = id;
+      Label = label;
+      Required = required;
+    }
+
+    public string Id { get; }
+    public string Label { get; }
+    public bool Required { get; }
+    public string Value { get; set; } = string.Empty;
+
+    public string Placeholder => Id == "consult_draft"
+      ? "Enter referral details, clinical context, and the consult question..."
+      : $"Enter {Label.ToLowerInvariant()}...";
+  }
 
   private sealed record ConsultGenerationBlockCompletedEvent(
     string JobId,
