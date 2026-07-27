@@ -11,7 +11,7 @@
     {
         <option value="">choose source…</option>
     }
-    @foreach (var option in SourceOptions(Nodes, Scalars, Node, Row.From))
+    @foreach (var option in SourceOptions(Nodes, Scalars, Node, Row.From, Inputs))
     {
         <option value="@option">@option</option>
     }
@@ -37,17 +37,27 @@
     [Parameter] public WorkflowNodeSummary.BindingRow Row { get; set; } = default!;
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// The package's declared input ids (specVersion 7). Empty falls back to
+    /// the frozen consult_draft slot, which is v5/v6's whole vocabulary.
+    /// </summary>
+    [Parameter] public IReadOnlyList<string> Inputs { get; set; } = Array.Empty<string>();
     [Parameter] public EventCallback<WorkflowNodeSummary.BindingChange> OnChanged { get; set; }
 
-    // The valid v5 source space for one node; a nonempty current value is
-    // always included so an unrecognized source still displays truthfully.
+    // The valid source space for one node; a nonempty current value is always
+    // included so an unrecognized source still displays truthfully — which is
+    // also what shows a binding left pointing at a removed input slot.
     internal static IEnumerable<string> SourceOptions(
         IReadOnlyList<WorkflowManifestReader.NodeView> nodes,
         IReadOnlyList<string> scalars,
         WorkflowManifestReader.NodeView node,
-        string current)
+        string current,
+        IReadOnlyList<string>? inputs = null)
     {
-        var options = new List<string> { "input:consult_draft" };
+        var options = inputs is { Count: > 0 }
+            ? inputs.Select(id => $"input:{id}").ToList()
+            : new List<string> { "input:consult_draft" };
 
         options.AddRange(nodes.Where(other => other.Id != node.Id).Select(other => $"node:{other.Id}"));
 
