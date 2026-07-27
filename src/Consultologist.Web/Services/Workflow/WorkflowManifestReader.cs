@@ -27,6 +27,12 @@ public static class WorkflowManifestReader
         string? OutputSchema = null,
         string? FailIfEmpty = null);
 
+    /// <summary>One declared input slot of a specVersion-7 package.</summary>
+    public sealed record InputView(string Id, string Label, bool Required);
+
+    /// <summary>One declared deliverable: authored id and label over an aggregator node.</summary>
+    public sealed record ResultView(string Id, string Node, string Label);
+
     public sealed record DataItemView(string Id, string Name, string File);
 
     public sealed record CollectionView(string Id, string Directory, IReadOnlyList<DataItemView> Items);
@@ -205,6 +211,54 @@ public static class WorkflowManifestReader
 
     /// <summary>The raw result reference ("node:x"), for the deliverable selector.</summary>
     public static string? ReadResultRef(JsonElement manifest) => ReadString(manifest, "result");
+
+    /// <summary>
+    /// The declared input slots (specVersion 7). Empty for v5/v6, whose single
+    /// slot is the frozen consult_draft convention rather than a declaration.
+    /// `required` defaults true when absent, matching the server's spec record.
+    /// </summary>
+    public static IReadOnlyList<InputView> ReadInputs(JsonElement manifest)
+    {
+        var inputs = new List<InputView>();
+
+        if (!TryGetProperty(manifest, "inputs", out var array) || array.ValueKind != JsonValueKind.Array)
+        {
+            return inputs;
+        }
+
+        foreach (var input in array.EnumerateArray())
+        {
+            var id = ReadString(input, "id") ?? string.Empty;
+            var required = !TryGetProperty(input, "required", out var requiredElement)
+                || requiredElement.ValueKind != JsonValueKind.False;
+
+            inputs.Add(new InputView(id, ReadString(input, "label") ?? id, required));
+        }
+
+        return inputs;
+    }
+
+    /// <summary>
+    /// The declared deliverables (specVersion 7). Empty when the package uses
+    /// the string result form, which stays valid as one-entry sugar.
+    /// </summary>
+    public static IReadOnlyList<ResultView> ReadResults(JsonElement manifest)
+    {
+        var results = new List<ResultView>();
+
+        if (!TryGetProperty(manifest, "results", out var array) || array.ValueKind != JsonValueKind.Array)
+        {
+            return results;
+        }
+
+        foreach (var result in array.EnumerateArray())
+        {
+            var id = ReadString(result, "id") ?? string.Empty;
+            results.Add(new ResultView(id, ReadString(result, "node") ?? string.Empty, ReadString(result, "label") ?? id));
+        }
+
+        return results;
+    }
 
     /// <summary>
     /// The nodes a package names as deliverables: the v7 results list, or the
