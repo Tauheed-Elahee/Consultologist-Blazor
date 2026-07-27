@@ -15,11 +15,14 @@ vocabulary and unchanged block ids. A package needs 7 only when it uses
 what 7 opens.
 
 v7 packages execute: the engine resolves any declared input, runs every
-declared deliverable, and records per-result documents. Until the
-per-deliverable delivery work (#217), the email completion reply attaches
-the encrypted PDF only for a **single**-deliverable result set;
-multi-deliverable jobs reply link-only (degrade whole, never a partial
-set).
+declared deliverable, and records per-result documents. The email
+completion reply attaches **one encrypted PDF per deliverable**, named
+`{resultId}-{jobId8}.pdf` (authored ids — no PHI), and names the
+documents by their authored labels. The set travels whole or not at all:
+if the PDFs exceed the message budget (2 MB raw, under Graph's ~3 MB
+request cap once base64 inflates them) the reply says so and carries the
+History link instead — a partial document set would misrepresent what
+the consult produced.
 
 ## Declared ids (shared grammar)
 

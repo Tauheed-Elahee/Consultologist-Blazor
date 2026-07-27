@@ -600,21 +600,25 @@ public sealed class ConsultGenerationOrchestrator
             nameof(ConsultGenerationJobEntity.FinalizeJob),
             new ConsultGenerationJobFinalize(finalStatus, finalError));
 
-        // #159: the completed document rides into the reply activity so it can
-        // be attached as an encrypted PDF when the account has a delivery
-        // password. v7 attaches only the single-deliverable case — a multi-
-        // deliverable set replies link-only until the per-deliverable delivery
-        // work (#217; degrade whole, never a partial set). Sourced from
-        // replayed activity outputs — deterministic.
-        var assembledDocument = v7
-            ? deliverables.Count == 1 && outputs.TryGetValue(deliverables[0].NodeId, out var singleResultOutput)
-                ? singleResultOutput.RawOutput
-                : null
-            : v6 && outputs.TryGetValue(resultNodeId!, out var resultOutput)
-                ? resultOutput.RawOutput
-                : null;
+        // #159/#217: the completed documents ride into the reply activity so
+        // each can be attached as an encrypted PDF when the account has a
+        // delivery password. v7 sends the whole set in result-set order (the
+        // outcome gate above guarantees every deliverable produced); v6 sends
+        // its single document. Sourced from replayed activity outputs —
+        // deterministic.
+        var replyDocuments = v7 && finalStatus == ConsultGenerationJobStatuses.Completed
+            ? deliverables
+                .Select(deliverable => new Email.EmailIntakeReplyDocument(
+                    deliverable.ResultId!,
+                    deliverable.Label ?? deliverable.ResultId!,
+                    outputs[deliverable.NodeId].RawOutput))
+                .ToList()
+            : null;
+        var assembledDocument = !v7 && v6 && outputs.TryGetValue(resultNodeId!, out var resultOutput)
+            ? resultOutput.RawOutput
+            : null;
 
-        await SendEmailIntakeReplyAsync(context, input, finalStatus, logger, assembledDocument);
+        await SendEmailIntakeReplyAsync(context, input, finalStatus, logger, assembledDocument, replyDocuments);
 
         PublishStatus(finalStatus);
         }
@@ -662,7 +666,8 @@ public sealed class ConsultGenerationOrchestrator
         ConsultGenerationOrchestrationInput input,
         string finalStatus,
         ILogger logger,
-        string? assembledDocument)
+        string? assembledDocument,
+        IReadOnlyList<Email.EmailIntakeReplyDocument>? documents = null)
     {
         if (string.IsNullOrWhiteSpace(input.ReplyToAddress))
         {
@@ -678,7 +683,8 @@ public sealed class ConsultGenerationOrchestrator
                     input.ReplyToAddress,
                     finalStatus,
                     input.AppUserId,
-                    assembledDocument),
+                    assembledDocument,
+                    documents),
                 new TaskOptions(new TaskRetryOptions(new RetryPolicy(3, TimeSpan.FromSeconds(10), 2.0))));
         }
         catch (Exception replyEx)
