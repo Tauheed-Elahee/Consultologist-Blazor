@@ -36,11 +36,39 @@ public class EmailIntakeReplyTests
     public void Compose_WithAttachment_MentionsTheEncryptedDocument()
     {
         var (subject, body) = EmailIntakeReply.Compose(
-            "https://app.example.com", "job-1", "Completed", includesAttachment: true);
+            "https://app.example.com", "job-1", "Completed", new[] { "Consultation note" });
 
         Assert.Equal("Your consult is ready", subject);
+        Assert.Contains("The consult document is attached", body);
         Assert.Contains("encrypted with your delivery password", body);
         Assert.Contains("https://app.example.com/history/job-1", body);
+    }
+
+    [Fact]
+    public void Compose_WithSeveralAttachments_NamesEachDocument()
+    {
+        // Authored package labels are never patient data, so the body names
+        // them: the recipient can see the set is complete before decrypting.
+        var (subject, body) = EmailIntakeReply.Compose(
+            "https://app.example.com", "job-1", "Completed",
+            new[] { "Consultation note", "Patient letter" });
+
+        Assert.Equal("Your consult is ready", subject);
+        Assert.Contains("Consultation note, Patient letter are attached", body);
+        Assert.Contains("encrypted with your delivery password", body);
+    }
+
+    [Fact]
+    public void Compose_OmittedForSize_SaysSoWithoutClaimingAnAttachment()
+    {
+        var (subject, body) = EmailIntakeReply.Compose(
+            "https://app.example.com", "job-1", "Completed", Array.Empty<string>(), omittedForSize: true);
+
+        Assert.Equal("Your consult is ready", subject);
+        Assert.Contains("too large to send by email", body);
+        Assert.Contains("https://app.example.com/history/job-1", body);
+        // The no-attachment pin below must keep holding for this branch too.
+        Assert.DoesNotContain("attached", body);
     }
 
     [Fact]

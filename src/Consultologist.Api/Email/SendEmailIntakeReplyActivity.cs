@@ -54,7 +54,11 @@ public sealed class SendEmailIntakeReplyActivity
     }
 
     [Function(Name)]
-    public async Task RunAsync([ActivityTrigger] EmailIntakeReplyInput input, FunctionContext context)
+    public Task RunAsync([ActivityTrigger] EmailIntakeReplyInput input, FunctionContext context)
+        => SendAsync(input, context.CancellationToken);
+
+    /// <summary>The activity body, minus the trigger plumbing — the tests' entry point.</summary>
+    internal async Task SendAsync(EmailIntakeReplyInput input, CancellationToken cancellationToken)
     {
         var mailbox = _configuration["EmailIntake:MailboxAddress"];
         var appBaseUrl = _configuration["EmailIntake:AppBaseUrl"];
@@ -67,7 +71,7 @@ public sealed class SendEmailIntakeReplyActivity
             return;
         }
 
-        var outcome = await TryCreateAttachmentsAsync(input, context.CancellationToken);
+        var outcome = await TryCreateAttachmentsAsync(input, cancellationToken);
 
         var (subject, body) = EmailIntakeReply.Compose(
             appBaseUrl,
@@ -75,7 +79,7 @@ public sealed class SendEmailIntakeReplyActivity
             input.FinalStatus,
             outcome.Labels,
             outcome.OmittedForSize);
-        await _mail.SendMailAsync(mailbox, input.ToAddress, subject, body, context.CancellationToken, outcome.Attachments);
+        await _mail.SendMailAsync(mailbox, input.ToAddress, subject, body, cancellationToken, outcome.Attachments);
 
         _logger.LogInformation(
             "Email intake reply sent. JobId={JobId}, FinalStatus={FinalStatus}, Attached={Attached}, OmittedForSize={OmittedForSize}",
@@ -101,6 +105,22 @@ public sealed class SendEmailIntakeReplyActivity
     {
         public static readonly AttachmentOutcome None =
             new(Array.Empty<GraphMailAttachment>(), Array.Empty<string>(), false);
+    }
+
+    /// <summary>
+    /// The budget decision, pure: a set within budget travels whole, a set over
+    /// it travels not at all. Never a subset — a partial document set would
+    /// misrepresent what the consult produced.
+    /// </summary>
+    internal static AttachmentOutcome ApplyBudget(
+        IReadOnlyList<GraphMailAttachment> attachments,
+        IReadOnlyList<string> labels)
+    {
+        var totalBytes = attachments.Sum(attachment => (long)attachment.Content.Length);
+
+        return totalBytes > MaxAttachmentBytes
+            ? new AttachmentOutcome(Array.Empty<GraphMailAttachment>(), Array.Empty<string>(), true)
+            : new AttachmentOutcome(attachments, labels, false);
     }
 
     private async Task<AttachmentOutcome> TryCreateAttachmentsAsync(
@@ -137,31 +157,25 @@ public sealed class SendEmailIntakeReplyActivity
             }
 
             var jobIdPrefix = input.JobId[..Math.Min(8, input.JobId.Length)];
-            var attachments = new List<GraphMailAttachment>(documents.Count);
-            var totalBytes = 0L;
-
-            foreach (var document in documents)
-            {
-                var pdf = ConsultDocumentPdf.Render(document.Text, password.Value);
-                totalBytes += pdf.Length;
+            var attachments = documents
                 // Filenames carry no PHI — an authored result id and the short job id.
-                attachments.Add(new GraphMailAttachment($"{document.ResultId}-{jobIdPrefix}.pdf", pdf));
-            }
+                .Select(document => new GraphMailAttachment(
+                    $"{document.ResultId}-{jobIdPrefix}.pdf",
+                    ConsultDocumentPdf.Render(document.Text, password.Value)))
+                .ToList();
 
-            if (totalBytes > MaxAttachmentBytes)
+            var outcome = ApplyBudget(attachments, documents.Select(document => document.Label).ToList());
+
+            if (outcome.OmittedForSize)
             {
                 _logger.LogWarning(
                     "Encrypted attachments exceed the message budget; sending link-only reply. JobId={JobId}, Documents={Documents}, Bytes={Bytes}",
                     input.JobId,
                     attachments.Count,
-                    totalBytes);
-                return new AttachmentOutcome(Array.Empty<GraphMailAttachment>(), Array.Empty<string>(), true);
+                    attachments.Sum(attachment => (long)attachment.Content.Length));
             }
 
-            return new AttachmentOutcome(
-                attachments,
-                documents.Select(document => document.Label).ToList(),
-                false);
+            return outcome;
         }
         catch (Exception ex)
         {
