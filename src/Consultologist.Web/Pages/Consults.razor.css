@@ -284,3 +284,17 @@
 		columns: 1;
 	}
 }
+
+/* #208: the per-field upload row and its inline refusal message. */
+.input-field__file {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.8rem;
+}
+
+.input-field__file-error {
+	font-size: 0.8rem;
+	color: var(--error-foreground, #a4262c);
+}
