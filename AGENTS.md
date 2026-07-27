@@ -5,8 +5,8 @@ This file provides guidance to AI coding agents working with code in this reposi
 ## Commands
 
 ```bash
-dotnet build Consultologist.sln          # build all three projects
-dotnet test                              # run the xUnit suite (tests/)
+dotnet build Consultologist.sln          # build every project
+dotnet test Consultologist.sln           # run both suites (API + client render)
 dotnet test --filter FunctionCorsTests   # run a single test class
 dotnet run --project src/Consultologist.Web   # frontend on http://localhost:5000
 cd src/Consultologist.Api && func start       # backend (Azure Functions Core Tools)
@@ -18,11 +18,12 @@ All `bin`/`obj` output is centralized to `build/bin|obj/<ProjectName>/` via `Dir
 
 ## Architecture
 
-Two independently deployed applications in one solution, plus a test project:
+Two independently deployed applications in one solution, plus two test projects:
 
 - **`src/Consultologist.Web`** — standalone Blazor WebAssembly PWA (Fluent UI). Auth is Microsoft Entra ID via MSAL (`Microsoft.Authentication.WebAssembly.Msal`); config lives in `wwwroot/appsettings.json`. Deployed to Azure Static Web Apps.
 - **`src/Consultologist.Api`** — .NET 10 isolated Azure Functions. Deployed to a separate Azure Function App (the SWA's `api_location` is intentionally empty); the frontend calls it cross-origin, so every HTTP function applies `FunctionCors` manually and new endpoints must too.
-- **`tests/`** — xUnit + NSubstitute against the Api project. `Consultologist.Api.csproj` grants `InternalsVisibleTo` to it.
+- **`tests/Consultologist.Api.Tests.csproj`** — xUnit + NSubstitute against the Api project. `Consultologist.Api.csproj` grants `InternalsVisibleTo` to it.
+- **`tests/Consultologist.Web.Tests/`** — bUnit render tests for the client (#224). `dotnet build` type-checks Razor markup but never renders it, so bind expressions and component wiring fail only at runtime; these cover the pages with a demonstrated failure history (Consults setup and result, History provenance).
 
 ### Consult generation flow (the core feature)
 

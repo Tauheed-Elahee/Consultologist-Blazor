@@ -23,5 +23,8 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Run tests
+      - name: Run API tests
         run: dotnet test tests/Consultologist.Api.Tests.csproj --configuration Release
+
+      - name: Run client render tests
+        run: dotnet test tests/Consultologist.Web.Tests/Consultologist.Web.Tests.csproj --configuration Release

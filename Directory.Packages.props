@@ -38,6 +38,9 @@
     <PackageVersion Include="Scriban" Version="7.2.5" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
 
+    <!-- Consultologist.Web.Tests -->
+    <PackageVersion Include="bunit" Version="2.8.6" />
+
     <!-- Consultologist.Api.Tests -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

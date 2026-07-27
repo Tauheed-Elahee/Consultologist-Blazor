@@ -1,0 +1,76 @@
+using Bunit;
+using Bunit.TestDoubles;
+using Consultologist.Web.Services.Accounts;
+using Consultologist.Web.Services.AI;
+using Consultologist.Web.Services.Diagnostics;
+using Consultologist.Web.Services.Workflow;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.FluentUI.AspNetCore.Components;
+using NSubstitute;
+
+namespace Consultologist.Web.Tests;
+
+/// <summary>
+/// The minimum host a Consultologist page needs to reach a rendered state
+/// (#224). Everything here is a requirement discovered by tracing the pages'
+/// initialization, not defensive scaffolding — see the comments.
+/// </summary>
+public abstract class ClientRenderTestContext : BunitContext
+{
+    protected IAIEndpointService AIService { get; } = Substitute.For<IAIEndpointService>();
+
+    protected IWorkflowEndpointService WorkflowService { get; } = Substitute.For<IWorkflowEndpointService>();
+
+    protected IAccountEndpointService AccountService { get; } = Substitute.For<IAccountEndpointService>();
+
+    protected ConsultJobSession JobSession { get; } = new();
+
+    protected ClientRenderTestContext()
+    {
+        // Fluent components resolve LibraryConfiguration from DI and fail
+        // activation without it.
+        Services.AddFluentUIComponents();
+
+        // FluentButton, FluentTabs/FluentTab and FluentInputLabel import their
+        // .razor.js modules on first render; strict mode would throw on the
+        // import rather than on anything we wrote.
+        JSInterop.Mode = JSRuntimeMode.Loose;
+
+        // Both pages wrap their content in <AuthorizeView> with no
+        // <NotAuthorized> fragment, so an unauthorized render yields an empty
+        // body and asserts nothing.
+        AddAuthorization().SetAuthorized("clinician@example.com");
+
+        Services.AddSingleton(AIService);
+        Services.AddSingleton(WorkflowService);
+        Services.AddSingleton(AccountService);
+        Services.AddSingleton(Substitute.For<ISseDiagnosticsService>());
+        Services.AddSingleton(JobSession);
+
+        // History.LoadAgentNamesAsync and WorkflowPackagePicker.OnInitializedAsync
+        // have no try/catch around these, so a throwing substitute fails the
+        // render outright. Null is a value both handle.
+        WorkflowService.GetPublicChainAsync().Returns((PublicChainView?)null);
+        WorkflowService.GetMyPackagesAsync().Returns((PublicPackageView?)null);
+    }
+
+    /// <summary>
+    /// The pinned package Consults renders its setup form from. Inputs and
+    /// Results null = the frozen v5/v6 shape.
+    /// </summary>
+    protected void WithPinnedPackage(
+        IReadOnlyList<WorkflowPackageBlockResponse>? blocks = null,
+        IReadOnlyList<WorkflowPackageInputResponse>? inputs = null,
+        IReadOnlyList<WorkflowPackageResultResponse>? results = null)
+    {
+        WorkflowService.GetCurrentPackageAsync().Returns(new WorkflowPackageResponse(
+            "general", "v2026.07.10", inputs is null ? 6 : 7, blocks, inputs, results));
+
+        // The run rail's enrichment; failures here are swallowed by the page,
+        // so a rejected task is a legitimate "content endpoint unavailable".
+        WorkflowService.GetCurrentPackageContentAsync()
+            .Returns<Task<WorkflowPackageContentResponse>>(_ => throw new InvalidOperationException("not needed for these tests"));
+    }
+
+    protected static WorkflowPackageBlockResponse Block(string id, string name) => new(id, name);
+}
