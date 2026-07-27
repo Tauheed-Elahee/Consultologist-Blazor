@@ -211,3 +211,29 @@ construction.
 Remaining note, not a question — relationship to #16 (GitOps content repos): the
 editor is the in-app authoring path; #16 is the CI authoring path — both publish to
 the same registry, and the eval-gated publishing idea applies to both eventually.
+
+## What the editor authors today (#218, 2026-07-27)
+
+The v1 record above froze the graph as read-only and specVersion at 5; both
+moved. The editor now authors the graph (nodes, bindings, aggregate sources,
+prompts, variables, collections) and, for **specVersion 7** packages, the two
+declared sections:
+
+- **Inputs** — one row per declared slot: id, label, required. Renaming a slot
+  **cascades into every binding that read it**, because the alternative is
+  publishing a package the validator rejects for an undeclared input while the
+  author hunts down bindings the editor could already identify.
+- **Documents** — one row per declared deliverable: id, label, and an
+  **aggregator-only** node picker (v7 requires each result to name its own
+  aggregator). A package still on the string `result` form is offered a
+  conversion seeded with id `consult`, which is the sugar's own id — so
+  delivery filenames (`{resultId}-{jobId8}.pdf`) do not move.
+
+Both panes are hidden for v5/v6, whose single input and string result were
+never authored surfaces.
+
+Publish pre-checks the author-facing half of the server's v7 rules (id grammar,
+duplicates, blank labels, non-aggregator nodes, two documents sharing an
+aggregator, bindings to undeclared inputs), wording them as the server does.
+The server remains the authority — this only moves the failure off the step
+that mints an immutable version.
