@@ -11,8 +11,13 @@ namespace Consultologist.Web.Services.AI;
 
 public interface IAIEndpointService
 {
+    /// <summary>
+    /// Starts a job from the package's declared inputs. v5/v6 packages accept
+    /// the one-entry consult_draft map the setup form synthesizes for them, so
+    /// there is one client path across both eras (package-format-v7.md).
+    /// </summary>
     Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
-        string consultDraft,
+        IReadOnlyDictionary<string, string> inputs,
         string? workflowPackage = null,
         DateTimeOffset? scheduledAtUtc = null);
 
@@ -50,7 +55,7 @@ public class AIEndpointService : IAIEndpointService
     }
 
     public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
-        string consultDraft,
+        IReadOnlyDictionary<string, string> inputs,
         string? workflowPackage = null,
         DateTimeOffset? scheduledAtUtc = null)
     {
@@ -66,12 +71,17 @@ public class AIEndpointService : IAIEndpointService
                 throw new InvalidOperationException("Azure Function consult generation jobs URL is not configured");
             }
 
-            var request = new ConsultGenerationRequest(consultDraft, workflowPackage, scheduledAtUtc);
+            var request = new ConsultGenerationRequest(
+                null,
+                workflowPackage,
+                scheduledAtUtc,
+                inputs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal));
 
             _logger.LogInformation(
-                "Starting consult generation job at {Url}. ConsultDraftLength={ConsultDraftLength}",
+                "Starting consult generation job at {Url}. InputCount={InputCount}, InputLength={InputLength}",
                 functionUrl,
-                consultDraft.Length);
+                inputs.Count,
+                inputs.Values.Sum(value => value.Length));
 
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, functionUrl)
             {
@@ -273,9 +283,10 @@ public class AIEndpointService : IAIEndpointService
 }
 
 public record ConsultGenerationRequest(
-    string ConsultDraft,
+    string? ConsultDraft,
     string? WorkflowPackage = null,
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    Dictionary<string, string>? Inputs = null);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
@@ -316,7 +327,17 @@ public record ConsultGenerationJobResponse(
     // #158: how the job was submitted ("app" | "email"; null = pre-#158 record).
     string? Source = null,
     // #157: when a scheduled job was/is due to start (null = immediate job).
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // v7: one entry per deliverable in result-set order (Completed jobs only;
+    // workflowOutputHash v3 covers exactly these documents' digests).
+    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
+
+/// <summary>One v7 deliverable: authored identity, the document, and its digest.</summary>
+public record ConsultGenerationResultDocumentResponse(
+    string ResultId,
+    string Label,
+    string Text,
+    string? DocumentHash = null);
 
 /// <summary>
 /// One node of the job's workflow DAG (v5: one kind, ForEach as multiplicity).

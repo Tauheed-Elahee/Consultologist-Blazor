@@ -4,12 +4,13 @@ public sealed record ConsultJobBlock(string Id, string Name);
 
 /// <summary>
 /// What Consults needs to rebuild its run view for a job started in this tab:
-/// the job record carries no draft text, so the draft (and the exact block
-/// roster the run was submitted with) live only here.
+/// the job record carries no input text, so the supplied inputs (and the exact
+/// block roster the run was submitted with) live only here. Keyed by declared
+/// input id — v5/v6 runs carry the single consult_draft entry.
 /// </summary>
 public sealed record ConsultJobMemento(
     string JobId,
-    string Draft,
+    IReadOnlyDictionary<string, string> Inputs,
     string? WorkflowPackageRef,
     IReadOnlyList<ConsultJobBlock> Blocks);
 

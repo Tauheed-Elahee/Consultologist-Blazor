@@ -62,7 +62,7 @@ public static class WorkflowManifestReader
     public static IReadOnlyList<NodeView> ReadNodes(JsonElement manifest)
     {
         var nodes = new List<NodeView>();
-        var resultNodeId = ReadResultNodeId(manifest);
+        var resultNodeIds = ReadResultNodeIds(manifest);
 
         if (!TryGetProperty(manifest, "nodes", out var array) || array.ValueKind != JsonValueKind.Array)
         {
@@ -99,7 +99,7 @@ public static class WorkflowManifestReader
                 ReadString(node, "prompt"),
                 ReadString(node, "forEach"),
                 bindings,
-                string.Equals(id, resultNodeId, StringComparison.Ordinal),
+                resultNodeIds.Contains(id),
                 hasOutput,
                 aggregate,
                 hasOutput ? ReadString(output, "schema") : null,
@@ -206,11 +206,40 @@ public static class WorkflowManifestReader
     /// <summary>The raw result reference ("node:x"), for the deliverable selector.</summary>
     public static string? ReadResultRef(JsonElement manifest) => ReadString(manifest, "result");
 
-    private static string? ReadResultNodeId(JsonElement manifest)
+    /// <summary>
+    /// The nodes a package names as deliverables: the v7 results list, or the
+    /// v5/v6 single result string. A v7 package declaring results carries no
+    /// result string, so reading only the latter would mark no node at all.
+    /// </summary>
+    private static IReadOnlySet<string> ReadResultNodeIds(JsonElement manifest)
     {
-        var result = ReadString(manifest, "result");
-        return result != null && result.StartsWith("node:", StringComparison.Ordinal) ? result["node:".Length..] : result;
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        if (TryGetProperty(manifest, "results", out var results) && results.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var result in results.EnumerateArray())
+            {
+                if (StripNodePrefix(ReadString(result, "node")) is { } nodeId)
+                {
+                    ids.Add(nodeId);
+                }
+            }
+
+            return ids;
+        }
+
+        if (StripNodePrefix(ReadString(manifest, "result")) is { } singleNodeId)
+        {
+            ids.Add(singleNodeId);
+        }
+
+        return ids;
     }
+
+    private static string? StripNodePrefix(string? reference) =>
+        reference != null && reference.StartsWith("node:", StringComparison.Ordinal)
+            ? reference["node:".Length..]
+            : reference;
 
     private static BindingView ReadBinding(string variable, JsonElement value) => value.ValueKind switch
     {
