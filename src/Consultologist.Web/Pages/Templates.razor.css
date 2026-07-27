@@ -325,3 +325,34 @@
 	font-size: 0.8rem;
 	margin: 0.25rem 0 0;
 }
+
+/* The v7 declared sections: one row per input slot or document (#218). */
+.declared-list {
+	list-style: none;
+	margin: 0.5rem 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.declared-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.declared-row__id {
+	min-width: 10rem;
+	font-family: var(--consultologist-font-mono, monospace);
+	font-size: 0.85rem;
+}
+
+.declared-row__required {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3rem;
+	font-size: 0.8rem;
+	color: var(--consultologist-text-muted);
+}

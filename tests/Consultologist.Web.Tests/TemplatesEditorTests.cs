@@ -24,7 +24,7 @@ public class TemplatesEditorTests : ClientRenderTestContext
         var page = Render<Templates>();
 
         page.FindAll("button.editor-nav__item")
-            .First(button => button.TextContent.Trim() == "Graph")
+            .First(button => button.TextContent.Replace("\u25CF", string.Empty).Trim() == "Graph")
             .Click();
 
         return page;

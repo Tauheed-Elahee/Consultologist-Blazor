@@ -194,6 +194,7 @@
                                              Row="@row"
                                              Nodes="@Nodes"
                                              Scalars="@Scalars"
+                                             Inputs="@Inputs"
                                              OnChanged="@OnBindingChanged" />
                         @if (modified)
                         {
@@ -228,7 +229,7 @@
                             @onchange="args => SetFormSource(node.Id, args)"
                             aria-label="New variable source">
                         <option value="">choose source…</option>
-                        @foreach (var option in BindingSourceEditor.SourceOptions(Nodes, Scalars, node, string.Empty))
+                        @foreach (var option in BindingSourceEditor.SourceOptions(Nodes, Scalars, node, string.Empty, Inputs))
                         {
                             <option value="@option">@option</option>
                         }
@@ -276,6 +277,9 @@
     [Parameter] public IReadOnlyList<WorkflowManifestReader.NodeView> Nodes { get; set; } = Array.Empty<WorkflowManifestReader.NodeView>();
     [Parameter] public bool Editable { get; set; }
     [Parameter] public IReadOnlyList<string> Scalars { get; set; } = Array.Empty<string>();
+
+    /// <summary>The package's declared input ids (v7); empty means the frozen consult_draft slot.</summary>
+    [Parameter] public IReadOnlyList<string> Inputs { get; set; } = Array.Empty<string>();
     [Parameter] public IReadOnlyList<string> Collections { get; set; } = Array.Empty<string>();
     [Parameter] public IReadOnlyList<string> ContractOptions { get; set; } = Array.Empty<string>();
     [Parameter] public IReadOnlyList<string> PromptOptions { get; set; } = Array.Empty<string>();

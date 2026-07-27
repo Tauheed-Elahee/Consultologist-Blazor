@@ -195,6 +195,23 @@
                         <span>+ Data folder</span>
                     </button>
                     <span class="editor-nav__group">Workflow</span>
+                    @if (IsV7)
+                    {
+                        @* Declared sections are v7-only: v5/v6 have a frozen
+                           single input and a string result, neither authored. *@
+                        <button type="button"
+                                class="editor-nav__item @(selectedKey == InputsKey ? "editor-nav__item--selected" : "")"
+                                @onclick="() => Select(InputsKey)">
+                            <span class="editor-nav__dot">@(inputsEdit != null ? "●" : "")</span>
+                            <span>Inputs</span>
+                        </button>
+                        <button type="button"
+                                class="editor-nav__item @(selectedKey == ResultsKey ? "editor-nav__item--selected" : "")"
+                                @onclick="() => Select(ResultsKey)">
+                            <span class="editor-nav__dot">@(resultsEdit != null ? "●" : "")</span>
+                            <span>Documents</span>
+                        </button>
+                    }
                     <button type="button"
                             class="editor-nav__item @(selectedKey == GraphKey ? "editor-nav__item--selected" : "")"
                             @onclick="() => Select(GraphKey)">
@@ -314,6 +331,120 @@
                             </ChildContent>
                         </WorkflowEditorPane>
                     }
+                    else if (selectedKey == InputsKey)
+                    {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">Declared inputs</h3>
+                                <p class="muted-text">
+                                    The fields a clinician fills before a run. Nodes bind them as
+                                    <code>input:&lt;id&gt;</code>; renaming one re-points every binding that used it.
+                                </p>
+                            </div>
+                        </div>
+
+                        <ul class="declared-list">
+                            @foreach (var input in EffectiveInputs)
+                            {
+                                var slot = input;
+                                <li class="declared-row">
+                                    <input class="node-field__input declared-row__id"
+                                           value="@slot.Id"
+                                           @onchange="args => RenameInputAsync(slot, args.Value?.ToString())"
+                                           aria-label="@($"Id for input {slot.Id}")" />
+                                    <input class="node-field__input"
+                                           value="@slot.Label"
+                                           @onchange="args => RelabelInputAsync(slot, args.Value?.ToString())"
+                                           aria-label="@($"Label for input {slot.Id}")" />
+                                    <label class="declared-row__required">
+                                        <input type="checkbox"
+                                               checked="@slot.Required"
+                                               @onchange="args => SetInputRequiredAsync(slot, args.Value is true)"
+                                               aria-label="@($"Required for input {slot.Id}")" />
+                                        required
+                                    </label>
+                                    <button type="button" class="aggregate-row__button" title="Remove input"
+                                            disabled="@(EffectiveInputs.Count == 1)"
+                                            @onclick="() => RemoveInputAsync(slot)">×</button>
+                                </li>
+                            }
+                        </ul>
+                        <div class="add-variable__form">
+                            <input class="node-field__input" placeholder="prior_notes"
+                                   value="@newInputId"
+                                   @onchange="args => newInputId = args.Value?.ToString() ?? string.Empty"
+                                   aria-label="New input id" />
+                            <button type="button" class="variable-chips__add" @onclick="AddInputAsync">+ Input</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(declaredError))
+                        {
+                            <p class="editor-warning">@declaredError</p>
+                        }
+                    }
+                    else if (selectedKey == ResultsKey)
+                    {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">Documents</h3>
+                                <p class="muted-text">
+                                    Each deliverable this package produces. Every one names its own aggregator
+                                    node, and its id becomes the delivered file's name.
+                                </p>
+                            </div>
+                        </div>
+
+                        @if (EffectiveResults.Count == 0)
+                        {
+                            <p class="muted-text">
+                                This package uses the single-document form (<code>@(EffectiveResultRef ?? "—")</code>).
+                            </p>
+                            <button type="button" class="variable-chips__add" @onclick="ConvertToResultsListAsync">
+                                Convert to a document list
+                            </button>
+                        }
+                        else
+                        {
+                            <ul class="declared-list">
+                                @foreach (var result in EffectiveResults)
+                                {
+                                    var deliverable = result;
+                                    <li class="declared-row">
+                                        <input class="node-field__input declared-row__id"
+                                               value="@deliverable.Id"
+                                               @onchange="args => RenameResultAsync(deliverable, args.Value?.ToString())"
+                                               aria-label="@($"Id for document {deliverable.Id}")" />
+                                        <input class="node-field__input"
+                                               value="@deliverable.Label"
+                                               @onchange="args => RelabelResultAsync(deliverable, args.Value?.ToString())"
+                                               aria-label="@($"Label for document {deliverable.Id}")" />
+                                        <select class="binding-row__select"
+                                                value="@deliverable.Node"
+                                                @onchange="args => RepointResultAsync(deliverable, args.Value?.ToString())"
+                                                aria-label="@($"Node for document {deliverable.Id}")">
+                                            @foreach (var candidate in DeliverableCandidates)
+                                            {
+                                                <option value="@($"node:{candidate.Id}")">@candidate.Label</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="aggregate-row__button" title="Remove document"
+                                                disabled="@(EffectiveResults.Count == 1)"
+                                                @onclick="() => RemoveResultAsync(deliverable)">×</button>
+                                    </li>
+                                }
+                            </ul>
+                            <div class="add-variable__form">
+                                <input class="node-field__input" placeholder="patient_letter"
+                                       value="@newResultId"
+                                       @onchange="args => newResultId = args.Value?.ToString() ?? string.Empty"
+                                       aria-label="New document id" />
+                                <button type="button" class="variable-chips__add" @onclick="AddResultAsync">+ Document</button>
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(declaredError))
+                        {
+                            <p class="editor-warning">@declaredError</p>
+                        }
+                    }
                     else if (selectedKey == GraphKey)
                     {
                         <div class="pane-header">
@@ -367,7 +498,8 @@
                                 <button type="button" class="variable-chips__add" @onclick="() => Select(AddNodeKey)">+ Node</button>
                             </div>
                         </div>
-                        <WorkflowNodeSummary Nodes="@EffectiveNodes"
+                        <WorkflowNodeSummary Inputs="@DeclaredInputIds"
+                                             Nodes="@EffectiveNodes"
                                              Editable="true"
                                              Scalars="@scalars"
                                              Collections="@CollectionIds"
@@ -499,7 +631,8 @@
                                 <p class="muted-text">One workflow node — the same card as the Graph pane's Node details.</p>
                             </div>
                         </div>
-                        <WorkflowNodeSummary Nodes="@EffectiveNodes"
+                        <WorkflowNodeSummary Inputs="@DeclaredInputIds"
+                                             Nodes="@EffectiveNodes"
                                              Only="@selectedNode.Id"
                                              Editable="true"
                                              Scalars="@scalars"
@@ -576,6 +709,7 @@
                                                                                  Row="@row"
                                                                                  Nodes="@nodes"
                                                                                  Scalars="@scalars"
+                                                                                 Inputs="@DeclaredInputIds"
                                                                                  OnChanged="OnBindingChangedAsync" />
                                                             @if (RowModified(row))
                                                             {
@@ -632,6 +766,8 @@
 @code {
     private const string DraftKeyPrefix = "workflow-editor-draft:";
     private const string GraphKey = "graph";
+    private const string InputsKey = "inputs";
+    private const string ResultsKey = "results";
     private const string NewKeyPrefix = "new:";
     private const string AddCollectionKey = "add-collection";
     private const string NodeKeyPrefix = "node:";
@@ -673,7 +809,8 @@
     private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + removedFiles.Count
         + bindingEdits.Count + nodeEdits.Count + addedNodes.Count + removedNodeIds.Count
         + aggregateEdits.Count + (resultEdit != null ? 1 : 0) + addedPrompts.Count
-        + VariableAddCount + VariableRemovalCount;
+        + VariableAddCount + VariableRemovalCount
+        + (inputsEdit != null ? 1 : 0) + (resultsEdit != null ? 1 : 0);
 
     private string PendingSummary()
     {
@@ -694,6 +831,8 @@
         if (aggregateEdits.Count > 0) parts.Add($"{aggregateEdits.Count} aggregate");
         if (addedPrompts.Count > 0) parts.Add($"+{addedPrompts.Count} prompt{(addedPrompts.Count == 1 ? "" : "s")}");
         if (resultEdit != null) parts.Add("deliverable");
+        if (inputsEdit != null) parts.Add("inputs");
+        if (resultsEdit != null) parts.Add("documents");
         if (VariableAddCount > 0) parts.Add($"+{VariableAddCount} var");
         if (VariableRemovalCount > 0) parts.Add($"−{VariableRemovalCount} var");
         return $" ({string.Join(" · ", parts)})";
@@ -933,6 +1072,360 @@
     // aggregate-source idiom) and null when unchanged.
     private List<WorkflowManifestReader.InputView>? inputsEdit;
     private List<WorkflowManifestReader.ResultView>? resultsEdit;
+    private string newInputId = string.Empty;
+    private string newResultId = string.Empty;
+    private string? declaredError;
+
+    // Declared ids are snake_case, letter-first — the server's
+    // WorkflowDeclaredIds grammar, mirrored so the editor can refuse early.
+    private static readonly System.Text.RegularExpressions.Regex DeclaredIdPattern =
+        new("^[a-z][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // What binding source lists offer. Empty for v5/v6, where the editor falls
+    // back to the frozen consult_draft slot.
+    private IReadOnlyList<string> DeclaredInputIds =>
+        EffectiveInputs.Select(input => input.Id).ToList();
+
+    private IReadOnlyList<WorkflowManifestReader.InputView> EffectiveInputs =>
+        inputsEdit ?? (content != null && IsV7
+            ? WorkflowManifestReader.ReadInputs(content.Manifest)
+            : Array.Empty<WorkflowManifestReader.InputView>());
+
+    private List<WorkflowManifestReader.InputView> MutableInputs() =>
+        inputsEdit ??= EffectiveInputs.ToList();
+
+    private List<WorkflowManifestReader.ResultView> MutableResults() =>
+        resultsEdit ??= EffectiveResults.ToList();
+
+    private async Task CommitDeclarationAsync()
+    {
+        declaredError = null;
+        publishSuccess = null;
+        await PersistDraftAsync();
+    }
+
+    // The author-facing half of the server's v7 rules, checked before publish
+    // so a rejected package is caught at the desk rather than after minting a
+    // version. The server remains the authority; these messages mirror its
+    // wording so the two read as one voice.
+    private IReadOnlyList<string> DeclaredSectionErrors()
+    {
+        var errors = new List<string>();
+
+        if (!IsV7)
+        {
+            return errors;
+        }
+
+        var inputs = EffectiveInputs;
+
+        if (inputs.Count == 0)
+        {
+            errors.Add("inputs is required in specVersion 7.");
+        }
+
+        foreach (var duplicate in inputs.GroupBy(input => input.Id).Where(group => group.Count() > 1))
+        {
+            errors.Add($"Duplicate input id '{duplicate.Key}'.");
+        }
+
+        errors.AddRange(inputs
+            .Where(input => string.IsNullOrWhiteSpace(input.Label))
+            .Select(input => $"Input '{input.Id}' has no label."));
+
+        // A binding left pointing at a slot that no longer exists is the
+        // failure mode renaming was built to avoid; catch the manual case too.
+        var declared = inputs.Select(input => input.Id).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var node in EffectiveNodes)
+        {
+            foreach (var row in RowsFor(node).Where(row => row.From.StartsWith("input:", StringComparison.Ordinal)))
+            {
+                var id = row.From["input:".Length..];
+
+                if (!declared.Contains(id))
+                {
+                    errors.Add($"Node '{node.Id}' binds '{row.Variable}' to undeclared input '{id}'.");
+                }
+            }
+        }
+
+        var results = EffectiveResults;
+
+        foreach (var duplicate in results.GroupBy(result => result.Id).Where(group => group.Count() > 1))
+        {
+            errors.Add($"Duplicate result id '{duplicate.Key}'.");
+        }
+
+        errors.AddRange(results
+            .Where(result => string.IsNullOrWhiteSpace(result.Label))
+            .Select(result => $"Result '{result.Id}' has no label."));
+
+        foreach (var shared in results.GroupBy(result => result.Node).Where(group => group.Count() > 1))
+        {
+            var owners = shared.Select(result => $"'{result.Id}'").ToList();
+            errors.Add($"Results {string.Join(" and ", owners)} share node '{shared.Key}': each deliverable needs its own aggregator.");
+        }
+
+        var aggregatorIds = EffectiveNodes
+            .Where(node => node.Aggregate != null)
+            .Select(node => $"node:{node.Id}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        errors.AddRange(results
+            .Where(result => !aggregatorIds.Contains(result.Node))
+            .Select(result => $"Result '{result.Id}' must reference an aggregator node ('{result.Node}' is not one)."));
+
+        return errors;
+    }
+
+    private async Task AddInputAsync()
+    {
+        var id = newInputId.Trim();
+
+        if (!DeclaredIdPattern.IsMatch(id))
+        {
+            declaredError = $"Input id '{id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).";
+            return;
+        }
+
+        if (EffectiveInputs.Any(input => input.Id == id))
+        {
+            declaredError = $"Duplicate input id '{id}'.";
+            return;
+        }
+
+        MutableInputs().Add(new WorkflowManifestReader.InputView(id, id, true));
+        newInputId = string.Empty;
+        await CommitDeclarationAsync();
+    }
+
+    private async Task RemoveInputAsync(WorkflowManifestReader.InputView input)
+    {
+        var inputs = MutableInputs();
+        inputs.RemoveAll(existing => existing.Id == input.Id);
+        await CommitDeclarationAsync();
+    }
+
+    // Renaming a slot re-points every binding that read it: leaving them on the
+    // old id would publish a package the validator rejects as an undeclared
+    // input, and the author would have to find each one by hand.
+    private async Task RenameInputAsync(WorkflowManifestReader.InputView input, string? value)
+    {
+        var id = (value ?? string.Empty).Trim();
+
+        if (id == input.Id)
+        {
+            return;
+        }
+
+        if (!DeclaredIdPattern.IsMatch(id))
+        {
+            declaredError = $"Input id '{id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).";
+            return;
+        }
+
+        if (EffectiveInputs.Any(existing => existing.Id == id))
+        {
+            declaredError = $"Duplicate input id '{id}'.";
+            return;
+        }
+
+        var inputs = MutableInputs();
+        var index = inputs.FindIndex(existing => existing.Id == input.Id);
+
+        if (index < 0)
+        {
+            return;
+        }
+
+        inputs[index] = inputs[index] with { Id = id };
+        CascadeInputRename(input.Id, id);
+        await CommitDeclarationAsync();
+    }
+
+    private void CascadeInputRename(string oldId, string newId)
+    {
+        foreach (var node in EffectiveNodes)
+        {
+            foreach (var row in RowsFor(node))
+            {
+                if (row.From == $"input:{oldId}")
+                {
+                    bindingEdits[$"{node.Id}\n{row.Variable}"] = ($"input:{newId}", row.As);
+                }
+            }
+        }
+    }
+
+    private async Task RelabelInputAsync(WorkflowManifestReader.InputView input, string? value)
+    {
+        var label = (value ?? string.Empty).Trim();
+
+        if (label.Length == 0)
+        {
+            declaredError = $"Input '{input.Id}' has no label.";
+            return;
+        }
+
+        var inputs = MutableInputs();
+        var index = inputs.FindIndex(existing => existing.Id == input.Id);
+
+        if (index >= 0)
+        {
+            inputs[index] = inputs[index] with { Label = label };
+        }
+
+        await CommitDeclarationAsync();
+    }
+
+    private async Task SetInputRequiredAsync(WorkflowManifestReader.InputView input, bool required)
+    {
+        var inputs = MutableInputs();
+        var index = inputs.FindIndex(existing => existing.Id == input.Id);
+
+        if (index >= 0)
+        {
+            inputs[index] = inputs[index] with { Required = required };
+        }
+
+        await CommitDeclarationAsync();
+    }
+
+    // The string result becomes a one-entry list seeded with the sugar's own
+    // id, so delivery filenames do not move when a package converts.
+    private async Task ConvertToResultsListAsync()
+    {
+        var node = EffectiveResultRef ?? DeliverableCandidates.Select(c => $"node:{c.Id}").FirstOrDefault();
+
+        if (node == null)
+        {
+            declaredError = "Add an aggregator node before declaring documents.";
+            return;
+        }
+
+        var label = DeliverableCandidates.FirstOrDefault(c => $"node:{c.Id}" == node)?.Label ?? "Consultation note";
+        resultsEdit = new List<WorkflowManifestReader.ResultView>
+        {
+            new("consult", node, label)
+        };
+        await CommitDeclarationAsync();
+    }
+
+    private async Task AddResultAsync()
+    {
+        var id = newResultId.Trim();
+
+        if (!DeclaredIdPattern.IsMatch(id))
+        {
+            declaredError = $"Result id '{id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).";
+            return;
+        }
+
+        if (EffectiveResults.Any(result => result.Id == id))
+        {
+            declaredError = $"Duplicate result id '{id}'.";
+            return;
+        }
+
+        var free = DeliverableCandidates.FirstOrDefault(candidate =>
+            EffectiveResults.All(result => result.Node != $"node:{candidate.Id}"));
+
+        if (free == null)
+        {
+            declaredError = "Every aggregator already owns a document; add an aggregator node first.";
+            return;
+        }
+
+        MutableResults().Add(new WorkflowManifestReader.ResultView(id, $"node:{free.Id}", id));
+        newResultId = string.Empty;
+        await CommitDeclarationAsync();
+    }
+
+    private async Task RemoveResultAsync(WorkflowManifestReader.ResultView result)
+    {
+        MutableResults().RemoveAll(existing => existing.Id == result.Id);
+        await CommitDeclarationAsync();
+    }
+
+    private async Task RenameResultAsync(WorkflowManifestReader.ResultView result, string? value)
+    {
+        var id = (value ?? string.Empty).Trim();
+
+        if (id == result.Id)
+        {
+            return;
+        }
+
+        if (!DeclaredIdPattern.IsMatch(id))
+        {
+            declaredError = $"Result id '{id}' must be snake_case (a lowercase letter, then lowercase letters, digits, or underscores).";
+            return;
+        }
+
+        if (EffectiveResults.Any(existing => existing.Id == id))
+        {
+            declaredError = $"Duplicate result id '{id}'.";
+            return;
+        }
+
+        var results = MutableResults();
+        var index = results.FindIndex(existing => existing.Id == result.Id);
+
+        if (index >= 0)
+        {
+            results[index] = results[index] with { Id = id };
+        }
+
+        await CommitDeclarationAsync();
+    }
+
+    private async Task RelabelResultAsync(WorkflowManifestReader.ResultView result, string? value)
+    {
+        var label = (value ?? string.Empty).Trim();
+
+        if (label.Length == 0)
+        {
+            declaredError = $"Result '{result.Id}' has no label.";
+            return;
+        }
+
+        var results = MutableResults();
+        var index = results.FindIndex(existing => existing.Id == result.Id);
+
+        if (index >= 0)
+        {
+            results[index] = results[index] with { Label = label };
+        }
+
+        await CommitDeclarationAsync();
+    }
+
+    private async Task RepointResultAsync(WorkflowManifestReader.ResultView result, string? value)
+    {
+        var node = value ?? string.Empty;
+
+        if (node == result.Node)
+        {
+            return;
+        }
+
+        if (EffectiveResults.Any(existing => existing.Id != result.Id && existing.Node == node))
+        {
+            declaredError = $"Another document already uses '{node}': each deliverable needs its own aggregator.";
+            return;
+        }
+
+        var results = MutableResults();
+        var index = results.FindIndex(existing => existing.Id == result.Id);
+
+        if (index >= 0)
+        {
+            results[index] = results[index] with { Node = node };
+        }
+
+        await CommitDeclarationAsync();
+    }
 
     // The pending deliverable wins over the manifest's result.
     private string? EffectiveResultRef =>
@@ -1457,7 +1950,7 @@
 
         return node == null
             ? Enumerable.Empty<string>()
-            : BindingSourceEditor.SourceOptions(nodes, scalars, node, string.Empty);
+            : BindingSourceEditor.SourceOptions(nodes, scalars, node, string.Empty, DeclaredInputIds);
     }
 
     private async Task RemoveVariableAsync(WorkflowManifestReader.PromptView prompt, string variable)
@@ -1647,7 +2140,8 @@
     private bool HasManifestEdits => bindingEdits.Count > 0 || nodeEdits.Count > 0
         || addedNodes.Count > 0 || removedNodeIds.Count > 0
         || aggregateEdits.Count > 0 || resultEdit != null || addedPrompts.Count > 0
-        || VariableAddCount > 0 || VariableRemovalCount > 0;
+        || VariableAddCount > 0 || VariableRemovalCount > 0
+        || inputsEdit != null || resultsEdit != null;
 
     private void Select(string key)
     {
@@ -1934,6 +2428,9 @@
         removedNodeIds.Clear();
         aggregateEdits.Clear();
         resultEdit = null;
+        inputsEdit = null;
+        resultsEdit = null;
+        declaredError = null;
         addedPrompts.Clear();
         newPromptId = null;
         newPromptError = null;
@@ -2454,6 +2951,8 @@
                 }
             }
 
+            unbound.AddRange(DeclaredSectionErrors());
+
             if (unbound.Count > 0)
             {
                 publishErrors = unbound;
@@ -2556,6 +3055,9 @@
         removedNodeIds.Clear();
         aggregateEdits.Clear();
         resultEdit = null;
+        inputsEdit = null;
+        resultsEdit = null;
+        declaredError = null;
         addedPrompts.Clear();
         newPromptId = null;
         newPromptError = null;
