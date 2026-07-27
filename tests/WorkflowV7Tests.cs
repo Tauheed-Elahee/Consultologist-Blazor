@@ -322,6 +322,83 @@ public class WorkflowV7ValidationTests
     }
 }
 
+public class WorkflowPackageDescribeTests
+{
+    private static WorkflowPackage Package(
+        WorkflowPackageManifest manifest,
+        IReadOnlyList<WorkflowResolvedResult>? results)
+    {
+        var files = V6Fixtures.Files(manifest);
+        var errors = new List<string>();
+        var data = WorkflowDataResolver.Resolve(manifest, files, errors);
+        Assert.Empty(errors);
+
+        return new WorkflowPackage(
+            manifest,
+            Nodes: manifest.Nodes,
+            Data: data,
+            ResultNodeId: results is { Count: 1 } ? results[0].NodeId : results is null ? "assemble-note" : null,
+            Results: results);
+    }
+
+    [Fact]
+    public void V6Package_DeclaresNoInputsOrResults()
+    {
+        // The frozen path: the client renders its single consult_draft field.
+        var response = WorkflowPackages.Describe(Package(V6Fixtures.SingleCollection(), null));
+
+        Assert.Null(response.Inputs);
+        Assert.Null(response.Results);
+        Assert.NotEmpty(response.Blocks!);
+    }
+
+    [Fact]
+    public void V7MinimalPackage_DeclaresItsInputAndTheSugarResult()
+    {
+        var response = WorkflowPackages.Describe(Package(
+            V7Fixtures.Minimal(),
+            new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+
+        Assert.Equal(
+            new[] { new WorkflowPackageInputResponse("consult_draft", "Consult draft", true) },
+            response.Inputs!.ToArray());
+        Assert.Equal(
+            new[] { new WorkflowPackageResultResponse("consult", "Assemble note") },
+            response.Results!.ToArray());
+    }
+
+    [Fact]
+    public void V7MultiDeliverablePackage_DeclaresEveryInputAndDeliverable()
+    {
+        var response = WorkflowPackages.Describe(Package(
+            V7Fixtures.MultiDeliverable(),
+            new List<WorkflowResolvedResult>
+            {
+                new("consult_note", "assemble-note", "Consultation note"),
+                new("patient_letter", "assemble-letter", "Patient letter")
+            }));
+
+        Assert.Equal(
+            new[]
+            {
+                new WorkflowPackageInputResponse("consult_draft", "Consult draft", true),
+                new WorkflowPackageInputResponse("prior_notes", "Prior notes", false)
+            },
+            response.Inputs!.ToArray());
+        Assert.Equal(
+            new[]
+            {
+                new WorkflowPackageResultResponse("consult_note", "Consultation note"),
+                new WorkflowPackageResultResponse("patient_letter", "Patient letter")
+            },
+            response.Results!.ToArray());
+        // Blocks carry the deliverable dimension the client groups by.
+        Assert.All(response.Blocks!, block =>
+            Assert.True(block.Id.StartsWith("consult_note:", StringComparison.Ordinal)
+                || block.Id.StartsWith("patient_letter:", StringComparison.Ordinal)));
+    }
+}
+
 public class WorkflowV7BlocksTests
 {
     private static WorkflowPackage Package(WorkflowPackageManifest manifest, IReadOnlyList<WorkflowResolvedResult> results)

@@ -88,18 +88,31 @@ public sealed class WorkflowPackages
 
         var response = req.CreateResponse(HttpStatusCode.OK);
         FunctionCors.Apply(req, response);
-        await response.WriteAsJsonAsync(
-            new WorkflowPackageResponse(
-                package.Manifest.Name,
-                package.Manifest.Version,
-                package.Manifest.SpecVersion,
-                WorkflowPackageBlocks.Resolve(package)
-                    .Select(block => new WorkflowPackageBlockResponse(block.Id, block.Name))
-                    .ToList()),
-            cancellationToken);
+        await response.WriteAsJsonAsync(Describe(package), cancellationToken);
 
         return response;
     }
+
+    /// <summary>
+    /// The current-package projection the consult setup form runs on: blocks
+    /// (the sections it will generate) plus, for v7 packages, the declared
+    /// inputs to render fields for and the deliverables to group by. Inputs and
+    /// Results are null on v5/v6 — the client's frozen single-draft path.
+    /// </summary>
+    internal static WorkflowPackageResponse Describe(WorkflowPackage package) =>
+        new(
+            package.Manifest.Name,
+            package.Manifest.Version,
+            package.Manifest.SpecVersion,
+            WorkflowPackageBlocks.Resolve(package)
+                .Select(block => new WorkflowPackageBlockResponse(block.Id, block.Name))
+                .ToList(),
+            package.Manifest.Inputs?
+                .Select(input => new WorkflowPackageInputResponse(input.Id, input.Label, input.Required))
+                .ToList(),
+            package.Results?
+                .Select(result => new WorkflowPackageResultResponse(result.Id, result.Label))
+                .ToList());
 
     [Function("WorkflowPackageMine")]
     public async Task<HttpResponseData> GetMineAsync(

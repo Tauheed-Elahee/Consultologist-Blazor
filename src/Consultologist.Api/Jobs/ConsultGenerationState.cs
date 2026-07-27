@@ -598,7 +598,11 @@ public sealed class ConsultGenerationJobState
             AssembledDocument: Status == ConsultGenerationJobStatuses.Completed ? AssembledDocument : null,
             AssembledDocuments: Status == ConsultGenerationJobStatuses.Completed && AssembledDocuments is { Count: > 0 }
                 ? AssembledDocuments
-                    .Select(d => new ConsultGenerationResultDocumentResponse(d.ResultId, d.Label, d.Text))
+                    .Select(d => new ConsultGenerationResultDocumentResponse(
+                        d.ResultId,
+                        d.Label,
+                        d.Text,
+                        ConsultGenerationProvenance.Sha256Hex(d.Text)))
                     .ToList()
                 : null);
     }
