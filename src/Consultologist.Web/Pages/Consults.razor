@@ -55,8 +55,9 @@
                                         <span class="muted-text input-field__optional">(optional)</span>
                                     }
                                 </span>
-                                <FluentTextArea Value="@InputValue(input.Id)"
-                                                ValueChanged="@(value => SetInputValue(input.Id, value))"
+                                @* SyncInputKeys guarantees the entry exists, so the
+                                   indexer is a safe two-way binding target. *@
+                                <FluentTextArea @bind-Value="inputValues[input.Id]"
                                                 Placeholder="@(input.Id == "consult_draft" ? "Enter referral details, clinical context, and the consult question..." : $"Enter {input.Label.ToLowerInvariant()}...")"
                                                 Rows="@(DeclaredInputs.Count == 1 ? 16 : 6)" />
                             </label>
@@ -444,7 +445,12 @@
   // declared id. v5/v6 packages declare nothing, so DeclaredInputs synthesizes
   // the frozen consult_draft slot and one code path renders both eras.
   private IReadOnlyList<WorkflowPackageInputResponse>? declaredInputs;
-  private Dictionary<string, string> inputValues = new(StringComparer.Ordinal);
+  // Seeded with the legacy slot: the form renders once before the package
+  // resolves, and the field bindings index this dictionary directly.
+  private Dictionary<string, string> inputValues = new(StringComparer.Ordinal)
+  {
+    ["consult_draft"] = string.Empty
+  };
   private IReadOnlyList<WorkflowPackageResultResponse>? declaredResults;
   private bool editingDraft;
   private bool runEventSeen;
@@ -512,6 +518,7 @@
     if (sessionMatches)
     {
       inputValues = new Dictionary<string, string>(memento!.Inputs, StringComparer.Ordinal);
+      SyncInputKeys();
       workflowPackageRef = memento.WorkflowPackageRef ?? workflowPackageRef;
     }
 
@@ -612,13 +619,10 @@
 
       // v7: the declaration the form renders from and the deliverables it
       // groups by. Null on v5/v6 — DeclaredInputs then synthesizes the frozen
-      // consult_draft slot. Values for ids the new package does not declare are
-      // dropped, so switching packages never smuggles a stale input into a run.
+      // consult_draft slot.
       declaredInputs = package.Inputs;
       declaredResults = package.Results;
-      inputValues = DeclaredInputs
-        .Where(input => inputValues.ContainsKey(input.Id))
-        .ToDictionary(input => input.Id, input => inputValues[input.Id], StringComparer.Ordinal);
+      SyncInputKeys();
     }
     catch (AccessTokenNotAvailableException exception)
     {
@@ -693,7 +697,7 @@
         scheduleConfirmation =
           $"Consult scheduled for {scheduledAtUtc.ToLocalTime():MMM d, h:mm tt} — it will appear in History, and you'll receive an email when it's ready.";
         runOvernight = false;
-        inputValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        ClearInputs();
       }
       catch (Exception ex)
       {
@@ -1204,7 +1208,25 @@
 
   private string InputValue(string id) => inputValues.GetValueOrDefault(id, string.Empty);
 
-  private void SetInputValue(string id, string? value) => inputValues[id] = value ?? string.Empty;
+  // Every declared id gets an entry (so the field's @bind indexer is always a
+  // valid target) and only declared ids survive — switching packages never
+  // smuggles a stale input into a run.
+  private void SyncInputKeys()
+  {
+    inputValues = DeclaredInputs.ToDictionary(
+      input => input.Id,
+      input => inputValues.GetValueOrDefault(input.Id, string.Empty),
+      StringComparer.Ordinal);
+  }
+
+  // Empties every field while keeping the keys the bindings read.
+  private void ClearInputs()
+  {
+    inputValues = DeclaredInputs.ToDictionary(
+      input => input.Id,
+      _ => string.Empty,
+      StringComparer.Ordinal);
+  }
 
   // What the request carries: declared ids with text. Blank optional inputs are
   // omitted, not sent empty — the API rejects blank values, and the
