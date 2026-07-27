@@ -22,6 +22,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Consultologist.Web\Consultologist.Web.csproj" />
+    <!-- The publish round-trip test runs the manifest the editor composes
+         through the server's real validator — the contract that actually
+         broke for v7. Nothing else here touches the API. -->
+    <ProjectReference Include="..\..\src\Consultologist.Api\Consultologist.Api.csproj" />
   </ItemGroup>
 
 </Project>
