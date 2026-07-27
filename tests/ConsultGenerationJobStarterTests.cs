@@ -107,30 +107,77 @@ public class ConsultGenerationJobStarterTests
         Assert.Equal(ConsultGenerationJobStartError.PackageNotExecutable, outcome.Error);
     }
 
-    [Fact]
-    public async Task SpecVersion7Package_IsRejectedByTheInterimGuard()
+    private static WorkflowPackage ExecutableV7Package(
+        WorkflowPackageManifest manifest,
+        IReadOnlyList<WorkflowResolvedResult> results)
     {
-        // #214 posture: the format layer accepts v7, execution does not yet —
-        // removed with the v7 engine work.
-        var manifest = V7Fixtures.Minimal();
+        var files = V6Fixtures.Files(manifest);
+        var errors = new List<string>();
+        var data = WorkflowDataResolver.Resolve(manifest, files, errors);
+        Assert.Empty(errors);
+
+        return new WorkflowPackage(
+            manifest,
+            Nodes: manifest.Nodes,
+            SchemaContracts: TestOutputContracts.CatalogSchemas,
+            Data: data,
+            ResultNodeId: results.Count == 1 ? results[0].NodeId : null,
+            Results: results);
+    }
+
+    [Fact]
+    public async Task SpecVersion7Package_StartsWithPrefixedBlocksAndInputMap()
+    {
+        // The legacy draft field back-fills the consult_draft slot; the
+        // snapshot carries prefixed block ids, the result set, the effective
+        // input map, and hash version 3.
+        var request = new ConsultGenerationRequest("The referral body");
         _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackageRef("general", "latest"));
         _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
-            .Returns(new WorkflowPackage(
-                manifest,
-                Nodes: manifest.Nodes,
-                ResultNodeId: "assemble-note",
-                Results: new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+            .Returns(ExecutableV7Package(
+                V7Fixtures.Minimal(),
+                new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+
+        ConsultGenerationJobInitialize? initialize = null;
+        await _entities.SignalEntityAsync(
+            Arg.Any<EntityInstanceId>(),
+            nameof(ConsultGenerationJobEntity.Initialize),
+            Arg.Do<object>(payload => initialize = payload as ConsultGenerationJobInitialize));
+
+        ConsultGenerationOrchestrationInput? orchestrationInput = null;
+        _client.ScheduleNewOrchestrationInstanceAsync(
+                Arg.Any<TaskName>(),
+                Arg.Do<object?>(payload => orchestrationInput = payload as ConsultGenerationOrchestrationInput),
+                Arg.Any<StartOrchestrationOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(((StartOrchestrationOptions?)callInfo[2])!.InstanceId!));
 
         var outcome = await CreateStarter().StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            request,
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
 
-        Assert.Equal(ConsultGenerationJobStartError.SpecVersionNotYetExecutable, outcome.Error);
-        Assert.Null(outcome.JobId);
+        Assert.Null(outcome.Error);
+        Assert.NotNull(initialize);
+        Assert.Equal(
+            new[] { "consult:section-instructions:hpi", "consult:section-instructions:pmh" },
+            initialize.Items.Select(item => item["id"]).ToArray());
+        Assert.Equal(3, initialize.EffectiveInputHashVersion);
+        Assert.NotNull(orchestrationInput);
+        Assert.Equal(3, orchestrationInput.EffectiveInputHashVersion);
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(
+                new Dictionary<string, string> { ["consult_draft"] = "The referral body" }),
+            orchestrationInput.EffectiveInputHash);
+        Assert.Equal(
+            new[] { new ConsultResultDescriptor("consult", "assemble-note", "Assemble note") },
+            orchestrationInput.Results!.ToArray());
+        Assert.Equal(
+            new Dictionary<string, string> { ["consult_draft"] = "The referral body" },
+            orchestrationInput.Inputs);
     }
 
     [Fact]

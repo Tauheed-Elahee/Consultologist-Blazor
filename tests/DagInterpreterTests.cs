@@ -67,8 +67,11 @@ public class NodeVariableResolverTests
         FailIfEmpty: node.Output?.FailIfEmpty,
         ForEach: node.ForEach);
 
+    private static Dictionary<string, string> DraftInputs(string draft) =>
+        new(StringComparer.Ordinal) { ["consult_draft"] = draft };
+
     private static Dictionary<string, string> Resolve(string nodeId) =>
-        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], Draft, null, null, NodesById, Outputs);
+        ConsultNodeVariableResolver.Resolve(NodesById[nodeId], DraftInputs(Draft), null, null, NodesById, Outputs);
 
     [Fact]
     public void ExtractPatientConcepts_Parity()
@@ -143,7 +146,7 @@ public class NodeVariableResolverTests
             ["id"] = "hpi", ["name"] = "History of Present Illness", ["standard"] = "Chronological prose."
         };
 
-        var variables = ConsultNodeVariableResolver.Resolve(firstStep, Draft, item, null, NodesById, Outputs);
+        var variables = ConsultNodeVariableResolver.Resolve(firstStep, DraftInputs(Draft), item, null, NodesById, Outputs);
 
         // The R3 pin: the concept-context rendering carries source: patient-trajectory.
         Assert.Equal(AgentSectionGenerator.FormatConcepts(TrajectoryConcepts), variables["patient_trajectory_concepts"]);
@@ -621,7 +624,7 @@ public class ForEachInstanceResolutionTests
                 ("standard", "item:standard", null),
                 ("concepts", "node:create-patient-trajectory", "concept-context"),
                 ("previous", "node:standard-section-draft", null)),
-            "Draft consult text.",
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "Draft consult text." },
             Item,
             dataScalars: null,
             NodesById,
@@ -648,7 +651,8 @@ public class ForEachInstanceResolutionTests
 
         var variables = ConsultNodeVariableResolver.Resolve(
             Node(("previous", "node:standard-section-draft", null)),
-            "draft", pmhItem, null, NodesById, outputs);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            pmhItem, null, NodesById, outputs);
 
         Assert.Equal("Other section prose.", variables["previous"]);
     }
@@ -660,7 +664,9 @@ public class ForEachInstanceResolutionTests
     public void Resolve_ThrowsOnUnresolvableSources(string from, string expected)
     {
         var ex = Assert.Throws<InvalidOperationException>(() => ConsultNodeVariableResolver.Resolve(
-            Node(("value", from, null)), "draft", Item, null, NodesById, Outputs));
+            Node(("value", from, null)),
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            Item, null, NodesById, Outputs));
 
         Assert.Contains(expected, ex.Message);
     }
@@ -670,7 +676,8 @@ public class ForEachInstanceResolutionTests
     {
         var variables = ConsultNodeVariableResolver.Resolve(
             Node(("value", "data:clinic-guidelines", null)),
-            "draft", Item,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["consult_draft"] = "draft" },
+            Item,
             new Dictionary<string, string>(StringComparer.Ordinal) { ["clinic-guidelines"] = "Local guidance." },
             NodesById, Outputs);
 

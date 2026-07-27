@@ -153,20 +153,10 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
             request = request with { ConsultDraft = request.Inputs[ConsultDraftInputId], Inputs = null };
         }
 
-        // Interim guard: the format layer accepts specVersion 7 (validation,
-        // publish, load) but this job path still dispatches v5/v6 snapshots
-        // below — a premature pin flip must fail loud here, not run the v5
-        // path. The v7 engine work removes this guard.
-        if (package.Manifest.SpecVersion >= 7)
-        {
-            _logger.LogWarning("Rejected specVersion-{SpecVersion} job start; v7 execution is not yet enabled. Package={Package}", package.Manifest.SpecVersion, package.Ref);
-            return new ConsultGenerationJobStartOutcome(
-                null,
-                ConsultGenerationJobStartError.SpecVersionNotYetExecutable,
-                $"Workflow package {package.Ref} is specVersion {package.Manifest.SpecVersion}; v7 execution is not yet enabled.");
-        }
-
-        if (package.Nodes is not { Count: > 0 } || package.ResultNodeId is null)
+        // A multi-deliverable v7 package resolves ResultNodeId null by design —
+        // its result SET is the executability signal.
+        if (package.Nodes is not { Count: > 0 }
+            || (package.ResultNodeId is null && package.Results is not { Count: > 0 }))
         {
             _logger.LogWarning("Workflow package {Package} (specVersion {SpecVersion}) has no executable nodes; jobs require specVersion 2 or newer.", package.Ref, package.Manifest.SpecVersion);
             return new ConsultGenerationJobStartOutcome(
@@ -175,16 +165,17 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 $"Workflow package {package.Ref} (specVersion {package.Manifest.SpecVersion}) predates prompt templates; pin a specVersion 2 or newer package.");
         }
 
-        // v5: the result node's collection is the one section source. v6: Items
-        // carries the deliverable's BLOCKS (the result aggregator's expansion)
+        // v5: the result node's collection is the one section source. v6/v7:
+        // Items carries the deliverable BLOCKS (each result aggregator's
+        // expansion — WorkflowPackageBlocks dispatches the id scheme by spec)
         // and Collections carries one item set per fanned collection
-        // (package-format-v6-design.md §§ 4–5).
+        // (package-format-v6-design.md §§ 4–5; package-format-v7.md).
         IReadOnlyList<IReadOnlyDictionary<string, string>> items;
         IReadOnlyDictionary<string, IReadOnlyList<IReadOnlyDictionary<string, string>>>? collectionSets = null;
 
-        if (package.Manifest.SpecVersion == 6)
+        if (package.Manifest.SpecVersion >= 6)
         {
-            items = WorkflowPackageBlocks.ResolveBlocks(package)
+            items = WorkflowPackageBlocks.Resolve(package)
                 .Select(block => (IReadOnlyDictionary<string, string>)new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["id"] = block.Id,
@@ -225,11 +216,22 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
         var nodes = package.Nodes.Select(node => DescribeNode(node, package.SchemaContracts)).ToList();
 
         // Provenance: identify the artifacts and input that produce this consult.
-        // The hash covers the draft only (definition version 2); sections are
-        // package content, covered by the workflowPackage ref; agent identities
-        // are covered by catalogRef — the record stores refs, not copies (#105).
+        // v5/v6: the hash covers the draft only (definition version 2). v7: the
+        // supplied input map (definition version 3 — absent optional inputs
+        // omitted). Sections are package content, covered by the
+        // workflowPackage ref; agent identities are covered by catalogRef — the
+        // record stores refs, not copies (#105).
         // See docs/customizable-workflow/provenance.md.
-        var effectiveInputHash = ConsultGenerationProvenance.ComputeDraftOnlyHash(request);
+        var isV7 = package.Manifest.SpecVersion >= 7;
+        var effectiveInputHash = isV7
+            ? ConsultGenerationProvenance.ComputeDeclaredInputsHash(inputs.Supplied!)
+            : ConsultGenerationProvenance.ComputeDraftOnlyHash(request);
+        var effectiveInputHashVersion = isV7
+            ? ConsultGenerationProvenance.DeclaredInputsHashVersion
+            : 2;
+        var resultDescriptors = package.Results?
+            .Select(result => new ConsultResultDescriptor(result.Id, result.NodeId, result.Label))
+            .ToList();
 
         await client.Entities.SignalEntityAsync(
             entityId,
@@ -242,6 +244,7 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 effectiveInputHash,
                 sectionSteps,
                 nodes,
+                EffectiveInputHashVersion: effectiveInputHashVersion,
                 Source: origin.Source,
                 ScheduledAtUtc: request.ScheduledAtUtc));
 
@@ -257,10 +260,13 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 package.ResultNodeId,
                 items,
                 dataScalars,
+                EffectiveInputHashVersion: effectiveInputHashVersion,
                 CatalogRef: _catalog.ResolvedRef,
                 Collections: collectionSets,
                 Source: origin.Source,
-                ReplyToAddress: origin.ReplyToAddress),
+                ReplyToAddress: origin.ReplyToAddress,
+                Results: resultDescriptors,
+                Inputs: inputs.Effective),
             new StartOrchestrationOptions { InstanceId = jobId },
             cancellationToken);
 
