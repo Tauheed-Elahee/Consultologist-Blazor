@@ -8,7 +8,8 @@ point-in-time investigations and migration plans.
 - [CONSULT_GENERATION_WORKFLOW.md](CONSULT_GENERATION_WORKFLOW.md) — end-to-end consult generation workflow
 - [CONSULT_GENERATION_EVENTS.md](CONSULT_GENERATION_EVENTS.md) — consult generation event flow
 - [DURABLE_JOBS.md](DURABLE_JOBS.md) — durable jobs, server-sent events, and .NET version notes
-- [ASYNC_DELIVERY.md](ASYNC_DELIVERY.md) — backlog design sketch: scheduled runs, email intake, encrypted document delivery (#157–#159)
+- [ASYNC_DELIVERY.md](ASYNC_DELIVERY.md) — design record for the async-delivery arc: scheduled runs, email intake, encrypted document delivery (#157–#159; implemented 2026-07-25)
+- [DOCUMENT_INPUT.md](DOCUMENT_INPUT.md) — design record for reading documents into declared input slots: one parser, two sources (#234)
 - [PARALLEL_AGENTS.md](PARALLEL_AGENTS.md) — parallel section calls, backend parallelism, async jobs
 - [NEW_AGENTS.md](NEW_AGENTS.md) — new Azure AI Foundry agents
 - [SNOMED_TOOL_FAILURES.md](SNOMED_TOOL_FAILURES.md) — diagnosis and fix for `search_concepts` tool failures (250-character Snowstorm term limit; resolved 2026-07-09)
@@ -49,7 +50,11 @@ point-in-time investigations and migration plans.
   [DAG-as-data design](customizable-workflow/dag-as-data-design.md),
   [output-contract catalog](customizable-workflow/output-contract-catalog.md),
   [in-app editing](customizable-workflow/in-app-editing.md),
-  [package format v5 design](customizable-workflow/package-format-v5-design.md)
+  [package format v5 design](customizable-workflow/package-format-v5-design.md),
+  [package format v6](customizable-workflow/package-format-v6.md),
+  [package format v6 design](customizable-workflow/package-format-v6-design.md),
+  [package format v7](customizable-workflow/package-format-v7.md),
+  [package format v7 design](customizable-workflow/package-format-v7-design.md)
 
 ## Research
 
