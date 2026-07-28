@@ -74,6 +74,15 @@ files: `src/Consultologist.Api/Email/*`, settings in
   at-most-once by design: a crash in the claim→start window drops the
   message visibly (stale-claim repair + warning) rather than ever
   running a PHI job twice.
+- **Attachments as inputs (#210, 2026-07-28)**: `.txt`/`.md` attachments
+  fill the pinned package's declared input slots — body to
+  `consult_draft`, a filename stem to the slot it names, one leftover
+  file to one leftover slot. Wider ambiguity, an unreadable type, or a
+  file over 256 KB (1 MB across all of them) rejects the message with
+  `rejected-attachments` and the generic failure reply; inline parts
+  (signature logos) are ignored entirely. A blank body is no longer
+  fatal when an attachment carries the referral. PDF still needs the
+  extraction work, so the fax bridge (#188) stays blocked.
 - **Replies**: sent for Completed AND Failed from the orchestrator
   (activity after FinalizeJob); always a fresh message, never a Graph
   /reply (which would quote the PHI-bearing original); fixed subjects;
