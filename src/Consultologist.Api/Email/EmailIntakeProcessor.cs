@@ -1,4 +1,5 @@
 using Consultologist.Api.Jobs;
+using Consultologist.Api.Workflow;
 using Consultologist.Api.Models;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.Configuration;
@@ -22,6 +23,11 @@ public sealed class EmailIntakeProcessor
     internal const string RejectedFolder = "Rejected";
     private const int DefaultMaxMessagesPerPoll = 25;
     private const int MaxDraftLength = 256 * 1024;
+    // #210: per attachment, mirroring the body cap and the HTTP per-input
+    // bound; the total keeps one message from pulling unbounded bytes.
+    private const int MaxAttachmentLength = 256 * 1024;
+    private const int MaxTotalAttachmentBytes = 1024 * 1024;
+    private static readonly string[] ReadableAttachmentExtensions = { ".txt", ".md" };
     private static readonly TimeSpan StaleClaimAge = TimeSpan.FromMinutes(10);
 
     private readonly IConfiguration _configuration;
@@ -29,6 +35,8 @@ public sealed class EmailIntakeProcessor
     private readonly IEmailSenderResolver _senderResolver;
     private readonly IEmailIntakeClaimStore _claims;
     private readonly IConsultGenerationJobStarter _jobStarter;
+    private readonly IWorkflowPackagePinResolver _pinResolver;
+    private readonly IWorkflowPackageStore _packageStore;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<EmailIntakeProcessor> _logger;
 
@@ -38,6 +46,8 @@ public sealed class EmailIntakeProcessor
         IEmailSenderResolver senderResolver,
         IEmailIntakeClaimStore claims,
         IConsultGenerationJobStarter jobStarter,
+        IWorkflowPackagePinResolver pinResolver,
+        IWorkflowPackageStore packageStore,
         TimeProvider timeProvider,
         ILogger<EmailIntakeProcessor> logger)
     {
@@ -46,6 +56,8 @@ public sealed class EmailIntakeProcessor
         _senderResolver = senderResolver;
         _claims = claims;
         _jobStarter = jobStarter;
+        _pinResolver = pinResolver;
+        _packageStore = packageStore;
         _timeProvider = timeProvider;
         _logger = logger;
     }
@@ -155,19 +167,58 @@ public sealed class EmailIntakeProcessor
 
         var draft = message.BodyText?.Trim();
 
-        if (string.IsNullOrWhiteSpace(draft) || draft.Length > MaxDraftLength)
+        if (draft is { Length: > MaxDraftLength })
         {
             _logger.LogWarning(
-                "Email intake rejected: unusable body. From={From}, InternetMessageId={InternetMessageId}, BodyLength={BodyLength}",
+                "Email intake rejected: body over the size bound. From={From}, InternetMessageId={InternetMessageId}, BodyLength={BodyLength}",
                 message.FromAddress,
                 claimKey,
-                draft?.Length ?? 0);
+                draft.Length);
             return await RejectAsync(mailbox, message, claimKey, now, EmailIntakeOutcomes.RejectedEmpty, cancellationToken);
+        }
+
+        // #210: attachments can carry the referral, so a blank body is only
+        // fatal when nothing else arrived — the resolver decides that.
+        var (attachments, attachmentError) = message.HasAttachments
+            ? await ReadAttachmentsAsync(mailbox, message.Id, cancellationToken)
+            : (Array.Empty<EmailInputAttachment>(), null);
+
+        if (attachmentError != null)
+        {
+            _logger.LogWarning(
+                "Email intake rejected: unusable attachment. From={From}, InternetMessageId={InternetMessageId}, Detail={Detail}",
+                message.FromAddress,
+                claimKey,
+                attachmentError);
+            return await RejectWithReplyAsync(
+                mailbox, message, claimKey, now, match.AppUserId, EmailIntakeOutcomes.RejectedAttachments, cancellationToken);
+        }
+
+        var resolution = EmailAttachmentInputs.Resolve(
+            await DeclaredInputIdsAsync(match.AppUserId!, cancellationToken),
+            draft,
+            attachments);
+
+        if (resolution.RejectReason != null)
+        {
+            _logger.LogWarning(
+                "Email intake rejected: inputs could not be assigned. From={From}, InternetMessageId={InternetMessageId}, Detail={Detail}",
+                message.FromAddress,
+                claimKey,
+                resolution.RejectReason);
+            var slug = attachments.Count > 0
+                ? EmailIntakeOutcomes.RejectedAttachments
+                : EmailIntakeOutcomes.RejectedEmpty;
+            return attachments.Count > 0
+                ? await RejectWithReplyAsync(mailbox, message, claimKey, now, match.AppUserId, slug, cancellationToken)
+                : await RejectAsync(mailbox, message, claimKey, now, slug, cancellationToken);
         }
 
         var start = await _jobStarter.StartAsync(
             client,
-            new ConsultGenerationRequest(draft),
+            new ConsultGenerationRequest(
+                null,
+                Inputs: resolution.Inputs!.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)),
             match.AppUserId!,
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, message.FromAddress),
             cancellationToken);
@@ -237,6 +288,103 @@ public sealed class EmailIntakeProcessor
         var folder = existing.JobId != null ? ProcessedFolder : RejectedFolder;
         await DisposeMessageAsync(mailbox, messageRef.Id, folder, cancellationToken);
         return MessageOutcome.Repaired;
+    }
+
+    /// <summary>
+    /// The declared input ids of the account's pinned package, in declaration
+    /// order — what positional assignment counts against. Empty for v5/v6 and
+    /// whenever the package cannot be resolved: the starter re-resolves and is
+    /// the authority on legality, so a miss here degrades to legacy assignment
+    /// rather than failing the message. The store caches resolved versions, so
+    /// this is a cache hit by the time the starter asks again.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> DeclaredInputIdsAsync(string appUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var packageRef = await _pinResolver.ResolvePinAsync(appUserId, cancellationToken);
+            var package = await _packageStore.ResolveAsync(packageRef, cancellationToken);
+
+            return package.Manifest.Inputs?.Select(input => input.Id).ToList()
+                ?? (IReadOnlyList<string>)Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Email intake could not read the pinned package's declared inputs; assigning as legacy.");
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Decodes the message's non-inline attachments to text. Anything this
+    /// version cannot read fails the whole message rather than being skipped:
+    /// a referral that lived in the attachment would otherwise produce a
+    /// consult from a body that says only "please see attached".
+    /// </summary>
+    private async Task<(IReadOnlyList<EmailInputAttachment> Attachments, string? Error)> ReadAttachmentsAsync(
+        string mailbox,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        var fetched = await _mail.ListAttachmentsAsync(mailbox, messageId, cancellationToken);
+        var attachments = new List<EmailInputAttachment>();
+        var totalBytes = 0L;
+
+        foreach (var attachment in fetched)
+        {
+            var extension = Path.GetExtension(attachment.Name);
+
+            if (!ReadableAttachmentExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+            {
+                // PDF is the known next step (#208 phase 2), not a permanent
+                // exclusion — the log says which type arrived.
+                return (Array.Empty<EmailInputAttachment>(), $"unsupported type '{extension}'");
+            }
+
+            if (attachment.Content.Length > MaxAttachmentLength)
+            {
+                return (Array.Empty<EmailInputAttachment>(), "attachment over the size bound");
+            }
+
+            totalBytes += attachment.Content.Length;
+
+            if (totalBytes > MaxTotalAttachmentBytes)
+            {
+                return (Array.Empty<EmailInputAttachment>(), "attachments over the total size bound");
+            }
+
+            attachments.Add(new EmailInputAttachment(
+                attachment.Name,
+                System.Text.Encoding.UTF8.GetString(attachment.Content)));
+        }
+
+        return (attachments, null);
+    }
+
+    /// <summary>
+    /// A rejection the sender is told about: attachment problems are things
+    /// they can fix by resending, unlike the silent auth and sender gates.
+    /// </summary>
+    private async Task<MessageOutcome> RejectWithReplyAsync(
+        string mailbox,
+        GraphMessage message,
+        string claimKey,
+        DateTimeOffset now,
+        string? appUserId,
+        string outcome,
+        CancellationToken cancellationToken)
+    {
+        await _claims.UpdateAsync(
+            new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, appUserId, Outcome: outcome),
+            cancellationToken);
+        await DisposeMessageAsync(mailbox, message.Id, RejectedFolder, cancellationToken);
+
+        if (message.FromAddress != null)
+        {
+            await SendStartFailureReplyAsync(mailbox, message.FromAddress, cancellationToken);
+        }
+
+        return MessageOutcome.Rejected;
     }
 
     private async Task<MessageOutcome> RejectAsync(

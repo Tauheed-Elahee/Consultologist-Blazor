@@ -1,6 +1,7 @@
 using Consultologist.Api.Email;
 using Consultologist.Api.Jobs;
 using Consultologist.Api.Models;
+using Consultologist.Api.Workflow;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,6 +18,8 @@ public class EmailIntakeProcessorTests
     private readonly IEmailSenderResolver _senderResolver = Substitute.For<IEmailSenderResolver>();
     private readonly IEmailIntakeClaimStore _claims = Substitute.For<IEmailIntakeClaimStore>();
     private readonly IConsultGenerationJobStarter _starter = Substitute.For<IConsultGenerationJobStarter>();
+    private readonly IWorkflowPackagePinResolver _pinResolver = Substitute.For<IWorkflowPackagePinResolver>();
+    private readonly IWorkflowPackageStore _packageStore = Substitute.For<IWorkflowPackageStore>();
     private readonly DurableTaskClient _client = Substitute.For<DurableTaskClient>("test");
     private readonly FakeTimeProvider _time = new(DateTimeOffset.Parse("2026-07-25T12:00:00Z"));
 
@@ -25,6 +28,17 @@ public class EmailIntakeProcessorTests
         private readonly DateTimeOffset _now;
         public FakeTimeProvider(DateTimeOffset now) => _now = now;
         public override DateTimeOffset GetUtcNow() => _now;
+    }
+
+    public EmailIntakeProcessorTests()
+    {
+        _mail.EnsureInboxChildFolderAsync(Mailbox, Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult("folder-" + callInfo.ArgAt<string>(1)));
+
+        // The default: no attachments. Set here rather than in CreateProcessor
+        // so a test's own stub is not overwritten by processor construction.
+        _mail.ListAttachmentsAsync(Mailbox, Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphInboundAttachment>());
     }
 
     private EmailIntakeProcessor CreateProcessor(bool configured = true)
@@ -38,15 +52,14 @@ public class EmailIntakeProcessorTests
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
 
-        _mail.EnsureInboxChildFolderAsync(Mailbox, Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo => Task.FromResult("folder-" + callInfo.ArgAt<string>(1)));
-
         return new EmailIntakeProcessor(
             configuration,
             _mail,
             _senderResolver,
             _claims,
             _starter,
+            _pinResolver,
+            _packageStore,
             _time,
             NullLogger<EmailIntakeProcessor>.Instance);
     }
@@ -58,15 +71,37 @@ public class EmailIntakeProcessorTests
         string id = "g-1",
         string? from = "doc@example.com",
         string? body = "Referral body",
-        string authHeader = PassingAuthHeader)
+        string authHeader = PassingAuthHeader,
+        bool hasAttachments = false)
     {
         return new GraphMessage(
             id,
             "<m1@x>",
             from,
             body,
-            new[] { new GraphInternetMessageHeader("Authentication-Results", authHeader) });
+            new[] { new GraphInternetMessageHeader("Authentication-Results", authHeader) },
+            hasAttachments);
     }
+
+    /// <summary>A matched sender and a claimed message — the shape every
+    /// attachment test starts from.</summary>
+    private void SetupAcceptedSender(GraphMessage message)
+    {
+        SetupSingleUnread();
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(message);
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        _starter.StartAsync(_client, Arg.Any<ConsultGenerationRequest>(), "user-1",
+                Arg.Any<ConsultGenerationJobOrigin>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsultGenerationJobStartOutcome("job-1"));
+    }
+
+    private void WithAttachments(params GraphInboundAttachment[] attachments) =>
+        _mail.ListAttachmentsAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(attachments);
+
+    private static GraphInboundAttachment Attachment(string name, string text) =>
+        new(name, "text/plain", text.Length, System.Text.Encoding.UTF8.GetBytes(text));
 
     private void SetupSingleUnread()
     {
@@ -107,7 +142,11 @@ public class EmailIntakeProcessorTests
             _claims.TryClaimAsync(Arg.Is<EmailIntakeClaim>(c => c.ClaimKey == "<m1@x>"), Arg.Any<CancellationToken>());
             _starter.StartAsync(
                 _client,
-                Arg.Is<ConsultGenerationRequest>(r => r.ConsultDraft == "Referral body"),
+                // #210: intake now always supplies the named map — a legacy
+                // package's consult_draft entry folds back to the draft in
+                // the starter, so the wire shape is one path for both eras.
+                Arg.Is<ConsultGenerationRequest>(r =>
+                    r.ConsultDraft == null && r.Inputs!["consult_draft"] == "Referral body"),
                 "user-1",
                 Arg.Is<ConsultGenerationJobOrigin>(o =>
                     o.Source == ConsultGenerationJobSources.Email && o.ReplyToAddress == "doc@example.com"),
@@ -287,5 +326,96 @@ public class EmailIntakeProcessorTests
         await _claims.Received(1).UpdateAsync(
             Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.Vanished),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task BlankBodyWithAttachment_StartsFromTheAttachment()
+    {
+        // The referral-as-attachment case: today's blank-body rejection would
+        // have thrown this away.
+        SetupAcceptedSender(Message(body: "  ", hasAttachments: true));
+        WithAttachments(Attachment("referral.txt", "The referral text."));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        await _starter.Received(1).StartAsync(
+            _client,
+            Arg.Is<ConsultGenerationRequest>(r => r.Inputs!["consult_draft"] == "The referral text."),
+            "user-1",
+            Arg.Any<ConsultGenerationJobOrigin>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnreadableAttachment_RejectsTheWholeMessageWithAReply()
+    {
+        // A PDF today: bouncing beats generating a consult from a body that
+        // says only "please see attached".
+        SetupAcceptedSender(Message(body: "Please see attached.", hasAttachments: true));
+        WithAttachments(Attachment("referral.pdf", "%PDF-1.7"));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedAttachments),
+            Arg.Any<CancellationToken>());
+        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", "folder-Rejected", Arg.Any<CancellationToken>());
+        await _mail.ReceivedWithAnyArgs(1).SendMailAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task AmbiguousAttachments_AreRejectedRatherThanGuessed()
+    {
+        // Two unnamed files with nowhere unambiguous to go. The reply cannot
+        // say where they went, so a guess would be silent wrong data.
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(V7Fixtures.MultiDeliverable()));
+        SetupAcceptedSender(Message(body: "  ", hasAttachments: true));
+        WithAttachments(Attachment("a.txt", "One."), Attachment("b.txt", "Two."));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedAttachments),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NamedAttachment_FillsItsDeclaredSlot()
+    {
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(V7Fixtures.MultiDeliverable()));
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithAttachments(Attachment("prior_notes.txt", "Old records."));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        await _starter.Received(1).StartAsync(
+            _client,
+            Arg.Is<ConsultGenerationRequest>(r =>
+                r.Inputs!["consult_draft"] == "Referral body" && r.Inputs["prior_notes"] == "Old records."),
+            "user-1",
+            Arg.Any<ConsultGenerationJobOrigin>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MessageWithoutAttachments_NeverCallsGraphForThem()
+    {
+        SetupAcceptedSender(Message());
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        await _mail.DidNotReceiveWithAnyArgs().ListAttachmentsAsync(default!, default!, default);
     }
 }
