@@ -75,9 +75,10 @@ files: `src/Consultologist.Api/Email/*`, settings in
   message visibly (stale-claim repair + warning) rather than ever
   running a PHI job twice.
 - **Attachments as inputs (#210, 2026-07-28)**: `.txt`/`.md` attachments
-  fill the pinned package's declared input slots — body to
-  `consult_draft`, a filename stem to the slot it names, one leftover
-  file to one leftover slot. Wider ambiguity, an unreadable type, or a
+  fill the pinned package's declared input slots — a filename stem
+  claims the slot it names and outranks the body for it (a body is often
+  just a signature), the body then takes `consult_draft` if still free,
+  and one leftover file fills one leftover slot. Wider ambiguity, an unreadable type, or a
   file over 256 KB (1 MB across all of them) rejects the message with
   `rejected-attachments` and the generic failure reply; inline parts
   (signature logos) are ignored entirely. A blank body is no longer
