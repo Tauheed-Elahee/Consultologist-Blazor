@@ -105,9 +105,12 @@ its declaration included `consult_draft` and every other input was
 optional. **#210 lifted that**: text attachments now fill declared slots
 too, so a package needing more than a body is reachable by email.
 
-Assignment (implemented 2026-07-28): the body takes `consult_draft`; a
-filename stem claims the slot it names (`prior_notes.txt` →
-`prior_notes`); one remaining attachment fills one remaining slot. Any
+Assignment (implemented 2026-07-28): a filename stem claims the slot it
+names (`prior_notes.txt` → `prior_notes`) and **outranks the body** for
+that slot — naming a file is deliberate, whereas a body may be nothing
+but a client-appended signature. The body then takes `consult_draft` if
+no attachment claimed it, and one remaining attachment fills one
+remaining slot. Any
 wider ambiguity is **refused**, because replies carry no PHI and a
 filename can itself be PHI — the sender can never be told where a file
 landed, so a positional guess between two files would be silent wrong

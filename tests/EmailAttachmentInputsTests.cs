@@ -53,6 +53,33 @@ public class EmailAttachmentInputsTests
     }
 
     [Fact]
+    public void NamedAttachment_OutranksTheBodyForItsSlot()
+    {
+        // Most mail clients append a signature, so a sender who types nothing
+        // still produces a body. It must not compete with a file they
+        // deliberately named — this combination used to reject outright.
+        var result = Resolve(
+            TwoSlots,
+            "Dr. Lee | Oncology | Clinic",
+            File("consult_draft.txt", "The referral."),
+            File("prior_notes.txt", "Old records."));
+
+        Assert.Null(result.RejectReason);
+        Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
+        Assert.Equal("Old records.", result.Inputs["prior_notes"]);
+    }
+
+    [Fact]
+    public void NamedDraftAttachment_WinsEvenWhenItIsTheOnlyFile()
+    {
+        var result = Resolve(TwoSlots, "Please see the attached referral.", File("consult_draft.md", "The referral."));
+
+        Assert.Null(result.RejectReason);
+        Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
+        Assert.False(result.Inputs.ContainsKey("prior_notes"));
+    }
+
+    [Fact]
     public void OneUnnamedAttachment_FillsTheOneFreeSlot()
     {
         // The ordinary case: body is the referral, the file is whatever else

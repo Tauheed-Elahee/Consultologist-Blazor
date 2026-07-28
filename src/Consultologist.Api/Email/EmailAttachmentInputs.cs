@@ -65,13 +65,10 @@ public static class EmailAttachmentInputs
 
         var assigned = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        if (hasBody && declaredInputIds.Contains(ConsultDraftInputId, StringComparer.Ordinal))
-        {
-            assigned[ConsultDraftInputId] = trimmedBody;
-        }
-
-        // A filename stem naming a declared slot is the explicit, order-free
-        // way to aim an attachment — it wins over position.
+        // Stems are matched before the body claims anything: naming a file
+        // after a slot is a deliberate act, while a body may be nothing but
+        // the signature a mail client appended. A named attachment therefore
+        // outranks the body for the slot it names.
         var unmatched = new List<EmailInputAttachment>();
 
         foreach (var attachment in attachments)
@@ -85,12 +82,21 @@ public static class EmailAttachmentInputs
             }
             else if (slot != null)
             {
+                // Two attachments naming the same slot — genuinely ambiguous,
+                // unlike a body the sender may not have written.
                 return Resolution.Rejected($"More than one input was supplied for '{slot}'.");
             }
             else
             {
                 unmatched.Add(attachment);
             }
+        }
+
+        if (hasBody
+            && declaredInputIds.Contains(ConsultDraftInputId, StringComparer.Ordinal)
+            && !assigned.ContainsKey(ConsultDraftInputId))
+        {
+            assigned[ConsultDraftInputId] = trimmedBody;
         }
 
         if (unmatched.Count == 0)
