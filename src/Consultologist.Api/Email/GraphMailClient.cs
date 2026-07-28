@@ -19,7 +19,20 @@ public sealed record GraphMessage(
     string? InternetMessageId,
     string? FromAddress,
     string? BodyText,
-    IReadOnlyList<GraphInternetMessageHeader> InternetMessageHeaders);
+    IReadOnlyList<GraphInternetMessageHeader> InternetMessageHeaders,
+    // #210: gates the extra attachments call — most messages have none.
+    bool HasAttachments = false);
+
+/// <summary>
+/// One inbound file attachment. Inline parts (signature logos) are filtered out
+/// before this type is constructed: treating them as content would change
+/// behaviour for every signed email.
+/// </summary>
+public sealed record GraphInboundAttachment(
+    string Name,
+    string ContentType,
+    int Size,
+    byte[] Content);
 
 public interface IGraphMailClient
 {
@@ -27,6 +40,12 @@ public interface IGraphMailClient
 
     /// <summary>Full message with text body and internet headers; null on 404.</summary>
     Task<GraphMessage?> GetMessageAsync(string mailbox, string messageId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The message's non-inline file attachments (#210). Graph returns
+    /// contentBytes base64 in the JSON body, so no raw-bytes path is needed.
+    /// </summary>
+    Task<IReadOnlyList<GraphInboundAttachment>> ListAttachmentsAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
     Task MarkReadAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
@@ -98,7 +117,7 @@ public sealed class GraphMailClient : IGraphMailClient
     public async Task<GraphMessage?> GetMessageAsync(string mailbox, string messageId, CancellationToken cancellationToken)
     {
         var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/messages/{messageId}"
-            + "?$select=id,internetMessageId,from,body,internetMessageHeaders";
+            + "?$select=id,internetMessageId,from,body,internetMessageHeaders,hasAttachments";
 
         using var document = await SendAsync(
             HttpMethod.Get,
@@ -149,7 +168,48 @@ public sealed class GraphMailClient : IGraphMailClient
             root.TryGetProperty("internetMessageId", out var messageInternetId) ? messageInternetId.GetString() : null,
             fromAddress,
             bodyText,
-            headers);
+            headers,
+            root.TryGetProperty("hasAttachments", out var hasAttachments) && hasAttachments.ValueKind == JsonValueKind.True);
+    }
+
+    public async Task<IReadOnlyList<GraphInboundAttachment>> ListAttachmentsAsync(
+        string mailbox,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/messages/{messageId}/attachments";
+
+        using var document = await SendAsync(HttpMethod.Get, url, body: null, cancellationToken, tolerateNotFound: true);
+
+        var attachments = new List<GraphInboundAttachment>();
+
+        if (document == null
+            || !document.RootElement.TryGetProperty("value", out var items)
+            || items.ValueKind != JsonValueKind.Array)
+        {
+            return attachments;
+        }
+
+        foreach (var item in items.EnumerateArray())
+        {
+            // Only file attachments carry contentBytes; item and reference
+            // attachments are a different @odata.type entirely.
+            var isInline = item.TryGetProperty("isInline", out var inline) && inline.ValueKind == JsonValueKind.True;
+            var contentBytes = item.TryGetProperty("contentBytes", out var bytes) ? bytes.GetString() : null;
+
+            if (isInline || contentBytes == null)
+            {
+                continue;
+            }
+
+            attachments.Add(new GraphInboundAttachment(
+                item.TryGetProperty("name", out var name) ? name.GetString() ?? string.Empty : string.Empty,
+                item.TryGetProperty("contentType", out var contentType) ? contentType.GetString() ?? string.Empty : string.Empty,
+                item.TryGetProperty("size", out var size) && size.TryGetInt32(out var sizeValue) ? sizeValue : 0,
+                Convert.FromBase64String(contentBytes)));
+        }
+
+        return attachments;
     }
 
     public async Task MarkReadAsync(string mailbox, string messageId, CancellationToken cancellationToken)

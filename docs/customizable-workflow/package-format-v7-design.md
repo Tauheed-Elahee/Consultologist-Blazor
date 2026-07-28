@@ -99,15 +99,23 @@ The job request gains an optional map:
 
 ### Email intake
 
-Until email attachments bind as inputs (#210), intake supplies exactly
-one text: the message body, which back-fills `consult_draft`. A v7
-package is therefore **email-eligible** iff its declaration includes
-`consult_draft` **and** every other input is optional — stated
-positively so the no-`consult_draft` package (legal per § 3) is
-excluded too, not just the extra-required-input one. An email against
-an ineligible package records an explicit rejection outcome (a new
-`EmailIntakeOutcomes` slug) and the message moves to Rejected, never a
-partial run.
+Intake originally supplied exactly one text — the message body, which
+back-fills `consult_draft` — making a v7 package email-eligible only if
+its declaration included `consult_draft` and every other input was
+optional. **#210 lifted that**: text attachments now fill declared slots
+too, so a package needing more than a body is reachable by email.
+
+Assignment (implemented 2026-07-28): the body takes `consult_draft`; a
+filename stem claims the slot it names (`prior_notes.txt` →
+`prior_notes`); one remaining attachment fills one remaining slot. Any
+wider ambiguity is **refused**, because replies carry no PHI and a
+filename can itself be PHI — the sender can never be told where a file
+landed, so a positional guess between two files would be silent wrong
+data rather than a visible failure. An attachment this version cannot
+read (PDF, pending the extraction work) fails the whole message: the
+alternative generates a consult from a body reading only "please see
+attached". Rejections record `rejected-attachments` and move to
+Rejected, never a partial run.
 
 ### Resolution
 

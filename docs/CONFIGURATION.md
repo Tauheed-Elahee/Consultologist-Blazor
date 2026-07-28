@@ -111,9 +111,17 @@ Submit consults by email: a timer polls the dedicated shared mailbox via
 Microsoft Graph (the managed identity's `Mail.ReadWrite`/`Mail.Send` roles
 are restricted to that one mailbox by an Exchange application access policy
 — see `docs/ACCOUNTS.md`), matches the sender to a registered account,
-starts a normal consult job with the email body as the draft
-(`source: email`), and replies on completion with a no-PHI
+starts a normal consult job from the email body and any `.txt`/`.md`
+attachments (`source: email`), and replies on completion with a no-PHI
 `/history/{jobId}` deep link.
+
+Attachments fill the pinned package's declared input slots (#210): the
+body takes `consult_draft`, a filename stem claims the slot it names, and
+one leftover file fills one leftover slot. Caps are code constants, not
+settings — 256 KB per body or attachment, 1 MB across all attachments.
+An unreadable type (PDF, pending extraction), a file over the cap, or an
+assignment too ambiguous to make without guessing rejects the message
+with the `rejected-attachments` claim outcome.
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|
