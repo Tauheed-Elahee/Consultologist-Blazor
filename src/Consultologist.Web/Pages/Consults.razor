@@ -61,6 +61,20 @@
                                 <FluentTextArea @bind-Value="field.Value"
                                                 Placeholder="@field.Placeholder"
                                                 Rows="@(inputFields.Count == 1 ? 16 : 6)" />
+                                @* #208: upload fills this slot specifically —
+                                   accept is only a browser hint, so the
+                                   extension is checked again in code. *@
+                                <span class="input-field__file" @onclick:stopPropagation="true">
+                                    <InputFile OnChange="args => LoadFileAsync(field, args)" accept=".txt,.md" />
+                                    @if (field.FileName != null)
+                                    {
+                                        <span class="muted-text">loaded @field.FileName</span>
+                                    }
+                                </span>
+                                @if (field.FileError != null)
+                                {
+                                    <span class="input-field__file-error">@field.FileError</span>
+                                }
                             </label>
                         }
 
@@ -1222,6 +1236,54 @@
     }
   }
 
+  // #208: text uploads only for now — PDF needs server-side extraction, which
+  // is the issue's phase 2. The bound mirrors the server's per-input cap
+  // (ConsultGenerationJobs.MaxInputLength), so a file that loads here is one
+  // the API will also accept.
+  private const int MaxUploadBytes = 256 * 1024;
+  private static readonly string[] UploadExtensions = { ".txt", ".md" };
+
+  private async Task LoadFileAsync(ConsultInputField field, InputFileChangeEventArgs args)
+  {
+    var file = args.FileCount > 0 ? args.File : null;
+
+    if (file == null)
+    {
+      return;
+    }
+
+    // Loading a file is an edit like any other: a stale confirmation would
+    // outlive what it described.
+    field.FileError = null;
+    scheduleConfirmation = null;
+
+    if (!UploadExtensions.Contains(Path.GetExtension(file.Name), StringComparer.OrdinalIgnoreCase))
+    {
+      // Named as a current limit, not a permanent one — PDF is the known next step.
+      field.FileError = $"Only {string.Join(" and ", UploadExtensions)} files can be uploaded yet.";
+      return;
+    }
+
+    if (file.Size > MaxUploadBytes)
+    {
+      field.FileError = $"That file is larger than {MaxUploadBytes / 1024} KB.";
+      return;
+    }
+
+    try
+    {
+      using var reader = new StreamReader(file.OpenReadStream(MaxUploadBytes));
+      // Replaces the field's text, which stays editable — the upload is a way
+      // to fill the box, not a separate kind of input.
+      field.Value = await reader.ReadToEndAsync();
+      field.FileName = file.Name;
+    }
+    catch (Exception ex)
+    {
+      field.FileError = $"That file could not be read: {ex.Message}";
+    }
+  }
+
   // What the request carries: declared ids with text. Blank optional inputs are
   // omitted, not sent empty — the API rejects blank values, and the
   // effective-input hash covers exactly what was supplied.
@@ -1584,6 +1646,11 @@
     public string Label { get; }
     public bool Required { get; }
     public string Value { get; set; } = string.Empty;
+
+    // #208: the last file loaded into this slot, and why a load was refused.
+    // Per-field so a failed upload names the field the user aimed at.
+    public string? FileName { get; set; }
+    public string? FileError { get; set; }
 
     public string Placeholder => Id == "consult_draft"
       ? "Enter referral details, clinical context, and the consult question..."
