@@ -35,6 +35,13 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
     <PackageVersion Include="PDFsharp-MigraDoc" Version="6.2.4" />
+    <!-- #235: PDF text extraction. Pinned exactly, not floated — PdfPig is
+         pre-1.0 and states it will change the public API on minor versions
+         until then, and its output feeds the effective-input hash, so an
+         unattended bump is provenance-affecting. 0.1.15 is also the first
+         release whose DirectObjectFinder enforces the stack-depth guard
+         (PdfPig #1274, an uncatchable StackOverflowException). -->
+    <PackageVersion Include="PdfPig" Version="0.1.15" />
     <PackageVersion Include="Scriban" Version="7.2.5" />
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
 
