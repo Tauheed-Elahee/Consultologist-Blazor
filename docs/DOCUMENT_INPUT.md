@@ -260,6 +260,7 @@ yield 400 KB, and a 1 MB zip may expand to a gigabyte.
 | Decompressed size | 100 MB | A container's cost is not its size |
 | Characters extracted | 256 KB | `ConsultGenerationJobs.MaxInputLength` |
 | Bytes per email, all attachments | 20 MB | A message-level property |
+| Bytes per job request, all files | 20 MB | Likewise, per request |
 
 - **Fail loudly on the character cap; never truncate.** Half a referral
   silently generating a whole consult is a clinical wrong-data error.
@@ -327,6 +328,24 @@ POST /api/DocumentExtractions
   `connect-src`, so no CSP change is needed.
 
 ### Submission
+
+> **Amended 2026-07-29 during #238.** One thing the design above did not
+> account for: `ConsultGenerationJobStarter` carries the **whole request**
+> into `ConsultGenerationOrchestrationInput`, which Durable persists to
+> the storage account and spills to blob past the inline limit. Passing
+> the request through unchanged would therefore put every attached
+> document at rest — a 10 MB file becomes ~13 MB of base64 per job — in
+> a store with no retention story and no place in the PHI posture
+> `ACCOUNTS.md` and `CONFIGURATION.md` describe. **The starter clears
+> `InputFiles` before constructing the orchestration input**, which is
+> what keeps the "bytes are never persisted" promise true rather than
+> merely intended. Nothing downstream needs them: the extracted text is
+> already carried by `Inputs`. A test asserts it, because the next person
+> to touch that constructor will not otherwise see it.
+>
+> Also added here, since the app path had no equivalent of the email
+> budget: a per-request total across `InputFiles`, at the same 20 MB. A
+> per-file cap does not bound a request carrying several.
 
 The job request carries the **file**, not the text, as a trailing
 optional field beside `Inputs`:
