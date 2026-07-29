@@ -63,6 +63,10 @@ public sealed class ConsultGenerationJobEntity : TaskEntity<ConsultGenerationJob
         State.CatalogRef ??= input.CatalogRef;
         State.Source ??= input.Source;
         State.ScheduledAtUtc ??= input.ScheduledAtUtc;
+        State.InputOrigins ??= input.InputOrigins?.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value,
+            StringComparer.Ordinal);
 
         // #157: a future schedule shows as Scheduled until MarkRunning; entities
         // run exactly once per signal, so the wall clock is safe here.
@@ -316,7 +320,12 @@ public sealed record ConsultGenerationOrchestrationInput(
     // present; absent optional inputs as empty strings). Null on every v5/v6
     // job — sleeping instances replay through the legacy arms untouched.
     IReadOnlyList<ConsultResultDescriptor>? Results = null,
-    IReadOnlyDictionary<string, string>? Inputs = null);
+    IReadOnlyDictionary<string, string>? Inputs = null,
+    // #238: where each input's text came from, as observed by the server at
+    // job start. Null on every job recorded before this existed, and on every
+    // job whose inputs were typed — absence means "not recorded", never
+    // "typed" (docs/DOCUMENT_INPUT.md § 7).
+    IReadOnlyDictionary<string, ConsultInputOrigin>? InputOrigins = null);
 
 public sealed record ConsultGenerationJobInitialize(
     string JobId,
@@ -329,7 +338,9 @@ public sealed record ConsultGenerationJobInitialize(
     int EffectiveInputHashVersion = 2,
     string? CatalogRef = null,
     string? Source = null,
-    DateTimeOffset? ScheduledAtUtc = null);
+    DateTimeOffset? ScheduledAtUtc = null,
+    // #238: see ConsultGenerationOrchestrationInput.InputOrigins.
+    IReadOnlyDictionary<string, ConsultInputOrigin>? InputOrigins = null);
 
 public sealed record ConsultGenerationNodeUpdate(
     string NodeId,
@@ -403,6 +414,10 @@ public sealed class ConsultGenerationJobState
     public string? FailureError { get; set; }
     public string? WorkflowPackage { get; set; }
     public string? EffectiveInputHash { get; set; }
+
+    // #238: per-slot record of where the input text came from. Null for every
+    // job whose inputs were typed, and for every job predating this field.
+    public Dictionary<string, ConsultInputOrigin>? InputOrigins { get; set; }
     // The effective-input hash definition this job used: null/1 = draft+sections
     // (v2-v4 packages), 2 = draft only (v5 packages, package-format-v5.md).
     public int? EffectiveInputHashVersion { get; set; }
@@ -559,6 +574,7 @@ public sealed class ConsultGenerationJobState
             History: History.Count > 0 ? History.AsReadOnly() : null,
             WorkflowPackage: WorkflowPackage,
             EffectiveInputHash: EffectiveInputHash,
+            InputOrigins: InputOrigins,
             Source: Source,
             ScheduledAtUtc: ScheduledAtUtc,
             ItemSteps: ItemSteps,

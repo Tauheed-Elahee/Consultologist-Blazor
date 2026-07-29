@@ -129,6 +129,17 @@
                                             <dl class="provenance-list">
                                                 <dt>Input hash (v@(detail.EffectiveInputHashVersion?.ToString() ?? "—"))</dt>
                                                 <dd class="hash-text">@(detail.EffectiveInputHash ?? "—")</dd>
+                                                @* #238: beside the hash, never inside it. Only slots
+                                                   the server read from a document appear — an absent
+                                                   entry means nothing was recorded, not that the
+                                                   input was typed. *@
+                                                @foreach (var origin in detail.InputOrigins ?? new Dictionary<string, ConsultInputOrigin>())
+                                                {
+                                                    <dt class="provenance-list__nested">@origin.Key</dt>
+                                                    <dd>
+                                                        read from a document by @(origin.Value.Extractor ?? "—")@(origin.Value.PageCount is { } pages ? $" · {pages} page{(pages == 1 ? "" : "s")}" : "")
+                                                    </dd>
+                                                }
                                                 @if (detail.WorkflowOutputHash != null)
                                                 {
                                                     <dt>Output hash (v@(detail.WorkflowOutputHashVersion?.ToString() ?? "—"))</dt>

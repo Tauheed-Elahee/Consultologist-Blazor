@@ -27,6 +27,13 @@ public sealed class ConsultGenerationJobs
     // Per-input text bound, matching the email-intake body cap
     // (EmailIntakeProcessor.MaxDraftLength).
     internal const int MaxInputLength = 256 * 1024;
+
+    // #238: bytes accepted per attached document, and across one request.
+    // The per-file bound matches the parser's own (DocumentExtraction.MaxBytes)
+    // so a file that clears this is one the parser will also accept; the total
+    // mirrors email's per-message budget.
+    internal const int MaxInputFileBytes = 10 * 1024 * 1024;
+    internal const int MaxInputFilesTotalBytes = 20 * 1024 * 1024;
     private const string MissingSseAttemptId = "missing";
     private const string InvalidSseAttemptId = "invalid";
     private const string SseExitReasonCompleted = "Completed";
@@ -107,16 +114,8 @@ public sealed class ConsultGenerationJobs
                 "StartConsultGenerationJob reading request body. InvocationId={InvocationId}",
                 req.FunctionContext.InvocationId);
 
-            var requestBody = await new StreamReader(req.Body).ReadToEndAsync(cancellationToken);
-
-            _logger.LogInformation(
-                "StartConsultGenerationJob request body read. InvocationId={InvocationId}, BodyLength={BodyLength}",
-                req.FunctionContext.InvocationId,
-                requestBody.Length);
-
             ConsultGenerationRequest? generationRequest = null;
 
-            if (!string.IsNullOrWhiteSpace(requestBody))
             {
                 try
                 {
@@ -124,7 +123,14 @@ public sealed class ConsultGenerationJobs
                         "StartConsultGenerationJob deserializing request body. InvocationId={InvocationId}",
                         req.FunctionContext.InvocationId);
 
-                    generationRequest = JsonSerializer.Deserialize<ConsultGenerationRequest>(requestBody, JsonOptions);
+                    // #238: parsed straight from the stream. Buffering to a
+                    // string first cost two copies of the whole body, and a
+                    // request carrying an attached document is base64 —
+                    // ~1.33x the file, then again as UTF-16.
+                    generationRequest = await JsonSerializer.DeserializeAsync<ConsultGenerationRequest>(
+                        req.Body,
+                        JsonOptions,
+                        cancellationToken);
                 }
                 catch (JsonException ex)
                 {
@@ -169,6 +175,10 @@ public sealed class ConsultGenerationJobs
                     // input declaration — 422, not 400 (the request-shape rules
                     // in ValidateRequest are the 400s).
                     ConsultGenerationJobStartError.InputsMismatch => HttpStatusCode.UnprocessableEntity,
+                    // #238: likewise — the request was well formed, the
+                    // document inside it could not be read. Same status the
+                    // preview endpoint returns for the same cause.
+                    ConsultGenerationJobStartError.InputFileUnreadable => HttpStatusCode.UnprocessableEntity,
                     _ => HttpStatusCode.InternalServerError
                 };
                 return await CreateJsonResponseAsync(req, status, new { error = outcome.ErrorDetail }, cancellationToken);
@@ -560,6 +570,7 @@ public sealed class ConsultGenerationJobs
 
         var hasDraft = !string.IsNullOrWhiteSpace(request.ConsultDraft);
         var hasInputs = request.Inputs is { Count: > 0 };
+        var hasFiles = request.InputFiles is { Count: > 0 };
 
         // Exactly one of the two forms: silently preferring one would drop
         // caller data (package-format-v7.md request contract).
@@ -568,9 +579,55 @@ public sealed class ConsultGenerationJobs
             return "Send ConsultDraft or Inputs, not both.";
         }
 
-        if (!hasDraft && !hasInputs)
+        if (hasDraft && hasFiles)
         {
-            return "ConsultDraft or Inputs is required.";
+            return "Send ConsultDraft or InputFiles, not both.";
+        }
+
+        if (!hasDraft && !hasInputs && !hasFiles)
+        {
+            return "ConsultDraft, Inputs or InputFiles is required.";
+        }
+
+        if (hasFiles)
+        {
+            var totalBytes = 0L;
+
+            foreach (var (id, file) in request.InputFiles!)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    return "InputFiles contains a blank id.";
+                }
+
+                // Same slot from both directions is ambiguous in the way the
+                // v7 contract already refuses: nobody needs both, and
+                // choosing one would drop the other silently.
+                if (request.Inputs?.ContainsKey(id) == true)
+                {
+                    return $"Input '{id}' was supplied as both text and a file.";
+                }
+
+                if (file?.Content is not { Length: > 0 })
+                {
+                    return $"Input file '{id}' is empty.";
+                }
+
+                if (file.Content.Length > MaxInputFileBytes)
+                {
+                    return $"Input file '{id}' exceeds {MaxInputFileBytes / (1024 * 1024)} MB.";
+                }
+
+                totalBytes += file.Content.Length;
+            }
+
+            // A per-file cap does not bound a request carrying several. The
+            // budget mirrors email's per-message one (docs/DOCUMENT_INPUT.md
+            // § 4) so the two doors cost a request the same.
+            if (totalBytes > MaxInputFilesTotalBytes)
+            {
+                return $"Input files exceed {MaxInputFilesTotalBytes / (1024 * 1024)} MB in total.";
+            }
         }
 
         if (hasInputs)

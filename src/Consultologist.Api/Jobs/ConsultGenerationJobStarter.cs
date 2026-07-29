@@ -1,4 +1,5 @@
 using Consultologist.Api.Agents;
+using Consultologist.Api.Documents;
 using Consultologist.Api.Models;
 using Consultologist.Api.Workflow;
 using Microsoft.DurableTask;
@@ -25,7 +26,10 @@ public enum ConsultGenerationJobStartError
     RegistryUnavailable,
     PackageNotExecutable,
     SpecVersionNotYetExecutable,
-    InputsMismatch
+    InputsMismatch,
+    // #238: a supplied document could not be read. Well-formed request,
+    // unsatisfiable content — 422 like InputsMismatch, not 400.
+    InputFileUnreadable
 }
 
 /// <summary>
@@ -132,6 +136,26 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 ConsultGenerationJobStartError.RegistryUnavailable,
                 "Workflow package registry is unavailable.");
         }
+
+        // #238: documents become text before anything else looks at the
+        // request, so everything downstream — validation, resolution, hashing,
+        // the orchestration — stays the string-keyed pipeline it already was.
+        // Extraction is the pre-step docs/DOCUMENT_INPUT.md describes, not a
+        // new kind of input.
+        var extraction = await ExtractInputFilesAsync(request, cancellationToken);
+        if (extraction.Error != null)
+        {
+            _logger.LogWarning(
+                "Rejected job start: an attached document could not be read. Outcome={Outcome}",
+                extraction.Outcome);
+            return new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputFileUnreadable,
+                extraction.Error);
+        }
+
+        request = NormalizeInputs(extraction.Request);
+        var inputOrigins = extraction.Origins;
 
         var inputs = ResolveEffectiveInputs(request, package.Manifest);
         if (inputs.Error != null)
@@ -246,7 +270,8 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 nodes,
                 EffectiveInputHashVersion: effectiveInputHashVersion,
                 Source: origin.Source,
-                ScheduledAtUtc: request.ScheduledAtUtc));
+                ScheduledAtUtc: request.ScheduledAtUtc,
+                InputOrigins: inputOrigins));
 
         var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
             nameof(ConsultGenerationOrchestrator),
@@ -266,7 +291,8 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 Source: origin.Source,
                 ReplyToAddress: origin.ReplyToAddress,
                 Results: resultDescriptors,
-                Inputs: inputs.Effective),
+                Inputs: inputs.Effective,
+                InputOrigins: inputOrigins),
             new StartOrchestrationOptions { InstanceId = jobId },
             cancellationToken);
 
@@ -288,6 +314,105 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
     /// the caller); v7: the supplied map (or the back-filled legacy draft)
     /// must cover every required declared id and name no undeclared ones.
     /// </summary>
+    /// <summary>
+    /// The result of turning a request's attached documents into text: the
+    /// request with those slots filled and <see cref="ConsultGenerationRequest.InputFiles"/>
+    /// cleared, plus what the server observed about each one.
+    /// </summary>
+    internal sealed record InputFileExtraction(
+        ConsultGenerationRequest Request,
+        IReadOnlyDictionary<string, ConsultInputOrigin>? Origins,
+        string? Error,
+        string? Outcome);
+
+    /// <summary>
+    /// Reads every attached document and folds its text into the input map
+    /// (#238). One refusal fails the whole start: a consult generated from
+    /// the inputs that happened to be readable would be a partial referral
+    /// presented as a whole one.
+    /// </summary>
+    internal static async Task<InputFileExtraction> ExtractInputFilesAsync(
+        ConsultGenerationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.InputFiles is not { Count: > 0 })
+        {
+            return new InputFileExtraction(request, null, null, null);
+        }
+
+        var inputs = request.Inputs is { Count: > 0 }
+            ? new Dictionary<string, string>(request.Inputs, StringComparer.Ordinal)
+            : new Dictionary<string, string>(StringComparer.Ordinal);
+        var origins = new Dictionary<string, ConsultInputOrigin>(StringComparer.Ordinal);
+
+        foreach (var (id, file) in request.InputFiles.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            var result = await DocumentExtraction.ExtractAsync(file.Content, cancellationToken);
+
+            if (!DocumentExtraction.Succeeded(result))
+            {
+                return new InputFileExtraction(
+                    request,
+                    null,
+                    DocumentExtractionCopy.For(result.Outcome),
+                    result.Outcome);
+            }
+
+            inputs[id] = result.Text!;
+            origins[id] = new ConsultInputOrigin(
+                ConsultInputOriginKinds.Document,
+                result.ExtractorId,
+                result.PageCount);
+        }
+
+        // InputFiles cleared here, and this is load-bearing rather than tidy:
+        // the request is carried verbatim into the orchestration input, which
+        // Durable persists to the storage account and spills to blob past the
+        // inline limit. Leaving the bytes on would put every attached document
+        // at rest with no retention story, contradicting the promise that
+        // extraction keeps them transient (docs/DOCUMENT_INPUT.md § 5).
+        // Nothing downstream needs them: the text is in Inputs.
+        return new InputFileExtraction(
+            request with { Inputs = inputs, InputFiles = null },
+            origins,
+            null,
+            null);
+    }
+
+    /// <summary>
+    /// CRLF to LF, trailing whitespace off the end — applied to every input,
+    /// typed and extracted alike, before the effective-input hash sees any of
+    /// it (#238, docs/DOCUMENT_INPUT.md § 2).
+    ///
+    /// Nothing here normalised before, so the same referral pasted from a
+    /// Windows editor and attached as a file hashed differently for no reason
+    /// a reader of the record could see. Normalising only extracted text would
+    /// have kept that split, which is the property this milestone exists to
+    /// close. The hash *definition* is unchanged — only the text reaching it —
+    /// so DeclaredInputsHashVersion stays 3.
+    /// </summary>
+    internal static ConsultGenerationRequest NormalizeInputs(ConsultGenerationRequest request)
+    {
+        var draft = Normalize(request.ConsultDraft);
+
+        if (request.Inputs is not { Count: > 0 })
+        {
+            return request with { ConsultDraft = draft };
+        }
+
+        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var (id, value) in request.Inputs)
+        {
+            normalized[id] = Normalize(value) ?? string.Empty;
+        }
+
+        return request with { ConsultDraft = draft, Inputs = normalized };
+    }
+
+    private static string? Normalize(string? text) =>
+        text?.Replace("\r\n", "\n").TrimEnd();
+
     internal static EffectiveInputsResolution ResolveEffectiveInputs(
         ConsultGenerationRequest request,
         WorkflowPackageManifest manifest)

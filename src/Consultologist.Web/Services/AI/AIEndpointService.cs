@@ -286,7 +286,22 @@ public record ConsultGenerationRequest(
     string? ConsultDraft,
     string? WorkflowPackage = null,
     DateTimeOffset? ScheduledAtUtc = null,
-    Dictionary<string, string>? Inputs = null);
+    Dictionary<string, string>? Inputs = null,
+    // #238: a slot filled by a document instead of text. The server extracts
+    // it at job start, so origin is observed rather than asserted. Nothing in
+    // the UI sends these yet — #236 is what attaches a file.
+    Dictionary<string, InputFilePayload>? InputFiles = null);
+
+/// <summary>Mirrors Consultologist.Api.Models.InputFilePayload. byte[] rides
+/// the JSON body as base64; no filename is sent.</summary>
+public sealed record InputFilePayload(string ContentType, byte[] Content);
+
+/// <summary>Mirrors Consultologist.Api.Models.ConsultInputOrigin. Absence
+/// means "not recorded", never "typed".</summary>
+public sealed record ConsultInputOrigin(
+    string Kind,
+    string? Extractor = null,
+    int? PageCount = null);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
@@ -330,7 +345,9 @@ public record ConsultGenerationJobResponse(
     DateTimeOffset? ScheduledAtUtc = null,
     // v7: one entry per deliverable in result-set order (Completed jobs only;
     // workflowOutputHash v3 covers exactly these documents' digests).
-    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
+    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null,
+    // #238: where each input's text came from, as the server observed it.
+    IReadOnlyDictionary<string, ConsultInputOrigin>? InputOrigins = null);
 
 /// <summary>One v7 deliverable: authored identity, the document, and its digest.</summary>
 public record ConsultGenerationResultDocumentResponse(

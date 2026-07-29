@@ -13,7 +13,44 @@ public record ConsultGenerationRequest(
     DateTimeOffset? ScheduledAtUtc = null,
     // v7: the named-input map (declared id → text). Validated against the
     // package declaration at job start.
-    Dictionary<string, string>? Inputs = null);
+    Dictionary<string, string>? Inputs = null,
+    // #238: the same slots, filled by a document instead of text. The server
+    // extracts these at job start (docs/DOCUMENT_INPUT.md § 5), so a slot's
+    // origin is something the server observed rather than something the
+    // caller asserted. A slot appears in one map or the other, never both.
+    Dictionary<string, InputFilePayload>? InputFiles = null);
+
+/// <summary>
+/// A document supplied for an input slot. System.Text.Json serialises byte[]
+/// as base64, so this rides the existing JSON body — no multipart parser for
+/// untrusted input, no upload-then-reference staging, and no bytes at rest.
+///
+/// No filename: it can itself be PHI ("Smith_John_referral.pdf"), the parser
+/// dispatches on content anyway, and a request-scoped one would land in
+/// Functions request logging.
+/// </summary>
+public sealed record InputFilePayload(string ContentType, byte[] Content);
+
+/// <summary>
+/// #238: what the server observed about where an input's text came from.
+/// Recorded per slot, beside the effective-input hash and never inside it.
+///
+/// Absence means "not recorded" — never "typed". Email jobs supply text until
+/// #237 lands, and every job recorded before this existed has no entry at
+/// all, so reading a missing entry as an assertion about the input would be
+/// a claim nobody made.
+/// </summary>
+public sealed record ConsultInputOrigin(
+    string Kind,
+    string? Extractor = null,
+    int? PageCount = null);
+
+public static class ConsultInputOriginKinds
+{
+    // Extracted from a document by the parser (#235). Kebab-case like every
+    // other disposition in this codebase; OCR would join it as its own kind.
+    public const string Document = "document";
+}
 
 public record ConsultGenerationJobStartResponse(
     string JobId,
@@ -60,7 +97,11 @@ public record ConsultGenerationJobResponse(
     DateTimeOffset? ScheduledAtUtc = null,
     // v7: the per-deliverable documents in result-set order (Completed jobs
     // only; hash version 3 covers exactly these). Null on v5/v6 jobs.
-    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null);
+    IReadOnlyList<ConsultGenerationResultDocumentResponse>? AssembledDocuments = null,
+    // #238: per-slot record of where the input text came from, as the server
+    // observed it. Null when nothing was recorded — which is every job before
+    // this field existed and every job whose inputs were typed.
+    IReadOnlyDictionary<string, ConsultInputOrigin>? InputOrigins = null);
 
 /// <summary>
 /// One v7 deliverable on the job response: authored id and label, the text, and
