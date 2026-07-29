@@ -5,6 +5,7 @@ using Consultologist.Web;
 using Consultologist.Web.Services.Accounts;
 using Consultologist.Web.Services.AI;
 using Consultologist.Web.Services.Diagnostics;
+using Consultologist.Web.Services.Documents;
 using Consultologist.Web.Services.Workflow;
 using Microsoft.FluentUI.AspNetCore.Components;
 
@@ -32,6 +33,7 @@ builder.Services.AddHttpClient<IAIEndpointService, AIEndpointService>(client =>
 builder.Services.AddHttpClient<IAccountEndpointService, AccountEndpointService>();
 builder.Services.AddHttpClient<ISseDiagnosticsService, SseDiagnosticsService>();
 builder.Services.AddHttpClient<IWorkflowEndpointService, WorkflowEndpointService>();
+builder.Services.AddHttpClient<IDocumentEndpointService, DocumentEndpointService>();
 builder.Services.AddScoped<Consultologist.Web.Services.AI.ConsultJobSession>();
 
 await builder.Build().RunAsync();
