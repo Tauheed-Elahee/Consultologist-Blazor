@@ -281,7 +281,7 @@ public class StartRequestValidationTests
     public void ValidateRequest_RequiresBodyAndExactlyOneInputForm()
     {
         Assert.Equal("Request body is required.", ConsultGenerationJobs.ValidateRequest(null));
-        Assert.Equal("ConsultDraft or Inputs is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
+        Assert.Equal("ConsultDraft, Inputs or InputFiles is required.", ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(" ")));
         Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest("Draft.")));
 
         Assert.Equal(
@@ -292,6 +292,55 @@ public class StartRequestValidationTests
         Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
             null,
             Inputs: new Dictionary<string, string> { ["consult_draft"] = "Draft." })));
+    }
+
+    [Fact]
+    public void ValidateRequest_ChecksAttachedDocuments()
+    {
+        // #238: a slot filled from both directions is the same ambiguity the
+        // v7 contract already refuses for ConsultDraft-vs-Inputs — nobody
+        // needs both, and picking one would drop the other in silence.
+        Assert.Equal(
+            "Input 'consult_draft' was supplied as both text and a file.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null,
+                Inputs: new Dictionary<string, string> { ["consult_draft"] = "Typed." },
+                InputFiles: new Dictionary<string, InputFilePayload>
+                {
+                    ["consult_draft"] = new("text/plain", "From a file."u8.ToArray())
+                })));
+
+        Assert.Equal(
+            "InputFiles contains a blank id.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null,
+                InputFiles: new Dictionary<string, InputFilePayload> { [" "] = new("text/plain", "x"u8.ToArray()) })));
+
+        Assert.Equal(
+            "Input file 'consult_draft' is empty.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null,
+                InputFiles: new Dictionary<string, InputFilePayload> { ["consult_draft"] = new("text/plain", []) })));
+
+        // A per-file bound does not bound a request carrying several, which is
+        // why the total exists at all.
+        Assert.Equal(
+            "Input files exceed 20 MB in total.",
+            ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+                null,
+                InputFiles: new Dictionary<string, InputFilePayload>
+                {
+                    ["a"] = new("application/pdf", new byte[9 * 1024 * 1024]),
+                    ["b"] = new("application/pdf", new byte[9 * 1024 * 1024]),
+                    ["c"] = new("application/pdf", new byte[9 * 1024 * 1024])
+                })));
+
+        Assert.Null(ConsultGenerationJobs.ValidateRequest(new ConsultGenerationRequest(
+            null,
+            InputFiles: new Dictionary<string, InputFilePayload>
+            {
+                ["consult_draft"] = new("text/plain", "From a file."u8.ToArray())
+            })));
     }
 
     [Fact]
