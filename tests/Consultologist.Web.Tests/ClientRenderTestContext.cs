@@ -3,6 +3,7 @@ using Bunit.TestDoubles;
 using Consultologist.Web.Services.Accounts;
 using Consultologist.Web.Services.AI;
 using Consultologist.Web.Services.Diagnostics;
+using Consultologist.Web.Services.Documents;
 using Consultologist.Web.Services.Workflow;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.FluentUI.AspNetCore.Components;
@@ -22,6 +23,8 @@ public abstract class ClientRenderTestContext : BunitContext
     protected IWorkflowEndpointService WorkflowService { get; } = Substitute.For<IWorkflowEndpointService>();
 
     protected IAccountEndpointService AccountService { get; } = Substitute.For<IAccountEndpointService>();
+
+    protected IDocumentEndpointService DocumentService { get; } = Substitute.For<IDocumentEndpointService>();
 
     protected ConsultJobSession JobSession { get; } = new();
 
@@ -44,6 +47,7 @@ public abstract class ClientRenderTestContext : BunitContext
         Services.AddSingleton(AIService);
         Services.AddSingleton(WorkflowService);
         Services.AddSingleton(AccountService);
+        Services.AddSingleton(DocumentService);
         Services.AddSingleton(Substitute.For<ISseDiagnosticsService>());
         Services.AddSingleton(JobSession);
 

@@ -5,9 +5,11 @@
 @using System.Text.Json
 @using Consultologist.Web.Services.AI
 @using Consultologist.Web.Services.Diagnostics
+@using Consultologist.Web.Services.Documents
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @inject IAIEndpointService AIService
+@inject IDocumentEndpointService DocumentService
 @inject ISseDiagnosticsService SseDiagnostics
 @inject ILogger<Consults> Logger
 @inject IWorkflowEndpointService WorkflowService
@@ -55,22 +57,54 @@
                                         <span class="muted-text input-field__optional">(optional)</span>
                                     }
                                 </span>
-                                @* Bound to the field object's own property: Blazor's
-                                   expression formatter cannot parse an indexer whose
-                                   argument is a property access. *@
-                                <FluentTextArea @bind-Value="field.Value"
-                                                Placeholder="@field.Placeholder"
-                                                Rows="@(inputFields.Count == 1 ? 16 : 6)" />
-                                @* #208: upload fills this slot specifically —
-                                   accept is only a browser hint, so the
-                                   extension is checked again in code. *@
-                                <span class="input-field__file" @onclick:stopPropagation="true">
-                                    <InputFile OnChange="args => LoadFileAsync(field, args)" accept=".txt,.md" />
-                                    @if (field.FileName != null)
-                                    {
-                                        <span class="muted-text">loaded @field.FileName</span>
-                                    }
-                                </span>
+                                @* #236: a slot holds either typed text or an
+                                   attached document, never both. The text is
+                                   kept underneath so removing the file gives
+                                   it back. *@
+                                @if (field.HasFile)
+                                {
+                                    <span class="input-field__chip" @onclick:stopPropagation="true">
+                                        <span class="input-field__chip-name">@field.FileName</span>
+                                        @if (field.PageCount is { } pages)
+                                        {
+                                            <span class="muted-text">@pages page@(pages == 1 ? "" : "s")</span>
+                                        }
+                                        <FluentButton Appearance="Appearance.Stealth"
+                                                      Title="Remove this file"
+                                                      @onclick="() => RemoveFile(field)">Remove</FluentButton>
+                                    </span>
+                                    @* What the server read, shown before it can
+                                       become a consult. Extraction is lossy on
+                                       columns and tables, so a garbled read has
+                                       to be visible while it is still cheap to
+                                       reject. *@
+                                    <span class="muted-text">What we read from this file:</span>
+                                    <div class="input-field__preview">@field.PreviewText</div>
+                                    <span class="muted-text input-field__hint">
+                                        Looks wrong? Remove the file and paste the text instead.
+                                    </span>
+                                }
+                                else
+                                {
+                                    @* Bound to the field object's own property: Blazor's
+                                       expression formatter cannot parse an indexer whose
+                                       argument is a property access. *@
+                                    <FluentTextArea @bind-Value="field.Value"
+                                                    Placeholder="@field.Placeholder"
+                                                    Rows="@(inputFields.Count == 1 ? 16 : 6)" />
+                                    @* No accept filter and no extension list: the
+                                       parser is the only thing that knows what a
+                                       format is, and a second opinion here could
+                                       disagree with it (docs/DOCUMENT_INPUT.md § 1). *@
+                                    <span class="input-field__file" @onclick:stopPropagation="true">
+                                        <InputFile OnChange="args => LoadFileAsync(field, args)" />
+                                        @if (field.IsReading)
+                                        {
+                                            <FluentProgressRing style="width: 16px; height: 16px;" />
+                                            <span class="muted-text">Reading&hellip;</span>
+                                        }
+                                    </span>
+                                }
                                 @if (field.FileError != null)
                                 {
                                     <span class="input-field__file-error">@field.FileError</span>
@@ -192,17 +226,17 @@
                     <div class="draft-bar__full">
                         @if (inputFields.Count == 1)
                         {
-                            @inputFields[0].Value
+                            @inputFields[0].EffectiveText
                         }
                         else
                         {
                             @* Each supplied input under its authored label; an
                                absent optional input simply does not appear. *@
-                            @foreach (var field in inputFields.Where(f => !string.IsNullOrWhiteSpace(f.Value)))
+                            @foreach (var field in inputFields.Where(f => f.IsFilled))
                             {
                                 <div class="draft-bar__input" @key="field.Id">
                                     <span class="draft-bar__input-label">@field.Label</span>
-                                    <span>@field.Value</span>
+                                    <span>@field.EffectiveText</span>
                                 </div>
                             }
                         }
@@ -675,7 +709,7 @@
     if (!HasEveryRequiredInput)
     {
       var missing = inputFields
-        .Where(field => field.Required && string.IsNullOrWhiteSpace(field.Value))
+        .Where(field => field.Required && !field.IsFilled)
         .Select(field => field.Label);
       aiRequestError = $"{string.Join(", ", missing)} is required.";
       return;
@@ -695,7 +729,8 @@
       {
         isSchedulingRequest = true;
         var scheduledAtUtc = NextOvernightRunUtc();
-        var job = await AIService.StartConsultGenerationJobAsync(SuppliedInputs(), workflowPackageRef, scheduledAtUtc);
+        var job = await AIService.StartConsultGenerationJobAsync(
+          SuppliedInputs(), workflowPackageRef, scheduledAtUtc, SuppliedFiles());
         scheduleConfirmation =
           $"Consult scheduled for {scheduledAtUtc.ToLocalTime():MMM d, h:mm tt} — it will appear in History, and you'll receive an email when it's ready.";
         runOvernight = false;
@@ -717,18 +752,23 @@
     {
       isAiRequestLoading = true;
       var inputSnapshot = SuppliedInputs();
+      var fileSnapshot = SuppliedFiles();
+      // What the run displays and what re-attach restores: the text, however
+      // the slot was filled. The request itself carries the files.
+      var textSnapshot = EffectiveInputTexts();
       var blockSnapshots = packageBlocks.ToList();
       totalBlockCount = blockSnapshots.Count;
       await InvokeAsync(StateHasChanged);
 
       // Sections are package data resolved server-side; the request carries only
       // the declared inputs (and the resolved package ref).
-      var job = await AIService.StartConsultGenerationJobAsync(inputSnapshot, workflowPackageRef);
+      var job = await AIService.StartConsultGenerationJobAsync(
+        inputSnapshot, workflowPackageRef, files: fileSnapshot);
 
       // #207: remember the job per-tab so navigating away and back re-attaches.
       JobSession.Current = new ConsultJobMemento(
         job.JobId,
-        inputSnapshot,
+        textSnapshot,
         workflowPackageRef,
         blockSnapshots.Select(block => new ConsultJobBlock(block.Id, block.Name)).ToList());
 
@@ -1205,43 +1245,66 @@
       ? $"{declaredResults!.Count} documents · {BlocksFor(declaredResults[0].Id).Count()} sections each"
       : $"{packageBlocks.Count} sections";
 
-  // Rebuilds the fields for a package's declaration, carrying over any text
-  // already typed into an id the new package still declares — switching
+  // Rebuilds the fields for a package's declaration, carrying whatever was
+  // already supplied into an id the new package still declares — switching
   // packages never smuggles a stale input into a run.
+  //
+  // #236: an attachment carries the same way typed text does. Dropping it
+  // would discard an upload the clinician just made without asking, and would
+  // leave the two ways of filling a slot behaving differently for no reason
+  // they could see.
   private void SyncInputFields(IReadOnlyList<WorkflowPackageInputResponse>? declaration)
   {
-    var carried = inputFields.ToDictionary(field => field.Id, field => field.Value, StringComparer.Ordinal);
+    var carried = inputFields.ToDictionary(field => field.Id, field => field, StringComparer.Ordinal);
 
     inputFields = (declaration is { Count: > 0 } ? declaration : LegacyInputs)
-      .Select(input => new ConsultInputField(input.Id, input.Label, input.Required)
+      .Select(input =>
       {
-        Value = carried.GetValueOrDefault(input.Id, string.Empty)
+        var field = new ConsultInputField(input.Id, input.Label, input.Required);
+
+        if (carried.TryGetValue(input.Id, out var previous))
+        {
+          field.Value = previous.Value;
+          field.FileName = previous.FileName;
+          field.FileContent = previous.FileContent;
+          field.FileContentType = previous.FileContentType;
+          field.PreviewText = previous.PreviewText;
+          field.PageCount = previous.PageCount;
+        }
+
+        return field;
       })
       .ToList();
   }
 
+  // Re-attaching to a running job restores what it ran on, which the memento
+  // holds as text — so any attachment in the form is stale by definition.
   private void ApplyInputValues(IReadOnlyDictionary<string, string> values)
   {
     foreach (var field in inputFields)
     {
+      RemoveFile(field);
       field.Value = values.GetValueOrDefault(field.Id, string.Empty);
     }
   }
 
+  // #236: clears the whole slot, not just its text. Leaving the attachment
+  // behind left a scheduled submit showing "loaded referral.txt" over an
+  // empty box — a label describing something that was no longer there.
   private void ClearInputs()
   {
     foreach (var field in inputFields)
     {
       field.Value = string.Empty;
+      RemoveFile(field);
     }
   }
 
-  // #208: text uploads only for now — PDF needs server-side extraction, which
-  // is the issue's phase 2. The bound mirrors the server's per-input cap
-  // (ConsultGenerationJobs.MaxInputLength), so a file that loads here is one
-  // the API will also accept.
-  private const int MaxUploadBytes = 256 * 1024;
-  private static readonly string[] UploadExtensions = { ".txt", ".md" };
+  // #236: bytes accepted before anything is uploaded, so a huge file is not
+  // sent merely to be refused. A size bound, not format knowledge — the
+  // parser is the only thing that knows what a format is, and it applies the
+  // same bound server-side (ConsultGenerationJobs.MaxInputFileBytes).
+  private const int MaxUploadBytes = 10 * 1024 * 1024;
 
   private async Task LoadFileAsync(ConsultInputField field, InputFileChangeEventArgs args)
   {
@@ -1252,53 +1315,102 @@
       return;
     }
 
-    // Loading a file is an edit like any other: a stale confirmation would
+    // Attaching a file is an edit like any other: a stale confirmation would
     // outlive what it described.
     field.FileError = null;
     scheduleConfirmation = null;
 
-    if (!UploadExtensions.Contains(Path.GetExtension(file.Name), StringComparer.OrdinalIgnoreCase))
+    if (file.Size > MaxUploadBytes)
     {
-      // Named as a current limit, not a permanent one — PDF is the known next step.
-      field.FileError = $"Only {string.Join(" and ", UploadExtensions)} files can be uploaded yet.";
+      field.FileError = $"That file is larger than {MaxUploadBytes / (1024 * 1024)} MB.";
       return;
     }
 
-    if (file.Size > MaxUploadBytes)
-    {
-      field.FileError = $"That file is larger than {MaxUploadBytes / 1024} KB.";
-      return;
-    }
+    field.IsReading = true;
+    await InvokeAsync(StateHasChanged);
 
     try
     {
-      using var reader = new StreamReader(file.OpenReadStream(MaxUploadBytes));
-      // Replaces the field's text, which stays editable — the upload is a way
-      // to fill the box, not a separate kind of input.
-      field.Value = await reader.ReadToEndAsync();
+      using var buffer = new MemoryStream();
+      await using (var stream = file.OpenReadStream(MaxUploadBytes))
+      {
+        await stream.CopyToAsync(buffer);
+      }
+
+      var content = buffer.ToArray();
+      var outcome = await DocumentService.ExtractAsync(content, file.ContentType);
+
+      if (!outcome.Succeeded)
+      {
+        // The server's own sentence for this cause, shown verbatim. The slot
+        // stays as it was, so a refused file changes nothing.
+        field.FileError = outcome.Error;
+        return;
+      }
+
+      // The file becomes the input. Value is left alone underneath so that
+      // removing the file gives back whatever was typed before.
       field.FileName = file.Name;
+      field.FileContent = content;
+      field.FileContentType = string.IsNullOrWhiteSpace(file.ContentType)
+        ? "application/octet-stream"
+        : file.ContentType;
+      field.PreviewText = outcome.Text!;
+      field.PageCount = outcome.PageCount;
     }
     catch (Exception ex)
     {
       field.FileError = $"That file could not be read: {ex.Message}";
     }
+    finally
+    {
+      field.IsReading = false;
+    }
   }
 
-  // What the request carries: declared ids with text. Blank optional inputs are
-  // omitted, not sent empty — the API rejects blank values, and the
-  // effective-input hash covers exactly what was supplied.
+  private void RemoveFile(ConsultInputField field)
+  {
+    field.FileName = null;
+    field.FileContent = null;
+    field.FileContentType = null;
+    field.PreviewText = string.Empty;
+    field.PageCount = null;
+    field.FileError = null;
+    scheduleConfirmation = null;
+  }
+
+  // What the request carries: declared ids with text, for slots filled by
+  // typing. Blank optional inputs are omitted, not sent empty — the API
+  // rejects blank values, and the effective-input hash covers exactly what
+  // was supplied.
   private Dictionary<string, string> SuppliedInputs() =>
     inputFields
-      .Where(field => !string.IsNullOrWhiteSpace(field.Value))
+      .Where(field => !field.HasFile && !string.IsNullOrWhiteSpace(field.Value))
       .ToDictionary(field => field.Id, field => field.Value, StringComparer.Ordinal);
+
+  // #236: the attached documents. The file travels rather than its text, so
+  // the server extracts it and the record says what read it.
+  private Dictionary<string, InputFilePayload> SuppliedFiles() =>
+    inputFields
+      .Where(field => field.HasFile)
+      .ToDictionary(
+        field => field.Id,
+        field => new InputFilePayload(field.FileContentType!, field.FileContent!),
+        StringComparer.Ordinal);
+
+  // What every display surface and memento shows: the text that ran,
+  // whichever way the slot was filled.
+  private Dictionary<string, string> EffectiveInputTexts() =>
+    inputFields
+      .Where(field => field.IsFilled)
+      .ToDictionary(field => field.Id, field => field.EffectiveText, StringComparer.Ordinal);
 
   // NB: 'field' is a contextual keyword inside property accessors (C# 14), so
   // the lambdas below name their parameter 'entry'.
   private bool HasEveryRequiredInput =>
-    inputFields.Where(entry => entry.Required).All(entry => !string.IsNullOrWhiteSpace(entry.Value));
+    inputFields.Where(entry => entry.Required).All(entry => entry.IsFilled);
 
-  private bool HasAnyInput =>
-    inputFields.Any(entry => !string.IsNullOrWhiteSpace(entry.Value));
+  private bool HasAnyInput => inputFields.Any(entry => entry.IsFilled);
 
   // The draft bar summarizes the first supplied input — the primary slot in
   // every package shape we ship.
@@ -1307,7 +1419,7 @@
     get
     {
       var first = inputFields
-        .Select(entry => entry.Value)
+        .Select(entry => entry.EffectiveText)
         .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
       var flattened = first.ReplaceLineEndings(" ").Trim();
       // Empty when re-attached from another tab — the record carries no inputs.
@@ -1647,10 +1759,37 @@
     public bool Required { get; }
     public string Value { get; set; } = string.Empty;
 
-    // #208: the last file loaded into this slot, and why a load was refused.
-    // Per-field so a failed upload names the field the user aimed at.
-    public string? FileName { get; set; }
+    // #208: why a load was refused. Per-field so a failed upload names the
+    // field the user aimed at.
     public string? FileError { get; set; }
+
+    // #236: the attached document. The bytes are held because the job request
+    // carries the file itself — the server extracts it again there, so what
+    // runs is what the server read rather than what this client reported. An
+    // IBrowserFile's stream does not survive until submit, so it cannot be
+    // re-read then.
+    public string? FileName { get; set; }
+    public byte[]? FileContent { get; set; }
+    public string? FileContentType { get; set; }
+    public int? PageCount { get; set; }
+
+    // What the server got out of the file. Read-only to the user, and
+    // load-bearing beyond display: the run-phase draft bar and the re-attach
+    // memento both need the input text, and this is the client's only copy.
+    public string PreviewText { get; set; } = string.Empty;
+
+    public bool IsReading { get; set; }
+
+    public bool HasFile => FileContent != null;
+
+    /// <summary>
+    /// What this slot contributes, whichever way it was filled — the one
+    /// question every gate should be asking.
+    /// </summary>
+    public bool IsFilled => HasFile || !string.IsNullOrWhiteSpace(Value);
+
+    /// <summary>The text that ran, for display surfaces that show inputs.</summary>
+    public string EffectiveText => HasFile ? PreviewText : Value;
 
     public string Placeholder => Id == "consult_draft"
       ? "Enter referral details, clinical context, and the consult question..."
