@@ -78,7 +78,8 @@ public sealed class ConsultGenerationOrchestrator
                 input.EffectiveInputHashVersion,
                 input.CatalogRef,
                 input.Source,
-                request.ScheduledAtUtc));
+                request.ScheduledAtUtc,
+                input.InputOrigins));
 
         // #157: a scheduled job sleeps here — visible as Scheduled (entity state
         // above) — then proceeds identically. CurrentUtcDateTime keeps the guard
