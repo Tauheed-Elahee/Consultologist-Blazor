@@ -3,6 +3,7 @@ extern alias AzureIdentity;
 using Consultologist.Api;
 using Consultologist.Api.Agents;
 using Consultologist.Api.Auth;
+using Consultologist.Api.Documents;
 using Consultologist.Api.Email;
 using Consultologist.Api.Jobs;
 using Consultologist.Api.Probes;
@@ -109,6 +110,9 @@ builder.Services.AddSingleton<EmailIntakeProcessor>();
 builder.Services.AddScoped<EmailIntakeFunctions>();
 builder.Services.AddScoped<SendEmailIntakeReplyActivity>();
 builder.Services.AddScoped<ConsultGenerationJobs>();
+// #235: the parser itself is static and needs no configuration; only its
+// Function class is resolved.
+builder.Services.AddScoped<DocumentExtractions>();
 builder.Services.AddScoped<RunPromptNodeActivity>();
 
 builder.Build().Run();

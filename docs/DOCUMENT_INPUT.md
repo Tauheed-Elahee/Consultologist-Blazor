@@ -114,7 +114,14 @@ three callers.
   too-many-pages       over the page cap
   expands-too-large    a container whose decompressed size is over cap
   too-much-text        extracted more characters than an input may hold
+  timed-out            the parse outran its wall clock
   ```
+
+> **Amended 2026-07-28 during #235.** `timed-out` was added when the
+> wall-clock timeout moved into #235 from § 9: a hang was otherwise the
+> one way the parser could fail without returning a named outcome, which
+> made the vocabulary a promise it did not keep. `expands-too-large`
+> arrives with the container format that needs it (#240).
 
 - **Normalisation is conservative and universal.** `\r\n` → `\n` and
   trailing whitespace trimmed — the shape already used by
@@ -167,6 +174,30 @@ effective-input hashes. Detect the BOM, fall back sensibly without one,
 and both doors agree.
 
 ### PDF
+
+> **Amended 2026-07-28 during #235**, once the library was measured
+> rather than read about. Confirmed as designed: an owner-password-only
+> PDF opens with no special handling, so the decision below needs none;
+> and `NumberOfPages` is available after `Open` before any page content
+> is decoded, so the page cap lands where § 4 wants it. Changed by what
+> was found: extraction uses **`ContentOrderTextExtractor.GetText`**,
+> because PdfPig's own documentation says not to use `page.Text` unless
+> you know what you are doing — it returns content-stream order, not
+> reading order. `Open` is **eager** — header, cross-reference table
+> including a brute-force rescan of the whole file when that table is
+> damaged, and the page-tree walk — which is where the library's
+> historical hangs lived, so the § 9 timeout wraps the whole parse and
+> not a page loop. `ParsingOptions.MaxStackDepth` is lowered well below
+> its default of 256: a crafted PDF can drive deep recursion into
+> `StackOverflowException`, which .NET **cannot catch** — it takes the
+> worker process down along with every invocation sharing it. PdfPig
+> 0.1.15 guards the one known path; that residual risk is real, accepted
+> for now, and bounded by the fact that only an activated account can
+> reach the parser until #237. Finally the exception taxonomy is wider
+> than two types: PdfPig's open issues #1268 and #1277 document
+> `IndexOutOfRangeException` and `NullReferenceException` escaping from
+> files whose cross-reference offsets go unchecked, so everything except
+> `OutOfMemoryException` maps to `corrupt`.
 
 - **UglyToad PdfPig**, Apache 2.0, fully managed, no native assets. The
   deciding axis is managed-versus-native, not licence: PDFsharp's Core
@@ -238,6 +269,15 @@ yield 400 KB, and a 1 MB zip may expand to a gigabyte.
 - **Starting values, not measurements.** These are sized from fax and
   EMR-export norms; revise them against real referral samples rather
   than defending them.
+
+> **Amended 2026-07-28 during #235.** The byte cap bounds **input, not
+> memory**. PdfPig's `ObjectLocationProvider` caches every object it
+> resolves for the document's lifetime with no eviction and no bound —
+> its issue #371 reports 4–6 GB of working set for a 15 MB file — so
+> peak memory is a multiple of the cap rather than a fraction of it. The
+> mitigations available here are keeping the document's lifetime as
+> tight as possible and treating out-of-memory as reachable; an actual
+> memory bound is #241's.
 
 ## 5. The app source
 
