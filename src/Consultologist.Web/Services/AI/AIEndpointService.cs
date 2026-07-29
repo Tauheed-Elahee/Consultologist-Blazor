@@ -19,7 +19,8 @@ public interface IAIEndpointService
     Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         IReadOnlyDictionary<string, string> inputs,
         string? workflowPackage = null,
-        DateTimeOffset? scheduledAtUtc = null);
+        DateTimeOffset? scheduledAtUtc = null,
+        IReadOnlyDictionary<string, InputFilePayload>? files = null);
 
     Task<ConsultGenerationJobResponse> GetConsultGenerationJobAsync(string jobId);
 
@@ -57,7 +58,8 @@ public class AIEndpointService : IAIEndpointService
     public async Task<ConsultGenerationJobStartResponse> StartConsultGenerationJobAsync(
         IReadOnlyDictionary<string, string> inputs,
         string? workflowPackage = null,
-        DateTimeOffset? scheduledAtUtc = null)
+        DateTimeOffset? scheduledAtUtc = null,
+        IReadOnlyDictionary<string, InputFilePayload>? files = null)
     {
         var stopwatch = Stopwatch.StartNew();
 
@@ -75,7 +77,10 @@ public class AIEndpointService : IAIEndpointService
                 null,
                 workflowPackage,
                 scheduledAtUtc,
-                inputs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal));
+                inputs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+                files is { Count: > 0 }
+                    ? files.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                    : null);
 
             _logger.LogInformation(
                 "Starting consult generation job at {Url}. InputCount={InputCount}, InputLength={InputLength}",

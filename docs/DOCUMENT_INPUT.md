@@ -70,6 +70,14 @@ Decisions (settled 2026-07-28; files:
   refused; and `accept` on the `InputFile`, which stays a file-picker
   hint with no code gate behind it. The existing comment already says
   the attribute is only a hint; after this it is the whole truth of it.
+
+> **Amended 2026-07-29 during #236.** `accept` is **gone**, not kept.
+> Leaving it would have put a format list back in the client — and #240
+> would then have had to edit `Consults.razor` to add DOCX, which is
+> precisely the diff the acceptance criterion below forbids. A hint that
+> only stays correct if a later PR breaks the rule is not a hint worth
+> keeping. The picker now shows every file and an unsupported one is
+> refused after a round trip, which the file model pays for anyway.
 - **What the email source keeps**: the per-message total-attachment
   budget, which is a property of the message rather than of a format —
   one 8 MB PDF and eight 1 MB PDFs cost a mailbox the same.
