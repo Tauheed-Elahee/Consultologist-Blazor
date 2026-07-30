@@ -35,12 +35,21 @@ internal sealed record DocumentExtractionResult(
     string Outcome,
     string? Text,
     string? ExtractorId,
-    int? PageCount)
+    int? PageCount,
+    // #240: the document carried tracked changes and this is the accepted
+    // view of them. Recorded because taking that view drops content that was
+    // in the file — correct, since the author deleted it, but still a drop,
+    // and this project makes its drops visible.
+    bool TrackedChangesResolved = false)
 {
     internal static DocumentExtractionResult Refused(string outcome) => new(outcome, null, null, null);
 
-    internal static DocumentExtractionResult Extracted(string text, string extractorId, int? pageCount) =>
-        new(DocumentExtractionOutcomes.Extracted, text, extractorId, pageCount);
+    internal static DocumentExtractionResult Extracted(
+        string text,
+        string extractorId,
+        int? pageCount,
+        bool trackedChangesResolved = false) =>
+        new(DocumentExtractionOutcomes.Extracted, text, extractorId, pageCount, trackedChangesResolved);
 }
 
 /// <summary>

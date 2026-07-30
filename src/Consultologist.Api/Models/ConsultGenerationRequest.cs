@@ -43,7 +43,11 @@ public sealed record InputFilePayload(string ContentType, byte[] Content);
 public sealed record ConsultInputOrigin(
     string Kind,
     string? Extractor = null,
-    int? PageCount = null);
+    int? PageCount = null,
+    // #240: the document carried tracked changes and the accepted view was
+    // taken. A reviewer asking why a consult says something the referral did
+    // not can see that a revision layer existed and was resolved.
+    bool TrackedChangesResolved = false);
 
 public static class ConsultInputOriginKinds
 {

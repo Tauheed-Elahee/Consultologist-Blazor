@@ -114,9 +114,15 @@ internal static class DocxDocumentExtractor
                 return DocumentExtractionResult.Refused(DocumentExtractionOutcomes.TooMuchText);
             }
 
+            // A revision layer existed and was resolved one way. Worth saying
+            // so: it is the difference between a clean document and one where
+            // something was dropped to produce this text.
+            var hadRevisions = main.Document.Body?.Descendants<DeletedRun>().Any() == true
+                || main.Document.Body?.Descendants<InsertedRun>().Any() == true;
+
             return text.Length == 0
                 ? DocumentExtractionResult.Refused(DocumentExtractionOutcomes.Empty)
-                : DocumentExtractionResult.Extracted(text.ToString(), ExtractorId, null);
+                : DocumentExtractionResult.Extracted(text.ToString(), ExtractorId, null, hadRevisions);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

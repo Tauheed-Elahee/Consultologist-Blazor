@@ -302,6 +302,23 @@ public class DocumentExtractionTests
     }
 
     [Fact]
+    public void DocxWithRevisions_RecordsThatTheAcceptedViewWasTaken()
+    {
+        // Taking the accepted view drops content that was in the file —
+        // correct, since the author deleted it, but still a drop, and this
+        // project makes its drops visible.
+        Assert.True(DocumentExtraction.Extract(Docx()).TrackedChangesResolved);
+    }
+
+    [Fact]
+    public void DocxWithoutRevisions_ClaimsNothingAboutThem()
+    {
+        var plain = DocumentExtraction.Extract(Encoding.UTF8.GetBytes(Referral));
+
+        Assert.False(plain.TrackedChangesResolved);
+    }
+
+    [Fact]
     public void DocxHiddenText_IsExcluded()
     {
         // Marked vanish: not text the sender is showing anyone.

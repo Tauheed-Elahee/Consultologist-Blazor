@@ -362,7 +362,8 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
             origins[id] = new ConsultInputOrigin(
                 ConsultInputOriginKinds.Document,
                 result.ExtractorId,
-                result.PageCount);
+                result.PageCount,
+                result.TrackedChangesResolved);
         }
 
         // InputFiles cleared here, and this is load-bearing rather than tidy:

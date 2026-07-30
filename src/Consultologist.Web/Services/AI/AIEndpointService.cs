@@ -306,7 +306,8 @@ public sealed record InputFilePayload(string ContentType, byte[] Content);
 public sealed record ConsultInputOrigin(
     string Kind,
     string? Extractor = null,
-    int? PageCount = null);
+    int? PageCount = null,
+    bool TrackedChangesResolved = false);
 public record ConsultGenerationJobStartResponse(string JobId, string StatusUrl);
 public record ConsultGenerationJobSseEvent(string EventName, string Json, string? EventId = null);
 public record ConsultGenerationJobResponse(
