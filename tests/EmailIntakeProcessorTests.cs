@@ -101,7 +101,24 @@ public class EmailIntakeProcessorTests
         _mail.ListAttachmentsAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(attachments);
 
     private static GraphInboundAttachment Attachment(string name, string text) =>
-        new(name, "text/plain", text.Length, System.Text.Encoding.UTF8.GetBytes(text));
+        Attachment(name, System.Text.Encoding.UTF8.GetBytes(text));
+
+    // #237: bytes, because email no longer decodes anything. Every fixture
+    // used to be UTF-8 by construction, which is why nothing here could catch
+    // the mojibake #242 records.
+    private static GraphInboundAttachment Attachment(
+        string name,
+        byte[] content,
+        string contentType = "text/plain") =>
+        new(name, contentType, content.Length, content);
+
+    private void WithV7Package()
+    {
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(V7Fixtures.MultiDeliverable()));
+    }
 
     private void SetupSingleUnread()
     {
@@ -314,6 +331,38 @@ public class EmailIntakeProcessorTests
     }
 
     [Fact]
+    public async Task UnreadableDocument_IsRecordedAsAnAttachmentProblem()
+    {
+        // The starter refuses the document (a scan, a corrupt file) after the
+        // claim is written. The claim table is the audit surface, so this has
+        // to read as an attachment problem — recorded as a generic start
+        // failure it would be invisible among registry outages.
+        WithV7Package();
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithAttachments(Attachment("consult_draft.pdf", "%PDF-1.7 …"u8.ToArray(), "application/pdf"));
+        _starter.StartAsync(default!, default!, default!, default!, default)
+            .ReturnsForAnyArgs(new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputFileUnreadable,
+                "This PDF has no text layer, so it is a scan or a fax."));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedAttachments),
+            Arg.Any<CancellationToken>());
+        // And the sender is told which of their attachments to fix, not just
+        // that something went wrong.
+        await _mail.Received(1).SendMailAsync(
+            Mailbox,
+            "doc@example.com",
+            Arg.Any<string>(),
+            Arg.Is<string>(body => body.Contains("no text layer")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task VanishedMessage_RecordsOutcomeAndSkips()
     {
         SetupSingleUnread();
@@ -331,8 +380,9 @@ public class EmailIntakeProcessorTests
     [Fact]
     public async Task BlankBodyWithAttachment_StartsFromTheAttachment()
     {
-        // The referral-as-attachment case: today's blank-body rejection would
-        // have thrown this away.
+        // The referral-as-attachment case: a blank-body rejection would have
+        // thrown this away. The file fills the draft slot and travels as bytes.
+        WithV7Package();
         SetupAcceptedSender(Message(body: "  ", hasAttachments: true));
         WithAttachments(Attachment("referral.txt", "The referral text."));
 
@@ -341,29 +391,79 @@ public class EmailIntakeProcessorTests
         Assert.Equal(1, summary.Accepted);
         await _starter.Received(1).StartAsync(
             _client,
-            Arg.Is<ConsultGenerationRequest>(r => r.Inputs!["consult_draft"] == "The referral text."),
+            Arg.Is<ConsultGenerationRequest>(r =>
+                r.InputFiles!["consult_draft"].Content.Length > 0 && r.Inputs == null),
             "user-1",
             Arg.Any<ConsultGenerationJobOrigin>(),
             Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task UnreadableAttachment_RejectsTheWholeMessageWithAReply()
+    public async Task PdfAttachment_TravelsToTheParserRatherThanBouncing()
     {
-        // A PDF today: bouncing beats generating a consult from a body that
-        // says only "please see attached".
+        // The inversion #237 makes: a PDF used to bounce here because this
+        // class decided what it could read. It no longer decides — the bytes
+        // go to the starter, and the parser rules on them there.
+        WithV7Package();
         SetupAcceptedSender(Message(body: "Please see attached.", hasAttachments: true));
-        WithAttachments(Attachment("referral.pdf", "%PDF-1.7"));
+        WithAttachments(Attachment("consult_draft.pdf", "%PDF-1.7 …"u8.ToArray(), "application/pdf"));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        await _starter.Received(1).StartAsync(
+            _client,
+            Arg.Is<ConsultGenerationRequest>(r =>
+                r.InputFiles!["consult_draft"].ContentType == "application/pdf"),
+            "user-1",
+            Arg.Any<ConsultGenerationJobOrigin>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Utf16Attachment_ReachesTheStarterByteForByte()
+    {
+        // #242's regression test, and the shape of its fix: the defect was
+        // this class decoding as UTF-8 and substituting U+FFFD. It cannot
+        // mangle what it never reads, so the assertion is that the bytes
+        // arrive unchanged and the parser decides how to read them.
+        var utf16 = System.Text.Encoding.Unicode.GetPreamble()
+            .Concat(System.Text.Encoding.Unicode.GetBytes("Résumé of prior notes — see attached."))
+            .ToArray();
+
+        WithV7Package();
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithAttachments(Attachment("prior_notes.txt", utf16));
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        await _starter.Received(1).StartAsync(
+            _client,
+            Arg.Is<ConsultGenerationRequest>(r => r.InputFiles!["prior_notes"].Content.SequenceEqual(utf16)),
+            "user-1",
+            Arg.Any<ConsultGenerationJobOrigin>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LegacyPackageAttachment_IsRefusedAndTheReplySaysWhy()
+    {
+        // A package declaring no inputs has one implicit slot, so a file has
+        // nowhere of its own to go. The sender is told that, rather than
+        // getting the generic bounce.
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithAttachments(Attachment("referral.txt", "The referral."));
 
         var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
 
         Assert.Equal(1, summary.Rejected);
         await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
-        await _claims.Received(1).UpdateAsync(
-            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedAttachments),
+        await _mail.Received(1).SendMailAsync(
+            Mailbox,
+            "doc@example.com",
+            Arg.Any<string>(),
+            Arg.Is<string>(body => body.Contains("accepts a single input")),
             Arg.Any<CancellationToken>());
-        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", "folder-Rejected", Arg.Any<CancellationToken>());
-        await _mail.ReceivedWithAnyArgs(1).SendMailAsync(default!, default!, default!, default!, default);
     }
 
     [Fact]
@@ -371,10 +471,7 @@ public class EmailIntakeProcessorTests
     {
         // Two unnamed files with nowhere unambiguous to go. The reply cannot
         // say where they went, so a guess would be silent wrong data.
-        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
-            .Returns(new WorkflowPackageRef("general", "latest"));
-        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
-            .Returns(new WorkflowPackage(V7Fixtures.MultiDeliverable()));
+        WithV7Package();
         SetupAcceptedSender(Message(body: "  ", hasAttachments: true));
         WithAttachments(Attachment("a.txt", "One."), Attachment("b.txt", "Two."));
 
@@ -390,10 +487,7 @@ public class EmailIntakeProcessorTests
     [Fact]
     public async Task NamedAttachment_FillsItsDeclaredSlot()
     {
-        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
-            .Returns(new WorkflowPackageRef("general", "latest"));
-        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
-            .Returns(new WorkflowPackage(V7Fixtures.MultiDeliverable()));
+        WithV7Package();
         SetupAcceptedSender(Message(hasAttachments: true));
         WithAttachments(Attachment("prior_notes.txt", "Old records."));
 
@@ -402,8 +496,11 @@ public class EmailIntakeProcessorTests
         Assert.Equal(1, summary.Accepted);
         await _starter.Received(1).StartAsync(
             _client,
+            // The body is text, the attachment is bytes — the same split the
+            // Consults page now sends.
             Arg.Is<ConsultGenerationRequest>(r =>
-                r.Inputs!["consult_draft"] == "Referral body" && r.Inputs["prior_notes"] == "Old records."),
+                r.Inputs!["consult_draft"] == "Referral body"
+                && r.InputFiles!.ContainsKey("prior_notes")),
             "user-1",
             Arg.Any<ConsultGenerationJobOrigin>(),
             Arg.Any<CancellationToken>());

@@ -11,7 +11,10 @@ public class EmailAttachmentInputsTests
 {
     private static readonly string[] TwoSlots = { "consult_draft", "prior_notes" };
 
-    private static EmailInputAttachment File(string name, string text) => new(name, text);
+    // #237: the bytes are never read here — the parser reads them at job
+    // start. The text is only so a reader can see what a fixture stands for.
+    private static EmailInputAttachment File(string name, string text) =>
+        new(name, "text/plain", System.Text.Encoding.UTF8.GetBytes(text));
 
     private static EmailAttachmentInputs.Resolution Resolve(
         IReadOnlyList<string> slots,
@@ -26,6 +29,7 @@ public class EmailAttachmentInputsTests
 
         Assert.Null(result.RejectReason);
         Assert.Equal(new Dictionary<string, string> { ["consult_draft"] = "Referral body." }, result.Inputs);
+        Assert.Empty(result.Files!);
     }
 
     [Fact]
@@ -34,13 +38,8 @@ public class EmailAttachmentInputsTests
         var result = Resolve(TwoSlots, "Referral body.", File("prior_notes.txt", "Old records."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal(
-            new Dictionary<string, string>
-            {
-                ["consult_draft"] = "Referral body.",
-                ["prior_notes"] = "Old records."
-            },
-            result.Inputs);
+        Assert.Equal(new Dictionary<string, string> { ["consult_draft"] = "Referral body." }, result.Inputs);
+        Assert.Equal("prior_notes.txt", result.Files!["prior_notes"].FileName);
     }
 
     [Fact]
@@ -49,7 +48,7 @@ public class EmailAttachmentInputsTests
         var result = Resolve(TwoSlots, "Body.", File("Prior_Notes.MD", "Records."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal("Records.", result.Inputs!["prior_notes"]);
+        Assert.Equal("Prior_Notes.MD", result.Files!["prior_notes"].FileName);
     }
 
     [Fact]
@@ -65,8 +64,10 @@ public class EmailAttachmentInputsTests
             File("prior_notes.txt", "Old records."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
-        Assert.Equal("Old records.", result.Inputs["prior_notes"]);
+        Assert.Equal("consult_draft.txt", result.Files!["consult_draft"].FileName);
+        Assert.Equal("prior_notes.txt", result.Files["prior_notes"].FileName);
+        // The body lost the slot it would otherwise have taken.
+        Assert.Empty(result.Inputs!);
     }
 
     [Fact]
@@ -75,8 +76,9 @@ public class EmailAttachmentInputsTests
         var result = Resolve(TwoSlots, "Please see the attached referral.", File("consult_draft.md", "The referral."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
-        Assert.False(result.Inputs.ContainsKey("prior_notes"));
+        Assert.Equal("consult_draft.md", result.Files!["consult_draft"].FileName);
+        Assert.False(result.Files.ContainsKey("prior_notes"));
+        Assert.Empty(result.Inputs!);
     }
 
     [Fact]
@@ -87,7 +89,8 @@ public class EmailAttachmentInputsTests
         var result = Resolve(TwoSlots, "Referral body.", File("scan001.txt", "Old records."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal("Old records.", result.Inputs!["prior_notes"]);
+        Assert.Equal("scan001.txt", result.Files!["prior_notes"].FileName);
+        Assert.Equal("Referral body.", result.Inputs!["consult_draft"]);
     }
 
     [Fact]
@@ -98,8 +101,8 @@ public class EmailAttachmentInputsTests
         var result = Resolve(TwoSlots, "   ", File("fax_20260728.txt", "The referral."));
 
         Assert.Null(result.RejectReason);
-        Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
-        Assert.False(result.Inputs.ContainsKey("prior_notes"));
+        Assert.Equal("fax_20260728.txt", result.Files!["consult_draft"].FileName);
+        Assert.False(result.Files.ContainsKey("prior_notes"));
     }
 
     [Fact]
@@ -149,19 +152,21 @@ public class EmailAttachmentInputsTests
     }
 
     [Fact]
-    public void LegacyPackage_AppendsAttachmentsToTheBody()
+    public void LegacyPackage_RefusesAnAttachment()
     {
-        // v5/v6 declare no slots, so positional has nowhere to go.
+        // v5/v6 declare no slots, so one implicit slot and nowhere for a file
+        // to go. This used to concatenate the attachment into the body, which
+        // only worked while email decoded files itself (#237).
         var result = Resolve(Array.Empty<string>(), "Referral body.", File("extra.txt", "Old records."));
 
-        Assert.Null(result.RejectReason);
-        Assert.Equal("Referral body.\n\nOld records.", result.Inputs!["consult_draft"]);
+        Assert.Null(result.Inputs);
+        Assert.Contains("accepts a single input", result.RejectReason);
     }
 
     [Fact]
-    public void LegacyPackage_BlankBody_UsesTheAttachmentAlone()
+    public void LegacyPackage_BodyOnly_StillWorks()
     {
-        var result = Resolve(Array.Empty<string>(), null, File("referral.txt", "The referral."));
+        var result = Resolve(Array.Empty<string>(), "The referral.", Array.Empty<EmailInputAttachment>());
 
         Assert.Null(result.RejectReason);
         Assert.Equal("The referral.", result.Inputs!["consult_draft"]);

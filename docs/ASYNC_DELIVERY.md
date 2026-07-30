@@ -74,16 +74,28 @@ files: `src/Consultologist.Api/Email/*`, settings in
   at-most-once by design: a crash in the claim→start window drops the
   message visibly (stale-claim repair + warning) rather than ever
   running a PHI job twice.
-- **Attachments as inputs (#210, 2026-07-28)**: `.txt`/`.md` attachments
-  fill the pinned package's declared input slots — a filename stem
-  claims the slot it names and outranks the body for it (a body is often
-  just a signature), the body then takes `consult_draft` if still free,
-  and one leftover file fills one leftover slot. Wider ambiguity, an unreadable type, or a
-  file over 256 KB (1 MB across all of them) rejects the message with
-  `rejected-attachments` and the generic failure reply; inline parts
-  (signature logos) are ignored entirely. A blank body is no longer
-  fatal when an attachment carries the referral. PDF still needs the
-  extraction work, so the fax bridge (#188) stays blocked.
+- **Attachments as inputs (#210, 2026-07-28; reshaped by #237,
+  2026-07-29)**: attachments fill the pinned package's declared input
+  slots — a filename stem claims the slot it names and outranks the body
+  for it (a body is often just a signature), the body then takes
+  `consult_draft` if still free, and one leftover file fills one
+  leftover slot. Wider ambiguity, or bytes over 10 MB per attachment
+  (20 MB across all of them), rejects the message with
+  `rejected-attachments`; inline parts (signature logos) are ignored
+  entirely. A blank body is no longer fatal when an attachment carries
+  the referral.
+- **Email does not read attachments (#237)**: it routes them. Bytes
+  travel to the job start as `inputFiles` and the parser reads them
+  there, which is the same path the Consults page takes — so an emailed
+  document records the same provenance an attached one does, and there
+  is one place that knows what a format is
+  (`docs/DOCUMENT_INPUT.md` § 1). Formats are no longer listed here:
+  whatever the parser reads, email accepts. A package declaring no
+  inputs (v5/v6) has one implicit slot and refuses attachments outright,
+  saying so rather than silently concatenating them into the body. The
+  reply now names the cause — a scan, a size, an ambiguous assignment —
+  because that describes a file's format rather than its contents. The
+  fax bridge (#188) stays blocked on OCR (#239) alone.
 - **Replies**: sent for Completed AND Failed from the orchestrator
   (activity after FinalizeJob); always a fresh message, never a Graph
   /reply (which would quote the PHI-bearing original); fixed subjects;
