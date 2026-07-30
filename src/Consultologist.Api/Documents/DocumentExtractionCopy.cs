@@ -17,10 +17,8 @@ internal static class DocumentExtractionCopy
 {
     internal static string For(string outcome) => outcome switch
     {
-        // .docx joins this list in #240. Claiming it before the parser can
-        // read one would be a promise the refusal itself disproves.
         DocumentExtractionOutcomes.UnsupportedType =>
-            "We can read .txt, .md and .pdf files — that one is something else.",
+            "We can read .txt, .md, .pdf and .docx files — that one is something else.",
 
         DocumentExtractionOutcomes.NoTextLayer =>
             "This PDF has no text layer, so it is a scan or a fax. Paste the text instead, "
@@ -41,6 +39,9 @@ internal static class DocumentExtractionCopy
 
         DocumentExtractionOutcomes.TooManyPages =>
             $"That document has more than {DocumentExtraction.MaxPages} pages.",
+
+        DocumentExtractionOutcomes.ExpandsTooLarge =>
+            "That file unpacks to far more than it appears to contain.",
 
         DocumentExtractionOutcomes.TooMuchText =>
             "That document holds more text than one input can take. "

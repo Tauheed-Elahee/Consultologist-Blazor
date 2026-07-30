@@ -19,6 +19,10 @@ public static class DocumentExtractionOutcomes
     public const string Empty = "empty";
     public const string TooLarge = "too-large";
     public const string TooManyPages = "too-many-pages";
+    // #240: a container whose declared contents dwarf the file itself. Its own
+    // outcome because the file was within every byte bound and still cannot be
+    // read safely.
+    public const string ExpandsTooLarge = "expands-too-large";
     // Never truncation: half a referral generating a whole consult is a
     // clinical wrong-data error (docs/DOCUMENT_INPUT.md § 4).
     public const string TooMuchText = "too-much-text";
@@ -68,6 +72,12 @@ internal static class DocumentExtraction
     // text that clears this bound is text the API would accept as an input.
     internal const int MaxCharacters = 256 * 1024;
 
+    // #240: a container's cost is not its size. Read from the central
+    // directory, which costs no decompression — a hostile archive can lie
+    // there, so this is a first bound and not the only one (#241).
+    internal const long MaxExpandedBytes = 100L * 1024 * 1024;
+    internal const int MaxArchiveEntries = 512;
+
     internal static readonly TimeSpan MaxParseDuration = TimeSpan.FromSeconds(20);
 
     private sealed record DocumentFormat(Func<byte[], bool> Matches, Func<byte[], DocumentExtractionResult> Extract);
@@ -80,7 +90,8 @@ internal static class DocumentExtraction
     /// </summary>
     private static readonly IReadOnlyList<DocumentFormat> Formats =
     [
-        new DocumentFormat(PdfDocumentExtractor.Matches, PdfDocumentExtractor.Extract)
+        new DocumentFormat(PdfDocumentExtractor.Matches, PdfDocumentExtractor.Extract),
+        new DocumentFormat(DocxDocumentExtractor.Matches, DocxDocumentExtractor.Extract)
     ];
 
     /// <summary>
