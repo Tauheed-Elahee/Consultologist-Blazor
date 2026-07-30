@@ -281,6 +281,17 @@ and both doors agree.
   failure class #210 refused positional assignment over and #242 records
   as a live bug.
 
+> **Amended 2026-07-30 during #254.** The two Word documents these claims
+> were verified against are built by
+> `scripts/make-docx-fixtures.cs` from `scripts/fixtures/`, so the runs
+> can be repeated rather than remembered. `consult_draft.docx` carries
+> the same text as the `.txt` and `.pdf` fixtures, which is what makes a
+> cross-door hash comparison mean anything, and puts the clinic and date
+> in a header part so the header decision above is visible in extracted
+> text. `prior_notes.docx` is the only fixture carrying both `w:del` and
+> `w:ins` runs, so it is the only one that exercises the accepted view
+> end to end.
+
 ## 4. Limits
 
 One number (256 KB) currently serves both "bytes of file" and
