@@ -23,11 +23,17 @@ public sealed class EmailIntakeProcessor
     internal const string RejectedFolder = "Rejected";
     private const int DefaultMaxMessagesPerPoll = 25;
     private const int MaxDraftLength = 256 * 1024;
-    // #210: per attachment, mirroring the body cap and the HTTP per-input
-    // bound; the total keeps one message from pulling unbounded bytes.
-    private const int MaxAttachmentLength = 256 * 1024;
-    private const int MaxTotalAttachmentBytes = 1024 * 1024;
-    private static readonly string[] ReadableAttachmentExtensions = { ".txt", ".md" };
+    // #237: bytes per attachment and across one message, matching the app
+    // door (ConsultGenerationJobs.MaxInputFileBytes / MaxInputFilesTotalBytes).
+    // The old 256 KB / 1 MB pair were text-shaped numbers from when this class
+    // decoded attachments itself; a routine referral PDF exceeds both.
+    //
+    // The real ceiling may be lower and is not here: GraphMailClient reads
+    // contentBytes inline from the attachments collection and silently skips
+    // anything Graph declines to inline, so a message can arrive looking like
+    // it had fewer attachments than it did.
+    private const int MaxAttachmentLength = 10 * 1024 * 1024;
+    private const int MaxTotalAttachmentBytes = 20 * 1024 * 1024;
     private static readonly TimeSpan StaleClaimAge = TimeSpan.FromMinutes(10);
 
     private readonly IConfiguration _configuration;
@@ -180,7 +186,7 @@ public sealed class EmailIntakeProcessor
         // #210: attachments can carry the referral, so a blank body is only
         // fatal when nothing else arrived — the resolver decides that.
         var (attachments, attachmentError) = message.HasAttachments
-            ? await ReadAttachmentsAsync(mailbox, message.Id, cancellationToken)
+            ? await FetchAttachmentsAsync(mailbox, message.Id, cancellationToken)
             : (Array.Empty<EmailInputAttachment>(), null);
 
         if (attachmentError != null)
@@ -191,7 +197,8 @@ public sealed class EmailIntakeProcessor
                 claimKey,
                 attachmentError);
             return await RejectWithReplyAsync(
-                mailbox, message, claimKey, now, match.AppUserId, EmailIntakeOutcomes.RejectedAttachments, cancellationToken);
+                mailbox, message, claimKey, now, match.AppUserId, EmailIntakeOutcomes.RejectedAttachments,
+                cancellationToken, attachmentError);
         }
 
         var resolution = EmailAttachmentInputs.Resolve(
@@ -209,16 +216,31 @@ public sealed class EmailIntakeProcessor
             var slug = attachments.Count > 0
                 ? EmailIntakeOutcomes.RejectedAttachments
                 : EmailIntakeOutcomes.RejectedEmpty;
+            // The resolver's reasons are already written for the sender and
+            // name only slot ids, which are authored package content rather
+            // than patient data — the precedent #217 set for labels in replies.
             return attachments.Count > 0
-                ? await RejectWithReplyAsync(mailbox, message, claimKey, now, match.AppUserId, slug, cancellationToken)
+                ? await RejectWithReplyAsync(
+                    mailbox, message, claimKey, now, match.AppUserId, slug, cancellationToken, resolution.RejectReason)
                 : await RejectAsync(mailbox, message, claimKey, now, slug, cancellationToken);
         }
 
+        // #237: the body travels as text, the attachments travel as bytes.
+        // The starter extracts them, so an emailed document records the same
+        // origin the app door records — one mechanism, both doors.
         var start = await _jobStarter.StartAsync(
             client,
             new ConsultGenerationRequest(
                 null,
-                Inputs: resolution.Inputs!.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)),
+                Inputs: resolution.Inputs is { Count: > 0 }
+                    ? resolution.Inputs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                    : null,
+                InputFiles: resolution.Files is { Count: > 0 }
+                    ? resolution.Files.ToDictionary(
+                        pair => pair.Key,
+                        pair => new InputFilePayload(pair.Value.ContentType, pair.Value.Content),
+                        StringComparer.Ordinal)
+                    : null),
             match.AppUserId!,
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, message.FromAddress),
             cancellationToken);
@@ -230,14 +252,24 @@ public sealed class EmailIntakeProcessor
                 message.FromAddress,
                 claimKey,
                 start.Error);
-            var outcome = start.Error == ConsultGenerationJobStartError.InputsMismatch
-                ? EmailIntakeOutcomes.RejectedInputs
-                : EmailIntakeOutcomes.StartFailed;
+            // #237: an unreadable document is an attachment problem, not a
+            // generic start failure. The claim table is the audit surface, and
+            // this is the outcome anyone will actually come looking for.
+            var outcome = start.Error switch
+            {
+                ConsultGenerationJobStartError.InputsMismatch => EmailIntakeOutcomes.RejectedInputs,
+                ConsultGenerationJobStartError.InputFileUnreadable => EmailIntakeOutcomes.RejectedAttachments,
+                _ => EmailIntakeOutcomes.StartFailed
+            };
             await _claims.UpdateAsync(
                 new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, match.AppUserId, Outcome: outcome),
                 cancellationToken);
             await DisposeMessageAsync(mailbox, message.Id, RejectedFolder, cancellationToken);
-            await SendStartFailureReplyAsync(mailbox, message.FromAddress!, cancellationToken);
+            await SendStartFailureReplyAsync(
+                mailbox,
+                message.FromAddress!,
+                start.Error == ConsultGenerationJobStartError.InputFileUnreadable ? start.ErrorDetail : null,
+                cancellationToken);
             return MessageOutcome.Rejected;
         }
 
@@ -316,12 +348,15 @@ public sealed class EmailIntakeProcessor
     }
 
     /// <summary>
-    /// Decodes the message's non-inline attachments to text. Anything this
-    /// version cannot read fails the whole message rather than being skipped:
-    /// a referral that lived in the attachment would otherwise produce a
-    /// consult from a body that says only "please see attached".
+    /// Fetches the message's non-inline attachments as bytes (#237). It does
+    /// not read them: what a format is, and whether these bytes are one, is
+    /// the parser's question and it is asked once, at job start, for both
+    /// doors (docs/DOCUMENT_INPUT.md § 1).
+    ///
+    /// Only size is judged here, because that is a property of the message
+    /// rather than of a format.
     /// </summary>
-    private async Task<(IReadOnlyList<EmailInputAttachment> Attachments, string? Error)> ReadAttachmentsAsync(
+    private async Task<(IReadOnlyList<EmailInputAttachment> Attachments, string? Error)> FetchAttachmentsAsync(
         string mailbox,
         string messageId,
         CancellationToken cancellationToken)
@@ -332,30 +367,26 @@ public sealed class EmailIntakeProcessor
 
         foreach (var attachment in fetched)
         {
-            var extension = Path.GetExtension(attachment.Name);
-
-            if (!ReadableAttachmentExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
-            {
-                // PDF is the known next step (#208 phase 2), not a permanent
-                // exclusion — the log says which type arrived.
-                return (Array.Empty<EmailInputAttachment>(), $"unsupported type '{extension}'");
-            }
-
             if (attachment.Content.Length > MaxAttachmentLength)
             {
-                return (Array.Empty<EmailInputAttachment>(), "attachment over the size bound");
+                return (
+                    Array.Empty<EmailInputAttachment>(),
+                    $"An attachment is larger than {MaxAttachmentLength / (1024 * 1024)} MB.");
             }
 
             totalBytes += attachment.Content.Length;
 
             if (totalBytes > MaxTotalAttachmentBytes)
             {
-                return (Array.Empty<EmailInputAttachment>(), "attachments over the total size bound");
+                return (
+                    Array.Empty<EmailInputAttachment>(),
+                    $"The attachments come to more than {MaxTotalAttachmentBytes / (1024 * 1024)} MB in total.");
             }
 
             attachments.Add(new EmailInputAttachment(
                 attachment.Name,
-                System.Text.Encoding.UTF8.GetString(attachment.Content)));
+                attachment.ContentType,
+                attachment.Content));
         }
 
         return (attachments, null);
@@ -372,7 +403,8 @@ public sealed class EmailIntakeProcessor
         DateTimeOffset now,
         string? appUserId,
         string outcome,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? cause = null)
     {
         await _claims.UpdateAsync(
             new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, appUserId, Outcome: outcome),
@@ -381,7 +413,7 @@ public sealed class EmailIntakeProcessor
 
         if (message.FromAddress != null)
         {
-            await SendStartFailureReplyAsync(mailbox, message.FromAddress, cancellationToken);
+            await SendStartFailureReplyAsync(mailbox, message.FromAddress, cause, cancellationToken);
         }
 
         return MessageOutcome.Rejected;
@@ -409,12 +441,24 @@ public sealed class EmailIntakeProcessor
         await _mail.MoveMessageAsync(mailbox, messageId, folderId, cancellationToken);
     }
 
-    private async Task SendStartFailureReplyAsync(string mailbox, string toAddress, CancellationToken cancellationToken)
+    /// <param name="cause">
+    /// #237: the sentence naming why, when there is one worth saying. It
+    /// describes a file's format, never its contents — the sender already
+    /// knows what they attached, so this leaks nothing and is the difference
+    /// between resending the same fax and exporting a readable PDF. Filenames
+    /// are still never echoed (docs/DOCUMENT_INPUT.md § 6).
+    /// </param>
+    private async Task SendStartFailureReplyAsync(
+        string mailbox,
+        string toAddress,
+        string? cause,
+        CancellationToken cancellationToken)
     {
         try
         {
             var appBaseUrl = _configuration["EmailIntake:AppBaseUrl"]?.TrimEnd('/');
             var body = "Your consult submitted by email could not be processed.\n\n"
+                + (cause == null ? string.Empty : cause + "\n\n")
                 + "You can re-send the consult email to try again"
                 + (appBaseUrl == null ? "." : $", or use the app directly:\n{appBaseUrl}\n")
                 + "\nThis message intentionally contains no clinical content.";
