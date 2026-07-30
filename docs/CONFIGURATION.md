@@ -115,14 +115,20 @@ starts a normal consult job from the email body and any `.txt`/`.md`
 attachments (`source: email`), and replies on completion with a no-PHI
 `/history/{jobId}` deep link.
 
-Attachments fill the pinned package's declared input slots (#210): the
-a filename stem claims the slot it names (outranking the body for it),
+Attachments fill the pinned package's declared input slots (#210): a
+filename stem claims the slot it names (outranking the body for it),
 the body takes `consult_draft` if still free, and one leftover file
-fills one leftover slot. Caps are code constants, not
-settings — 256 KB per body or attachment, 1 MB across all attachments.
-An unreadable type (PDF, pending extraction), a file over the cap, or an
-assignment too ambiguous to make without guessing rejects the message
-with the `rejected-attachments` claim outcome.
+fills one leftover slot. Caps are code constants, not settings — 256 KB
+per body, and since #237 10 MB per attachment with 20 MB across all of
+them, matching the app door.
+
+Email no longer reads attachments (#237): their bytes go to the job
+start and the parser reads them there, so there is no list of accepted
+types here — whatever the parser reads, email accepts. A file the parser
+cannot read, one over the cap, an assignment too ambiguous to make
+without guessing, or an attachment sent to a package that declares no
+inputs, all reject the message with the `rejected-attachments` claim
+outcome, and the reply names which of those it was.
 
 | Variable | Accepted values | Default | Required |
 |---|---|---|---|

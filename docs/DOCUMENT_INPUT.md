@@ -14,8 +14,9 @@ milestone so the parser's seam is tested rather than asserted.
 ## Foundation: extraction is a pre-step, not a format change
 
 Every intake path converges on `Dictionary<string, string>` before
-anything else happens. `EmailAttachmentInputs.Resolve` takes text that
-is already decoded; `ConsultGenerationRequest.Inputs` is a string map;
+anything else happens. `EmailAttachmentInputs.Resolve` took text that
+was already decoded (until #237 made it route bytes instead);
+`ConsultGenerationRequest.Inputs` is a string map;
 `ConsultGenerationJobStarter.ResolveEffectiveInputs` validates strings
 against the package declaration; `ComputeDeclaredInputsHash` hashes
 strings. Nothing downstream of that map is format-aware.
@@ -63,8 +64,9 @@ Decisions (settled 2026-07-28; files:
   `UploadExtensions` in `Consults.razor` and
   `ReadableAttachmentExtensions` in `EmailIntakeProcessor`. A declared
   content type (the browser's, or Graph's
-  `GraphInboundAttachment.ContentType`, captured today and consulted by
-  nothing) is a hint passed to the sniffer, never an authority.
+  `GraphInboundAttachment.ContentType` — captured since #210 and, until
+  #237, consulted by nothing) is a hint passed to the sniffer, never an
+  authority.
 - **What the app source keeps**: one format-agnostic byte cap, checked
   before bytes move so a 500 MB file is not uploaded merely to be
   refused; and `accept` on the `InputFile`, which stays a file-picker
@@ -396,6 +398,18 @@ POST /api/ConsultGenerationJobs
   format, not of the contents, and the sender already knows what they
   attached — so naming it leaks nothing and makes the problem fixable.
   Filenames are still never echoed, and the subject is unchanged.
+> **Amended 2026-07-29 during #237.** Email now sends attachment **bytes**
+> to the job start rather than text, so the parser reads them in the same
+> place it reads the app door's — one extraction site, and an emailed
+> document records the same origin an attached one does. Two consequences
+> the design above did not state. A package declaring **no inputs**
+> (v5/v6) now **refuses attachments**: it has one implicit slot, the old
+> behaviour concatenated them into the body, and that only worked while
+> email decoded files itself. And the reply names the cause for every
+> rejection here, not only the unreadable ones — the resolver's reasons
+> were already written for the sender and name only slot ids, which are
+> authored package content.
+
 - **Honest boundary**: this is the one place the no-PHI reply rule bends
   toward saying more, and it is worth stating why it does not break.
   "We could not read one of your attachments" describes our capability;
