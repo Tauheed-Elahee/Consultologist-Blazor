@@ -247,6 +247,32 @@ and both doors agree.
   confirms the OPC content types and the `word/document.xml` part. This
   is the case that proves the sniffer is a dispatcher rather than a
   lookup table.
+> **Amended 2026-07-30 during #240**, after measuring rather than reading.
+> The naive walk is worse than the design assumed: `InnerText` on a
+> document whose author changed a dose from 5 mg to 10 mg yields **"Dose
+> is 10 mg5 mg daily."** — both values, adjacent, in clinical text — and
+> runs a medication table together as "Amlodipine5 mgRamipril10 mg".
+> Hidden text comes through too. So the walk is explicit about
+> paragraphs, cells and rows, not only about revisions.
+>
+> **Headers and footers are included**, which § 1 left unsaid. A
+> referral's date and clinic often live only in the letterhead, and
+> dropping content the sender supplied is the silent loss refused
+> everywhere else here; a `.docx` stores them once rather than per page.
+>
+> **The record says when a revision layer was resolved.** Taking the
+> accepted view drops content that was in the file — correct, but still a
+> drop, so `ConsultInputOrigin` carries it and History shows it.
+>
+> Two library facts, both measured: a valid `.xlsx` **opens** as a
+> `WordprocessingDocument` and yields a `MainDocumentPart`, so the
+> content type is the discriminator and a spreadsheet is
+> `unsupported-type` rather than `corrupt`; and `OpenSettings` leaves
+> `MaxCharactersInPart` **unbounded**, which the two-argument `Open`
+> passes straight through, so the three-argument overload is used
+> deliberately. The decompression bound lands here rather than in § 9 —
+> deferring it would have shipped the vector and deferred the mitigation.
+
 - **Extract the accepted view.** A `.docx` can carry `w:del` runs — text
   the author deleted and believes is gone — as well as comments and
   hidden text. Honour `w:ins`, drop `w:del`, exclude comments and hidden

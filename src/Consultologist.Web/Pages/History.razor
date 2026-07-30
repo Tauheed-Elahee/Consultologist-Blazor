@@ -137,7 +137,7 @@
                                                 {
                                                     <dt class="provenance-list__nested">@origin.Key</dt>
                                                     <dd>
-                                                        read from a document by @(origin.Value.Extractor ?? "—")@(origin.Value.PageCount is { } pages ? $" · {pages} page{(pages == 1 ? "" : "s")}" : "")
+                                                        read from a document by @(origin.Value.Extractor ?? "—")@(origin.Value.PageCount is { } pages ? $" · {pages} page{(pages == 1 ? "" : "s")}" : "")@(origin.Value.TrackedChangesResolved ? " · tracked changes resolved to the accepted view" : "")
                                                     </dd>
                                                 }
                                                 @if (detail.WorkflowOutputHash != null)

@@ -32,6 +32,7 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" />
     <PackageReference Include="Markdig" />
     <PackageReference Include="PDFsharp-MigraDoc" />
+    <PackageReference Include="DocumentFormat.OpenXml" />
     <PackageReference Include="PdfPig" />
     <PackageReference Include="Scriban" />
     <PackageReference Include="YamlDotNet" />

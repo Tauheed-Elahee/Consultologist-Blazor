@@ -83,7 +83,14 @@ public class HistoryDetailTests : ClientRenderTestContext
             // The Api's own constant, not a copy of the string: the client
             // record is a hand-written mirror, so the test is where the two
             // are held together.
-            ["consult_draft"] = new(Consultologist.Api.Models.ConsultInputOriginKinds.Document, "pdfpig/0.1.15", 3)
+            ["consult_draft"] = new(Consultologist.Api.Models.ConsultInputOriginKinds.Document, "pdfpig/0.1.15", 3),
+            // #240: a reviewer can see that a revision layer existed and was
+            // resolved one way to produce this text.
+            ["prior_notes"] = new(
+                Consultologist.Api.Models.ConsultInputOriginKinds.Document,
+                "openxml/3.5.1",
+                null,
+                TrackedChangesResolved: true)
         });
 
         var page = Render<History>(parameters => parameters.Add(p => p.JobId, JobId));
@@ -92,6 +99,7 @@ public class HistoryDetailTests : ClientRenderTestContext
         Assert.Contains("consult_draft", provenance);
         Assert.Contains("pdfpig/0.1.15", provenance);
         Assert.Contains("3 pages", provenance);
+        Assert.Contains("tracked changes resolved to the accepted view", provenance);
     }
 
     [Fact]

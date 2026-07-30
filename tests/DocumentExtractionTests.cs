@@ -5,6 +5,10 @@ using PdfSharp.Drawing;
 using PdfSharp.Fonts;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.Security;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
+using System.IO.Compression;
 
 namespace Consultologist.Api.Tests;
 
@@ -252,6 +256,120 @@ public class DocumentExtractionTests
         Assert.Equal(Referral, result.Text);
     }
 
+    // ---- docx ----------------------------------------------------------
+
+    [Fact]
+    public void Docx_IsExtracted()
+    {
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.Equal(DocumentExtractionOutcomes.Extracted, result.Outcome);
+        Assert.Contains("First paragraph.", result.Text);
+        Assert.StartsWith("openxml/", result.ExtractorId);
+    }
+
+    [Fact]
+    public void DocxParagraphs_AreSeparated()
+    {
+        // InnerText concatenates the whole body with no separators, so two
+        // paragraphs arrive as one sentence.
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.Contains("First paragraph.\nSecond paragraph.", result.Text);
+    }
+
+    [Fact]
+    public void DocxTable_KeepsItsCellAndRowBoundaries()
+    {
+        // Losing these turns a medication list into "Amlodipine5 mgRamipril10 mg",
+        // which is the same failure the milestone refused when it declined to
+        // rejoin hard-wrapped PDF lines.
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.Contains("Amlodipine\t5 mg\nRamipril\t10 mg", result.Text);
+    }
+
+    [Fact]
+    public void DocxTrackedChanges_YieldTheAcceptedView()
+    {
+        // The reason this rule exists, in one assertion. A naive walk of a
+        // document whose author changed a dose from 5 mg to 10 mg produces
+        // "Dose is 10 mg5 mg daily." — both values, adjacent, in clinical text.
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.Contains("Dose is 10 mg daily.", result.Text);
+        Assert.DoesNotContain("10 mg5 mg", result.Text);
+    }
+
+    [Fact]
+    public void DocxWithRevisions_RecordsThatTheAcceptedViewWasTaken()
+    {
+        // Taking the accepted view drops content that was in the file —
+        // correct, since the author deleted it, but still a drop, and this
+        // project makes its drops visible.
+        Assert.True(DocumentExtraction.Extract(Docx()).TrackedChangesResolved);
+    }
+
+    [Fact]
+    public void DocxWithoutRevisions_ClaimsNothingAboutThem()
+    {
+        var plain = DocumentExtraction.Extract(Encoding.UTF8.GetBytes(Referral));
+
+        Assert.False(plain.TrackedChangesResolved);
+    }
+
+    [Fact]
+    public void DocxHiddenText_IsExcluded()
+    {
+        // Marked vanish: not text the sender is showing anyone.
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.DoesNotContain("HIDDEN-MARKER", result.Text);
+    }
+
+    [Fact]
+    public void DocxHeader_IsIncluded()
+    {
+        // A referral's date and clinic often live only in the letterhead, and
+        // dropping content the sender supplied is the silent loss this project
+        // refuses elsewhere.
+        var result = DocumentExtraction.Extract(Docx());
+
+        Assert.Contains("Meadowbrook Oncology", result.Text);
+    }
+
+    [Fact]
+    public void Xlsx_IsUnsupportedRatherThanCorrupt()
+    {
+        // Measured, not assumed: opening a spreadsheet as a WordprocessingDocument
+        // succeeds and yields a MainDocumentPart, so "has a main part" is not
+        // the discriminator — the content type is. Nothing is wrong with the
+        // file; it is simply not one we read.
+        var result = DocumentExtraction.Extract(Xlsx());
+
+        Assert.Equal(DocumentExtractionOutcomes.UnsupportedType, result.Outcome);
+    }
+
+    [Fact]
+    public void TruncatedDocx_IsCorrupt()
+    {
+        var whole = Docx();
+
+        var result = DocumentExtraction.Extract(whole.Take(whole.Length / 3).ToArray());
+
+        Assert.Equal(DocumentExtractionOutcomes.Corrupt, result.Outcome);
+    }
+
+    [Fact]
+    public void ArchiveDeclaringEnormousContents_IsRefusedBeforeItIsOpened()
+    {
+        // A zip's cost is not its size. This one is a few hundred bytes and
+        // declares far more, which the byte cap cannot see.
+        var result = DocumentExtraction.Extract(ZipBomb());
+
+        Assert.Equal(DocumentExtractionOutcomes.ExpandsTooLarge, result.Outcome);
+    }
+
     // ---- copy ----------------------------------------------------------
 
     [Fact]
@@ -338,6 +456,83 @@ public class DocumentExtractionTests
         }
 
         return Save(document);
+    }
+
+    /// <summary>
+    /// A referral-shaped Word document carrying every case the walk has to get
+    /// right: two paragraphs, a tracked dose change, a medication table,
+    /// hidden text, and a letterhead in a header part.
+    /// </summary>
+    private static byte[] Docx()
+    {
+        using var buffer = new MemoryStream();
+
+        using (var document = WordprocessingDocument.Create(buffer, WordprocessingDocumentType.Document, true))
+        {
+            var main = document.AddMainDocumentPart();
+            main.Document = new Document(new Body());
+            var body = main.Document.Body!;
+
+            body.Append(new Paragraph(new Run(new Text("First paragraph."))));
+            body.Append(new Paragraph(new Run(new Text("Second paragraph."))));
+
+            var dose = new Paragraph();
+            dose.Append(new Run(new Text("Dose is ")));
+            dose.Append(new InsertedRun(new Run(new Text("10 mg"))) { Author = "clinician", Id = "1" });
+            dose.Append(new DeletedRun(new Run(new DeletedText("5 mg"))) { Author = "clinician", Id = "2" });
+            dose.Append(new Run(new Text(" daily.")));
+            body.Append(dose);
+
+            var table = new Table();
+
+            foreach (var (drug, dosage) in new[] { ("Amlodipine", "5 mg"), ("Ramipril", "10 mg") })
+            {
+                table.Append(new TableRow(
+                    new TableCell(new Paragraph(new Run(new Text(drug)))),
+                    new TableCell(new Paragraph(new Run(new Text(dosage))))));
+            }
+
+            body.Append(table);
+            body.Append(new Paragraph(new Run(new RunProperties(new Vanish()), new Text("HIDDEN-MARKER"))));
+
+            var header = main.AddNewPart<HeaderPart>();
+            header.Header = new Header(new Paragraph(new Run(new Text("Meadowbrook Oncology"))));
+        }
+
+        return buffer.ToArray();
+    }
+
+    private static byte[] Xlsx()
+    {
+        using var buffer = new MemoryStream();
+
+        using (var document = SpreadsheetDocument.Create(buffer, SpreadsheetDocumentType.Workbook, true))
+        {
+            document.AddWorkbookPart().Workbook = new DocumentFormat.OpenXml.Spreadsheet.Workbook(
+                new DocumentFormat.OpenXml.Spreadsheet.Sheets());
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// Highly compressible content whose declared uncompressed size dwarfs the
+    /// archive — the shape a byte cap cannot catch.
+    /// </summary>
+    private static byte[] ZipBomb()
+    {
+        using var buffer = new MemoryStream();
+
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                using var entry = new StreamWriter(archive.CreateEntry($"part{i}.xml").Open());
+                entry.Write(new string('a', 40 * 1024 * 1024));
+            }
+        }
+
+        return buffer.ToArray();
     }
 
     private static byte[] Save(PdfDocument document)
