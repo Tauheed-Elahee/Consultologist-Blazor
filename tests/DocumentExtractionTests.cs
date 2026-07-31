@@ -399,6 +399,68 @@ public class DocumentExtractionTests
         }
     }
 
+    // ---- extractor identity (#253) --------------------------------------
+
+    // The two strings the packages in use actually publish, verbatim. PdfPig
+    // is version-plus-one-commit; OpenXml is GitVersion's full spread, which
+    // is what put a branch name and two copies of a SHA into the provenance
+    // panel.
+    private const string OpenXmlInformationalVersion =
+        "3.5.1+Branch.main.Sha.3139fdfd27414548a41555f7848d5728f6e71a42.3139fdfd27414548a41555f7848d5728f6e71a42";
+
+    private const string PdfPigInformationalVersion =
+        "0.1.15+f131f642976936e06ee91cb19d3ed728f9dd18b6";
+
+    [Fact]
+    public void BuildMetadata_IsReducedToOneShortCommit()
+    {
+        Assert.Equal(
+            "openxml/3.5.1+3139fdfd",
+            ExtractorIdentity.Format("openxml", OpenXmlInformationalVersion, null));
+
+        Assert.Equal(
+            "pdfpig/0.1.15+f131f642",
+            ExtractorIdentity.Format("pdfpig", PdfPigInformationalVersion, null));
+    }
+
+    [Fact]
+    public void AVersionWithoutBuildMetadata_PassesThrough()
+    {
+        Assert.Equal("openxml/3.5.1", ExtractorIdentity.Format("openxml", "3.5.1", null));
+    }
+
+    [Fact]
+    public void MetadataWithNoRecoverableCommit_KeepsTheVersionAlone()
+    {
+        // Padding the id with whatever happened to be there would be the
+        // noise this fixed. An absent commit is worth saying plainly.
+        Assert.Equal("openxml/3.5.1", ExtractorIdentity.Format("openxml", "3.5.1+Branch.main", null));
+    }
+
+    [Fact]
+    public void AShortHexToken_IsNotMistakenForACommit()
+    {
+        // The length floor is the rule, not a detail: build metadata is
+        // mostly not commits, and a branch named "deadbee" is hex.
+        Assert.Equal("openxml/3.5.1", ExtractorIdentity.Format("openxml", "3.5.1+Branch.deadbee", null));
+    }
+
+    [Fact]
+    public void WithNoInformationalVersion_TheAssemblyVersionIsUsed()
+    {
+        Assert.Equal("openxml/3.5.1.0", ExtractorIdentity.Format("openxml", null, new Version(3, 5, 1, 0)));
+    }
+
+    [Fact]
+    public void BothLiveExtractors_NameThemselvesReadably()
+    {
+        // Against the real assemblies rather than literals, so a package
+        // bump that changes the metadata shape fails here — which is
+        // exactly how this defect arrived.
+        Assert.Matches(@"^pdfpig/[0-9.]+\+[0-9a-f]{8}$", PdfDocumentExtractor.ExtractorId);
+        Assert.Matches(@"^openxml/[0-9.]+\+[0-9a-f]{8}$", DocxDocumentExtractor.ExtractorId);
+    }
+
     // ---- fixtures ------------------------------------------------------
 
     private static byte[] TextPdf(string text, string? ownerPassword = null)

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -39,10 +38,8 @@ internal static class PdfDocumentExtractor
         MaxStackDepth = 32
     };
 
-    internal static string ExtractorId { get; } = "pdfpig/" + (typeof(PdfDocument).Assembly
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(PdfDocument).Assembly.GetName().Version?.ToString()
-        ?? "unknown");
+    internal static string ExtractorId { get; } =
+        ExtractorIdentity.For("pdfpig", typeof(PdfDocument).Assembly);
 
     internal static bool Matches(byte[] bytes)
     {

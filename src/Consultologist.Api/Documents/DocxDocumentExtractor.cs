@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Reflection;
 using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -40,10 +39,8 @@ internal static class DocxDocumentExtractor
     /// </summary>
     private const int MaxXmlCharactersPerPart = 16 * 1024 * 1024;
 
-    internal static string ExtractorId { get; } = "openxml/" + (typeof(WordprocessingDocument).Assembly
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(WordprocessingDocument).Assembly.GetName().Version?.ToString()
-        ?? "unknown");
+    internal static string ExtractorId { get; } =
+        ExtractorIdentity.For("openxml", typeof(WordprocessingDocument).Assembly);
 
     internal static bool Matches(byte[] bytes) =>
         bytes.Length >= ZipHeader.Length && bytes.AsSpan(0, ZipHeader.Length).SequenceEqual(ZipHeader);
