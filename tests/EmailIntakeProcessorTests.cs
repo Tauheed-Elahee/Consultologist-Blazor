@@ -4,6 +4,7 @@ using Consultologist.Api.Models;
 using Consultologist.Api.Workflow;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -41,7 +42,9 @@ public class EmailIntakeProcessorTests
             .Returns(Array.Empty<GraphInboundAttachment>());
     }
 
-    private EmailIntakeProcessor CreateProcessor(bool configured = true)
+    private EmailIntakeProcessor CreateProcessor(
+        bool configured = true,
+        ILogger<EmailIntakeProcessor>? logger = null)
     {
         var settings = new Dictionary<string, string?>();
         if (configured)
@@ -61,7 +64,7 @@ public class EmailIntakeProcessorTests
             _pinResolver,
             _packageStore,
             _time,
-            NullLogger<EmailIntakeProcessor>.Instance);
+            logger ?? NullLogger<EmailIntakeProcessor>.Instance);
     }
 
     private static GraphMessageRef Ref(string id = "g-1", string? imid = "<m1@x>") =>
@@ -464,6 +467,40 @@ public class EmailIntakeProcessorTests
             Arg.Any<string>(),
             Arg.Is<string>(body => body.Contains("accepts a single input")),
             Arg.Any<CancellationToken>());
+    }
+
+    // ---- the logging audit (#241, § 9) ----------------------------------
+
+    [Fact]
+    public async Task ARejectedAttachment_PutsNeitherItsNameNorItsContentInTheLog()
+    {
+        // This is the only door that has a filename at all — InputFilePayload
+        // carries content and a content type and nothing else — so it is the
+        // only place the "no filename in logs" half of § 9 can be violated.
+        //
+        // The rejection paths are the ones worth pinning: they log
+        // Detail={Detail}, which carries either an attachment size message or
+        // a reject reason. Reject reasons name input SLOTS ("consult_draft"),
+        // never files, and Application Insights stores those template values
+        // as customDimensions — so the assertion is over the structured
+        // values, not just the rendered message.
+        const string FileName = "SENTINEL-FILENAME-4a5b6c.txt";
+        const string Content = "SENTINEL-CLINICAL-CONTENT-0f1e2d";
+
+        var log = new CapturingLogger<EmailIntakeProcessor>();
+        WithV7Package();
+        SetupAcceptedSender(Message(body: "  ", hasAttachments: true));
+        WithAttachments(Attachment(FileName, Content), Attachment("b.txt", Content));
+
+        var summary = await CreateProcessor(logger: log).RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        Assert.DoesNotContain(FileName, log.Everything, StringComparison.Ordinal);
+        Assert.DoesNotContain(Content, log.Everything, StringComparison.Ordinal);
+
+        // The log is not empty — otherwise this passes for the wrong reason,
+        // which is the failure mode an absence check always has.
+        Assert.NotEmpty(log.Recorded);
     }
 
     [Fact]
