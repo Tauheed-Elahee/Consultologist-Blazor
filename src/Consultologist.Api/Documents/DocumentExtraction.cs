@@ -65,6 +65,12 @@ internal sealed record DocumentExtractionResult(
 /// Pure: no I/O, no configuration, no logging. Adding a format means one
 /// entry in <see cref="Formats"/> plus its extractor, and nothing else
 /// anywhere — which is #240's acceptance criterion.
+///
+/// The one dependency outside this folder is
+/// <see cref="CanonicalText.Normalize"/>, and it is not a format concern: it
+/// is the canonicalisation the job starter applies to every input, shared
+/// here so a document and the same text typed cannot differ on line endings
+/// alone (#251). Formats stay sealed in; text canonicalisation was never in.
 /// </summary>
 internal static class DocumentExtraction
 {
@@ -173,9 +179,10 @@ internal static class DocumentExtraction
     }
 
     /// <summary>
-    /// Conservative and nothing more: CRLF to LF, trailing whitespace off
-    /// the end. The same canonicalisation AgentDefinitionRedaction and
-    /// AgentAttestationService already apply before comparing text.
+    /// Conservative and nothing more: line endings to LF, trailing
+    /// whitespace off the end — <see cref="LineEndings.Normalize"/>, the
+    /// same call the job starter makes over every input so that a document
+    /// and the same text typed cannot differ on line endings alone.
     ///
     /// Deliberately not done here (docs/DOCUMENT_INPUT.md § 2): de-hyphenating
     /// words split across a line break, rejoining hard-wrapped lines into
@@ -190,7 +197,7 @@ internal static class DocumentExtraction
             return result;
         }
 
-        var text = result.Text.Replace("\r\n", "\n").TrimEnd();
+        var text = CanonicalText.Normalize(result.Text);
 
         // A document of nothing but whitespace is empty, not extracted —
         // otherwise it would fill a required input slot with a blank string

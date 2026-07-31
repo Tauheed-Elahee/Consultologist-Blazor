@@ -107,6 +107,18 @@ public class DocumentExtractionTests
     }
 
     [Fact]
+    public void ALoneCarriageReturn_IsALineEndingToo()
+    {
+        // Classic Mac endings, and what some PDF viewers put on the
+        // clipboard. These survived normalisation until #251, so the same
+        // referral typed by hand was different input to the hash.
+        var result = DocumentExtraction.Extract(Encoding.UTF8.GetBytes("One.\rTwo.\r"));
+
+        Assert.Equal("One.\nTwo.", result.Text);
+    }
+
+
+    [Fact]
     public void WhitespaceOnly_IsEmptyRatherThanExtracted()
     {
         // Otherwise it would fill a required slot with a blank string and be

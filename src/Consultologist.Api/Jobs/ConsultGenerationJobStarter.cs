@@ -381,9 +381,9 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
     }
 
     /// <summary>
-    /// CRLF to LF, trailing whitespace off the end — applied to every input,
-    /// typed and extracted alike, before the effective-input hash sees any of
-    /// it (#238, docs/DOCUMENT_INPUT.md § 2).
+    /// Line endings to LF, trailing whitespace off the end — applied to every
+    /// input, typed and extracted alike, before the effective-input hash sees
+    /// any of it (#238, docs/DOCUMENT_INPUT.md § 2).
     ///
     /// Nothing here normalised before, so the same referral pasted from a
     /// Windows editor and attached as a file hashed differently for no reason
@@ -394,7 +394,7 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
     /// </summary>
     internal static ConsultGenerationRequest NormalizeInputs(ConsultGenerationRequest request)
     {
-        var draft = Normalize(request.ConsultDraft);
+        var draft = CanonicalText.Normalize(request.ConsultDraft);
 
         if (request.Inputs is not { Count: > 0 })
         {
@@ -405,14 +405,11 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
 
         foreach (var (id, value) in request.Inputs)
         {
-            normalized[id] = Normalize(value) ?? string.Empty;
+            normalized[id] = CanonicalText.Normalize(value);
         }
 
         return request with { ConsultDraft = draft, Inputs = normalized };
     }
-
-    private static string? Normalize(string? text) =>
-        text?.Replace("\r\n", "\n").TrimEnd();
 
     internal static EffectiveInputsResolution ResolveEffectiveInputs(
         ConsultGenerationRequest request,

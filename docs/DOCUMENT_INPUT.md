@@ -133,11 +133,11 @@ three callers.
 > made the vocabulary a promise it did not keep. `expands-too-large`
 > arrives with the container format that needs it (#240).
 
-- **Normalisation is conservative and universal.** `\r\n` → `\n` and
-  trailing whitespace trimmed — the shape already used by
-  `AgentDefinitionRedaction` and `AgentAttestationService` for
-  canonicalising text before comparison. Nothing semantic: line
-  structure, hyphenation and hard wrapping survive untouched.
+- **Normalisation is conservative and universal.** `\r\n` → `\n`, a lone
+  `\r` → `\n`, and trailing whitespace trimmed — the shape already used
+  by `AgentAttestationService` for canonicalising text before
+  comparison. Nothing semantic: line structure, hyphenation and hard
+  wrapping survive untouched.
 - **Applied to every input, not only extracted ones.** Today
   `ResolveEffectiveInputs` normalises nothing, so a CRLF `.txt` and the
   same text pasted by hand are already different input to the hash.
@@ -152,6 +152,29 @@ three callers.
   explicit that definitions are never compared as equals across
   versions, so a bump would cost comparability against every existing v7
   job to record nothing new.
+
+> **Amended 2026-07-31 during #251.** The rule covers **a lone `\r` as
+> well as `\r\n`**. It did not, and the gap was exactly the failure this
+> section argues against: classic Mac endings — still emitted by older
+> dictation systems, and what some PDF viewers put on the clipboard —
+> hashed differently from the same referral typed by hand, so the claim
+> above was broader than the code. Latent rather than live, since no
+> shipped extractor emits bare CR.
+>
+> **One normaliser now, not four copies.** `CanonicalText.Normalize` is
+> called by the job starter, the parser and `AgentAttestationService`.
+> The rule having been written out four times is what let two of them
+> drift from it.
+>
+> **`AgentDefinitionRedaction` is deliberately not a caller**, which the
+> paragraph above should not be read as claiming. Its transform's
+> contract is byte-equivalence with the publish script's `sed` in the
+> agents repo — startup attestation enforces published ==
+> `Redact(manifest)` — so widening line endings on this side alone would
+> fail loud in production. Both sides move together or neither does.
+>
+> Still no hash-version bump, for the reason given above: the definition
+> is unchanged and only the text reaching it is cleaner.
 - **Not in v1**: semantic repair — de-hyphenating words split across a
   line break, rejoining hard-wrapped lines into paragraphs, stripping
   repeated page headers. Each would produce better prompt input, and
