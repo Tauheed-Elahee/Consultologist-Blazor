@@ -321,6 +321,36 @@ and both doors agree.
 > `w:ins` runs, so it is the only one that exercises the accepted view
 > end to end.
 
+> **Amended 2026-07-31 during #256.** The rest of the verification is
+> committed too, so every claim in this record can be re-checked from a
+> clean checkout and a token:
+>
+> | | |
+> | --- | --- |
+> | `scripts/make-pdf-fixtures.cs` | `referral-text.pdf`, `referral-scan.pdf` |
+> | `scripts/make-docx-fixtures.cs` | `consult_draft.docx`, `prior_notes.docx` |
+> | `scripts/show-extraction.sh` | what the parser reads out of any file |
+> | `scripts/verify-document-provenance.sh` | the § 7 provenance run (three real consults) |
+>
+> **`referral-scan.pdf` is the only artifact that reaches
+> `no-text-layer`**, which § 8's copy and the provenance run both depend
+> on. It had one witness and no way to make another; it is now a page
+> bearing a 1×1 JPEG and no glyphs, built in code like every other
+> fixture here.
+>
+> **`referral-text.pdf` is laid out by MigraDoc**, not drawn with
+> `XGraphics.DrawString`, which does not wrap — the text has to flow into
+> lines for this to be a realistic text layer. Its extracted text is
+> therefore *not* identical to `consult_draft.txt`, which is why the
+> cross-format hash comparison uses the `.txt` and `.docx` rather than
+> the PDF.
+>
+> **The provenance run builds its request bodies from the fixtures at
+> send time.** It used to post four `payload-*.json` files kept beside
+> it: a stored copy of a fixture can go stale against it silently, and a
+> run posting the wrong bytes still passes. `--print-payload` shows what
+> would be sent without sending it.
+
 ## 4. Limits
 
 One number (256 KB) currently serves both "bytes of file" and
