@@ -262,10 +262,88 @@ public class DocumentExtractionTests
     {
         var result = await DocumentExtraction.ExtractAsync(
             Encoding.UTF8.GetBytes(Referral),
+            DocumentExtraction.InteractiveGateWait,
             CancellationToken.None);
 
         Assert.Equal(DocumentExtractionOutcomes.Extracted, result.Outcome);
         Assert.Equal(Referral, result.Text);
+    }
+
+    // ---- the concurrency gate (#241, § 9) -------------------------------
+    //
+    // The gate is passed in rather than raced against a clock: saturation is
+    // "no permits", which is a state, not a timing coincidence.
+
+    [Fact]
+    public async Task WhenNoSlotComesFree_TheOutcomeIsBusyRatherThanAnError()
+    {
+        using var saturated = new SemaphoreSlim(0, 1);
+
+        var result = await DocumentExtraction.ExtractAsync(
+            Encoding.UTF8.GetBytes(Referral),
+            TimeSpan.Zero,
+            saturated,
+            CancellationToken.None);
+
+        Assert.Equal(DocumentExtractionOutcomes.Busy, result.Outcome);
+        Assert.Null(result.Text);
+    }
+
+    [Fact]
+    public async Task ASlotIsReturnedWhenTheParseFinishes()
+    {
+        using var gate = new SemaphoreSlim(1, 1);
+
+        var result = await DocumentExtraction.ExtractAsync(
+            Encoding.UTF8.GetBytes(Referral),
+            TimeSpan.Zero,
+            gate,
+            CancellationToken.None);
+
+        Assert.Equal(DocumentExtractionOutcomes.Extracted, result.Outcome);
+
+        // Released by the work, not by the caller. A leak here would starve
+        // the worker one slot per parse until nothing could be read at all.
+        Assert.Equal(1, gate.CurrentCount);
+    }
+
+    [Fact]
+    public async Task ACallerThatQueuesForASlotStillGetsItsDocument()
+    {
+        // Waiting is not refusing: a caller that queues and then gets a slot
+        // reads normally.
+        //
+        // Note what this does NOT prove. That the gate wait is separate from
+        // MaxParseDuration holds by construction — they are two distinct
+        // awaits — and cannot be shown here without a test that runs longer
+        // than the 20s parse budget. Naming it after the budget would have
+        // claimed more than it checks.
+        using var gate = new SemaphoreSlim(0, 1);
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(250));
+            gate.Release();
+        });
+
+        var result = await DocumentExtraction.ExtractAsync(
+            Encoding.UTF8.GetBytes(Referral),
+            TimeSpan.FromSeconds(30),
+            gate,
+            CancellationToken.None);
+
+        await release;
+
+        Assert.Equal(DocumentExtractionOutcomes.Extracted, result.Outcome);
+        Assert.Equal(Referral, result.Text);
+    }
+
+    [Fact]
+    public void TheGateIsSmallerThanThePlatformDefault()
+    {
+        // 16 is what a 2048 MB Flex Consumption instance allows by default,
+        // and that instance has one CPU core. A gate at or above the platform
+        // default would not be a gate.
+        Assert.InRange(DocumentExtraction.MaxConcurrentParses, 1, 15);
     }
 
     // ---- docx ----------------------------------------------------------
@@ -468,7 +546,8 @@ public class DocumentExtractionTests
             DocumentExtractionOutcomes.TooLarge,
             DocumentExtractionOutcomes.TooManyPages,
             DocumentExtractionOutcomes.TooMuchText,
-            DocumentExtractionOutcomes.TimedOut
+            DocumentExtractionOutcomes.TimedOut,
+            DocumentExtractionOutcomes.Busy
         ];
 
         foreach (var outcome in outcomes)
@@ -689,7 +768,8 @@ public class DocumentExtractionTests
         DocumentExtractionOutcomes.TooManyPages,
         DocumentExtractionOutcomes.ExpandsTooLarge,
         DocumentExtractionOutcomes.TooMuchText,
-        DocumentExtractionOutcomes.TimedOut
+        DocumentExtractionOutcomes.TimedOut,
+        DocumentExtractionOutcomes.Busy
     ];
 
     /// <summary>

@@ -142,7 +142,7 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
         // the orchestration — stays the string-keyed pipeline it already was.
         // Extraction is the pre-step docs/DOCUMENT_INPUT.md describes, not a
         // new kind of input.
-        var extraction = await ExtractInputFilesAsync(request, cancellationToken);
+        var extraction = await ExtractInputFilesAsync(request, GateWaitFor(origin), cancellationToken);
         if (extraction.Error != null)
         {
             _logger.LogWarning(
@@ -331,8 +331,25 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
     /// the inputs that happened to be readable would be a partial referral
     /// presented as a whole one.
     /// </summary>
+    /// <summary>
+    /// #241: the wait budget depends on which door this came through, and the
+    /// asymmetry is deliberate.
+    ///
+    /// Every start-failure path in EmailIntakeProcessor moves the message to
+    /// the Rejected folder, writes a claim and replies to the sender. There is
+    /// no "leave it for the next poll" branch. So a transient <c>busy</c> on
+    /// that door would permanently reject a referral and tell a clinician
+    /// their document could not be read, which would be false. A background
+    /// poller can afford to wait; it cannot afford to be wrong.
+    /// </summary>
+    internal static TimeSpan GateWaitFor(ConsultGenerationJobOrigin origin) =>
+        string.Equals(origin.Source, ConsultGenerationJobSources.Email, StringComparison.Ordinal)
+            ? DocumentExtraction.BackgroundGateWait
+            : DocumentExtraction.InteractiveGateWait;
+
     internal static async Task<InputFileExtraction> ExtractInputFilesAsync(
         ConsultGenerationRequest request,
+        TimeSpan gateWait,
         CancellationToken cancellationToken)
     {
         if (request.InputFiles is not { Count: > 0 })
@@ -347,7 +364,7 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
 
         foreach (var (id, file) in request.InputFiles.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            var result = await DocumentExtraction.ExtractAsync(file.Content, cancellationToken);
+            var result = await DocumentExtraction.ExtractAsync(file.Content, gateWait, cancellationToken);
 
             if (!DocumentExtraction.Succeeded(result))
             {

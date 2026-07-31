@@ -646,8 +646,58 @@ job start, and email intake.
 > | disabled XML resolver | **nothing to do** — the SDK prohibits DTD processing in three places, so an external entity never resolves |
 > | malformed corpus | **done** in #241 — every case above has a test asserting a named outcome |
 > | never logged | **done** in #241 — audited and pinned |
-> | memory bound | outstanding |
+> | memory bound | **done** in #241 — a concurrency gate; see below for what that does and does not bound |
 > | per-account rate limiting | outstanding |
+>
+> **Amended 2026-08-01 (#241): the memory bound is a concurrency gate.**
+> A true per-parse cap is not achievable in-process, so what ships bounds
+> how many parses run at once — peak parse memory becomes N × worst case
+> instead of unbounded.
+>
+> **N is 4, and CPU decides that as much as memory.** Measured: the app
+> runs on Linux Flex Consumption at **2048 MB**, which is **one CPU
+> core**, with HTTP concurrency at the platform default of **16**. On
+> Flex that default comes from instance size and **cannot be set in
+> `host.json`** — an earlier sketch of this work put
+> `maxConcurrentRequests` there, where it would have been silently
+> ignored. Past a handful of concurrent parses on one core there is no
+> throughput to gain and only memory to lose; four still finish inside
+> the 20 s timeout where sixteen would not.
+>
+> Parse cost, measured against PdfPig 0.1.15: **10–15 MB retained** for
+> documents we accept, because both caps bind — the page cap right after
+> `Open`, the character cap inside the page loop. Cost tracks **pages and
+> extracted text, not file size**; the ratio to file size ranged 49×–236×
+> across fixtures and means nothing.
+>
+> **The email door is never refused, and that is the load-bearing part.**
+> Every start-failure path in `EmailIntakeProcessor` moves the message to
+> the Rejected folder, writes a claim and **replies to the sender** —
+> there is no "leave it for the next poll" branch. A transient `busy`
+> there would permanently reject a referral and tell a clinician their
+> document could not be read, which would be false. So the wait budget
+> comes from `ConsultGenerationJobOrigin`: interactive callers wait 5 s
+> and then get `busy` as 503; the poller waits 5 minutes. A background
+> poller can afford to be slow; it cannot afford to be wrong.
+>
+> **What it does not bound**, stated because the bullet above says
+> "memory bound" and that would otherwise be read as more than it is:
+>
+> - It does not stop one crafted file allocating its own worst case. That
+>   needs process isolation.
+> - The **request body is buffered before the gate** — `CopyToAsync` at
+>   the preview endpoint, base64 decode at job start — so up to
+>   16 × 10 MB of buffers is bounded by platform concurrency, not by N.
+> - `PdfDocument.Open` resolves the xref and page tree before any cap of
+>   ours, so a pathological object graph is bounded only by the timeout.
+> - A slot is released when the **work** finishes, not when the caller
+>   stops waiting, so an orphaned parse keeps its slot. That is correct —
+>   it still holds the memory — but it means saturation is reachable, and
+>   it is why the background wait is bounded rather than infinite.
+>
+> `busy` is the first outcome here that is about us rather than the
+> document, and its copy says so: *"Nothing is wrong with this one."*
+> Tunable without a deploy via `DocumentExtraction__MaxConcurrentParses`.
 >
 > **The corpus outcomes were measured, not predicted**, and one is worth
 > recording: a zip that is not an OPC package comes back

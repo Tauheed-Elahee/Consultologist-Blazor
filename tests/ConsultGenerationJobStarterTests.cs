@@ -454,6 +454,30 @@ public class ConsultGenerationJobStarterTests
         ConsultGenerationJobInitialize? Initialize,
         ConsultGenerationOrchestrationInput? OrchestrationInput);
 
+    // ---- the parse gate's wait budget (#241, § 9) -----------------------
+
+    [Fact]
+    public void TheEmailDoorWaitsFarLongerForAParseSlotThanTheAppDoor()
+    {
+        // Not a preference. Every start-failure path in EmailIntakeProcessor
+        // moves the message to the Rejected folder, writes a claim and REPLIES
+        // to the sender — there is no "leave it for the next poll" branch. So
+        // a transient busy on that door would permanently reject a referral
+        // and tell a clinician their document could not be read, which would
+        // be false.
+        //
+        // A background poller can afford to be slow. It cannot afford to be
+        // wrong.
+        var app = ConsultGenerationJobStarter.GateWaitFor(
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App));
+        var email = ConsultGenerationJobStarter.GateWaitFor(
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "doc@example.com"));
+
+        Assert.Equal(DocumentExtraction.InteractiveGateWait, app);
+        Assert.Equal(DocumentExtraction.BackgroundGateWait, email);
+        Assert.True(email > app * 10, "the email budget must not be a rounding difference from the app's");
+    }
+
     // ---- the logging audit (#241, § 9) ----------------------------------
     //
     // "Bytes are never persisted and never logged, including on the exception

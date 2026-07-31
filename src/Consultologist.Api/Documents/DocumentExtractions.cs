@@ -61,7 +61,10 @@ public sealed class DocumentExtractions
         await req.Body.CopyToAsync(buffer, cancellationToken);
         var bytes = buffer.ToArray();
 
-        var result = await DocumentExtraction.ExtractAsync(bytes, cancellationToken);
+        var result = await DocumentExtraction.ExtractAsync(
+            bytes,
+            DocumentExtraction.InteractiveGateWait,
+            cancellationToken);
 
         // Lengths and dispositions only: no bytes, no extracted text, no
         // filename — there is no filename to log.
@@ -98,6 +101,10 @@ public sealed class DocumentExtractions
     {
         DocumentExtractionOutcomes.UnsupportedType => HttpStatusCode.UnsupportedMediaType,
         DocumentExtractionOutcomes.TooLarge => HttpStatusCode.RequestEntityTooLarge,
+        // #241: not 422. The request was well-formed AND satisfiable — we
+        // simply had no capacity, and 503 is the one status that says
+        // "try the same thing again".
+        DocumentExtractionOutcomes.Busy => HttpStatusCode.ServiceUnavailable,
         _ => HttpStatusCode.UnprocessableEntity
     };
 
