@@ -382,6 +382,75 @@ public class DocumentExtractionTests
         Assert.Equal(DocumentExtractionOutcomes.ExpandsTooLarge, result.Outcome);
     }
 
+    // ---- the malformed corpus (#241, § 9) -------------------------------
+    //
+    // The requirement is not a particular outcome, it is that hostile input
+    // produces a NAMED outcome rather than an exception, a hang, or a 500.
+    // The specific values below were measured, not predicted.
+
+    public static TheoryData<string, byte[], string> HostileDocuments() => new()
+    {
+        // A page tree that is its own child. PdfPig 0.1.15's MaxStackDepth
+        // guard exists for this shape; without a bound it is an uncatchable
+        // StackOverflowException, which takes the worker down.
+        { "self-referential page tree", RecursivePdf(), DocumentExtractionOutcomes.Corrupt },
+
+        // The page cap counts pages, not area, so nothing above catches this.
+        { "absurd MediaBox", AbsurdMediaBoxPdf(), DocumentExtractionOutcomes.Corrupt },
+
+        // Distinct from the two password cases: those are well-formed
+        // encryption we decline to defeat, this is metadata that does not
+        // parse.
+        { "garbage /Encrypt dictionary", GarbageEncryptedPdf(), DocumentExtractionOutcomes.Corrupt },
+
+        // unsupported-type rather than corrupt, and that is right: a plain
+        // zip opens as a WordprocessingDocument with no main part, so nothing
+        // is wrong with the file — it simply is not one we read. Measured.
+        { "a zip that is not an OPC package", PlainZip(), DocumentExtractionOutcomes.UnsupportedType },
+
+        // The SDK prohibits DTD processing, so the entity never resolves and
+        // the part fails to parse. Corrupt is the honest answer; the point of
+        // the test is that it is a name and not a filesystem read.
+        { "a .docx declaring an external entity", XxeDocx(), DocumentExtractionOutcomes.Corrupt }
+    };
+
+    [Theory]
+    [MemberData(nameof(HostileDocuments))]
+    public void HostileInput_ProducesANamedOutcomeAndNoText(string description, byte[] bytes, string expected)
+    {
+        // § 9's requirement is not a particular outcome — it is a named
+        // outcome rather than an exception, a hang, or a 500. So the general
+        // property is asserted first and the measured value second; the
+        // expectations above were observed, not predicted.
+        //
+        // No try/catch on purpose: an escaping exception fails this test,
+        // which is half of what § 9 asks for.
+        var result = DocumentExtraction.Extract(bytes);
+
+        Assert.Contains(result.Outcome, KnownOutcomes);
+        Assert.NotEqual(DocumentExtractionOutcomes.Extracted, result.Outcome);
+        Assert.Null(result.Text);
+
+        // Every refusal a person can reach has to name its cause; the generic
+        // fallback would mean this outcome was never given copy.
+        Assert.NotEqual("This file could not be read.", DocumentExtractionCopy.For(result.Outcome));
+
+        Assert.Equal(expected, result.Outcome);
+    }
+
+    [Fact]
+    public void TextRenamedAsAPdf_IsStillReadAsText()
+    {
+        // § 9 lists the renamed file as a corpus case. There is nothing to
+        // rename here, which is the answer: the parser sees bytes, no
+        // filename reaches it, and a declared content type is a hint the
+        // sniffer is free to ignore. A .txt called .pdf is simply text.
+        var result = DocumentExtraction.Extract(Encoding.UTF8.GetBytes(Referral));
+
+        Assert.Equal(DocumentExtractionOutcomes.Extracted, result.Outcome);
+        Assert.Equal(TextDocumentDecoder.ExtractorId, result.ExtractorId);
+    }
+
     // ---- copy ----------------------------------------------------------
 
     [Fact]
@@ -604,6 +673,117 @@ public class DocumentExtractionTests
                 using var entry = new StreamWriter(archive.CreateEntry($"part{i}.xml").Open());
                 entry.Write(new string('a', 40 * 1024 * 1024));
             }
+        }
+
+        return buffer.ToArray();
+    }
+
+    private static readonly string[] KnownOutcomes =
+    [
+        DocumentExtractionOutcomes.UnsupportedType,
+        DocumentExtractionOutcomes.Corrupt,
+        DocumentExtractionOutcomes.PasswordProtected,
+        DocumentExtractionOutcomes.NoTextLayer,
+        DocumentExtractionOutcomes.Empty,
+        DocumentExtractionOutcomes.TooLarge,
+        DocumentExtractionOutcomes.TooManyPages,
+        DocumentExtractionOutcomes.ExpandsTooLarge,
+        DocumentExtractionOutcomes.TooMuchText,
+        DocumentExtractionOutcomes.TimedOut
+    ];
+
+    /// <summary>
+    /// A page tree whose only node lists itself as its own child. Written as
+    /// raw bytes rather than built with PDFsharp, which will not emit a
+    /// structure this broken — which is the point: no real library produces
+    /// hostile input, so hostile fixtures have to be authored.
+    ///
+    /// No xref table. Lenient parsing is on, so PdfPig brute-force rescans a
+    /// file whose cross-reference table is missing or damaged, which is the
+    /// path a crafted file would take anyway.
+    /// </summary>
+    private static byte[] RecursivePdf() => Encoding.ASCII.GetBytes(
+        "%PDF-1.4\n"
+        + "1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj\n"
+        + "2 0 obj <</Type/Pages/Kids[2 0 R]/Count 1>> endobj\n"
+        + "trailer <</Root 1 0 R>>\n"
+        + "%%EOF\n");
+
+    /// <summary>
+    /// A page declaring a media box roughly 10^9 units on each side. The page
+    /// cap counts pages, not area, so nothing above this catches it.
+    /// </summary>
+    private static byte[] AbsurdMediaBoxPdf() => Encoding.ASCII.GetBytes(
+        "%PDF-1.4\n"
+        + "1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj\n"
+        + "2 0 obj <</Type/Pages/Kids[3 0 R]/Count 1>> endobj\n"
+        + "3 0 obj <</Type/Page/Parent 2 0 R/MediaBox[0 0 1000000000 1000000000]>> endobj\n"
+        + "trailer <</Root 1 0 R>>\n"
+        + "%%EOF\n");
+
+    /// <summary>
+    /// An /Encrypt entry pointing at an object that is not an encryption
+    /// dictionary. Distinct from the two password cases above: those are
+    /// well-formed encryption we decline to defeat, this is encryption
+    /// metadata that does not parse.
+    /// </summary>
+    private static byte[] GarbageEncryptedPdf() => Encoding.ASCII.GetBytes(
+        "%PDF-1.4\n"
+        + "1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj\n"
+        + "2 0 obj <</Type/Pages/Kids[3 0 R]/Count 1>> endobj\n"
+        + "3 0 obj <</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>> endobj\n"
+        + "4 0 obj <</Filter/NotAFilter/V 99/R 99/O(x)/U(x)/P -1>> endobj\n"
+        + "trailer <</Root 1 0 R/Encrypt 4 0 R/ID[<00><00>]>>\n"
+        + "%%EOF\n");
+
+    /// <summary>
+    /// A zip carrying one text file and no OPC structure at all. Distinct
+    /// from the .xlsx case, which IS a valid package — this one matches the
+    /// PK signature and is nothing further.
+    /// </summary>
+    private static byte[] PlainZip()
+    {
+        using var buffer = new MemoryStream();
+
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        using (var entry = new StreamWriter(archive.CreateEntry("notes.txt").Open()))
+        {
+            entry.Write("Not a package.");
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// A real .docx whose word/document.xml is replaced with a DOCTYPE
+    /// declaring an external entity that reads a local file. Built by
+    /// rewriting a valid package rather than authoring one, so the OPC
+    /// structure is genuine and the XML is the only hostile part.
+    ///
+    /// The SDK prohibits DTD processing, so this never resolves — the test
+    /// is that it fails by name rather than by reaching the filesystem.
+    /// </summary>
+    private static byte[] XxeDocx()
+    {
+        const string Payload =
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE w:document [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body><w:p><w:r><w:t>&xxe;</w:t></w:r></w:p></w:body>
+            </w:document>
+            """;
+
+        using var buffer = new MemoryStream(Docx());
+        buffer.Position = 0;
+
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var part = archive.GetEntry("word/document.xml")!;
+            part.Delete();
+
+            using var rewritten = new StreamWriter(archive.CreateEntry("word/document.xml").Open());
+            rewritten.Write(Payload);
         }
 
         return buffer.ToArray();

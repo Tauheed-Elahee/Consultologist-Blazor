@@ -589,8 +589,23 @@ system, or paste the referral into the message itself.
 
 The parser is the first place in this app where **an attacker-controlled
 binary is parsed in-process**. Everything before it was JSON with a
-length bound, or text. Both doors reach it, and the email door needs no
-sign-in — a message is parsed before the sender is matched.
+length bound, or text. Three entry points reach it: the preview endpoint,
+job start, and email intake.
+
+> **Corrected 2026-07-31 during #241.** This said the email door needs no
+> sign-in, because a message is parsed before the sender is matched. That
+> is backwards. `EmailIntakeProcessor` gates in order — authentication
+> floor (`:145`), sender match against an Active account (`:162`), fetch
+> attachments (`:188`), extract at job start — so the parser is reachable
+> only for an **authenticated, matched, active sender**, on all three
+> entry points. Anyone who can merely send mail to the intake address
+> never reaches it.
+>
+> The same claim was this section's stated justification and #241's. It
+> was corrected on the issue on 2026-07-29 and survived here. The work
+> still matters — a crafted PDF can take the worker down uncatchably, and
+> the exposure grows the moment external users are activated — but it is
+> not the open-to-the-internet risk this paragraph described.
 
 - **A wall-clock timeout on every parse.** A malformed object graph can
   spin without allocating, so a byte cap does not bound time.
@@ -619,6 +634,46 @@ sign-in — a message is parsed before the sender is matched.
   case and the zip bomb (built in-test, so repository scanners are not
   tripped), and add `tests/TestData/documents/` only for what genuinely
   cannot be — a real scan, a two-column layout, a truncated file.
+
+> **Status, 2026-07-31 (#241).** Where each bullet stands, because three
+> of them were met by other issues and reading the list as outstanding
+> work overstates what is left:
+>
+> | | |
+> | --- | --- |
+> | wall-clock timeout | **done** in #235 — `MaxParseDuration`, 20s |
+> | container bounds | **done** in #240 — `MaxExpandedBytes`, `MaxArchiveEntries` |
+> | disabled XML resolver | **nothing to do** — the SDK prohibits DTD processing in three places, so an external entity never resolves |
+> | malformed corpus | **done** in #241 — every case above has a test asserting a named outcome |
+> | never logged | **done** in #241 — audited and pinned |
+> | memory bound | outstanding |
+> | per-account rate limiting | outstanding |
+>
+> **The corpus outcomes were measured, not predicted**, and one is worth
+> recording: a zip that is not an OPC package comes back
+> `unsupported-type`, not `corrupt` — it opens as a `WordprocessingDocument`
+> with no main part, so nothing is wrong with the file and it simply is
+> not one we read. The recursive graph, the absurd `MediaBox` and the
+> garbage `/Encrypt` are all `corrupt`.
+>
+> **The logging audit found nothing, which is the finding.** No filename
+> and no document content reaches a log on any of the three paths.
+> `InputFilePayload` has no filename field at all, so the app and job
+> doors have nothing to leak; email is the only door carrying one, and
+> its rejection paths log `Detail`, which holds either an attachment
+> **size** message or a reject reason naming an input **slot**
+> (`consult_draft`), never a file. That is now asserted rather than
+> observed — the tests capture structured values and scopes, not only
+> rendered messages, because Application Insights stores template
+> arguments as customDimensions.
+>
+> **Two guards cannot be mutation-tested and should not be claimed as
+> though they were.** The stack-depth bound's failure mode is an
+> uncatchable `StackOverflowException` that kills the process, so
+> removing it to watch a test fail would take the test host with it. And
+> the XXE case pins SDK behaviour rather than code of ours — it is a
+> regression detector against a package upgrade, not proof of a guard we
+> wrote.
 
 ## 10. Not in this milestone
 

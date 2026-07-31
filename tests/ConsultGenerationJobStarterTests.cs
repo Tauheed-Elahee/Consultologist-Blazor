@@ -1,3 +1,4 @@
+using System.Text;
 using Consultologist.Api.Documents;
 using Consultologist.Api.Jobs;
 using Consultologist.Api.Models;
@@ -6,6 +7,7 @@ using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -18,12 +20,12 @@ public class ConsultGenerationJobStarterTests
     private readonly DurableTaskClient _client = Substitute.For<DurableTaskClient>("test");
     private readonly DurableEntityClient _entities = Substitute.For<DurableEntityClient>("test");
 
-    private ConsultGenerationJobStarter CreateStarter()
+    private ConsultGenerationJobStarter CreateStarter(ILogger<ConsultGenerationJobStarter>? logger = null)
     {
         _client.Entities.Returns(_entities);
 
         return new ConsultGenerationJobStarter(
-            NullLogger<ConsultGenerationJobStarter>.Instance,
+            logger ?? NullLogger<ConsultGenerationJobStarter>.Instance,
             _packageStore,
             _pinResolver,
             TestCatalog.Instance);
@@ -452,7 +454,57 @@ public class ConsultGenerationJobStarterTests
         ConsultGenerationJobInitialize? Initialize,
         ConsultGenerationOrchestrationInput? OrchestrationInput);
 
-    private async Task<StartCapture> StartV7AndCaptureAsync(ConsultGenerationRequest request)
+    // ---- the logging audit (#241, § 9) ----------------------------------
+    //
+    // "Bytes are never persisted and never logged, including on the exception
+    // paths." Traced by reading every log statement on this path, and pinned
+    // here so it is a property rather than an observation.
+
+    private const string Sentinel = "SENTINEL-CLINICAL-CONTENT-0f1e2d";
+
+    [Fact]
+    public async Task AReadableDocument_PutsNoneOfItsContentInTheLog()
+    {
+        var log = new CapturingLogger<ConsultGenerationJobStarter>();
+
+        await StartV7AndCaptureAsync(
+            new ConsultGenerationRequest(
+                null,
+                InputFiles: new Dictionary<string, InputFilePayload>
+                {
+                    ["consult_draft"] = new("text/plain", Encoding.UTF8.GetBytes(Sentinel))
+                }),
+            log);
+
+        Assert.DoesNotContain(Sentinel, log.Everything, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUnreadableDocument_PutsNoneOfItsContentInTheLog()
+    {
+        // The exception path is the one § 9 calls out, because it is where
+        // "include the input so we can debug it" is most tempting. The bytes
+        // here are a truncated zip carrying the sentinel, so a handler that
+        // echoed any fragment of what it was reading would be caught.
+        var log = new CapturingLogger<ConsultGenerationJobStarter>();
+        var corrupt = Encoding.UTF8.GetBytes("PK" + Sentinel);
+
+        var captured = await StartV7AndCaptureAsync(
+            new ConsultGenerationRequest(
+                null,
+                InputFiles: new Dictionary<string, InputFilePayload>
+                {
+                    ["consult_draft"] = new("application/octet-stream", corrupt)
+                }),
+            log);
+
+        Assert.Equal(ConsultGenerationJobStartError.InputFileUnreadable, captured.Outcome.Error);
+        Assert.DoesNotContain(Sentinel, log.Everything, StringComparison.Ordinal);
+    }
+
+    private async Task<StartCapture> StartV7AndCaptureAsync(
+        ConsultGenerationRequest request,
+        ILogger<ConsultGenerationJobStarter>? logger = null)
     {
         _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackageRef("general", "latest"));
@@ -475,7 +527,7 @@ public class ConsultGenerationJobStarterTests
                 Arg.Any<CancellationToken>())
             .Returns(callInfo => Task.FromResult(((StartOrchestrationOptions?)callInfo[2])!.InstanceId!));
 
-        var outcome = await CreateStarter().StartAsync(
+        var outcome = await CreateStarter(logger).StartAsync(
             _client,
             request,
             "user-1",
