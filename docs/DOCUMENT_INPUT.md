@@ -161,7 +161,7 @@ three callers.
 > above was broader than the code. Latent rather than live, since no
 > shipped extractor emits bare CR.
 >
-> **One normaliser now, not four copies.** `LineEndings.Normalize` is
+> **One normaliser now, not four copies.** `CanonicalText.Normalize` is
 > called by the job starter, the parser and `AgentAttestationService`.
 > The rule having been written out four times is what let two of them
 > drift from it.

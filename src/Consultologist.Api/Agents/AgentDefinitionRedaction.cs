@@ -14,7 +14,7 @@ public static class AgentDefinitionRedaction
     private static readonly string[] RedactedFields = { "server_url:", "project_connection_id:" };
 
     /// <summary>
-    /// Deliberately not <see cref="Text.LineEndings.Normalize"/>, though the
+    /// Deliberately not <see cref="CanonicalText.Normalize"/>, though the
     /// CRLF handling looks identical (#251). This transform's contract is
     /// equivalence with the publish script's sed expression in another
     /// repository, not canonicalisation — and startup attestation enforces
