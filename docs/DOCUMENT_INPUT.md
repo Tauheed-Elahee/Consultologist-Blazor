@@ -169,9 +169,15 @@ three callers.
 > **`AgentDefinitionRedaction` is deliberately not a caller**, which the
 > paragraph above should not be read as claiming. Its transform's
 > contract is byte-equivalence with the publish script's `sed` in the
-> agents repo — startup attestation enforces published ==
-> `Redact(manifest)` — so widening line endings on this side alone would
-> fail loud in production. Both sides move together or neither does.
+> agents repo, and `sed`'s line model is `\n`-only: canonicalising a lone
+> `\r` here would split a bare-CR manifest into many lines where `sed`
+> sees one, so the two would produce different documents. Both sides move
+> together or neither does.
+>
+> *Corrected 2026-07-31 (#259).* This first said startup attestation
+> enforces published == `Redact(manifest)`, repeating a claim from that
+> class's own summary. No code path does that, and `Redact` has no
+> production caller — the equivalence is held by tests, not at runtime.
 >
 > Still no hash-version bump, for the reason given above: the definition
 > is unchanged and only the text reaching it is cleaner.

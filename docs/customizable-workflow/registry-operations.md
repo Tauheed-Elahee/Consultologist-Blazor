@@ -157,8 +157,12 @@ Public account, container `agent-definitions`:
 definitions are **redacted**: instructions, model, schema, and tool types are
 public; `tools[].server_url` and `project_connection_id` are stripped
 (`scripts/publish-agent-definition.sh`; the transform is line-for-line
-equivalent to `AgentDefinitionRedaction.Redact`, and startup attestation fails
-loud if the published artifact differs from `redact(bundled git manifest)`).
+equivalent to `AgentDefinitionRedaction.Redact`, held by that class's tests
+over two checked-in manifests). The publish script greps its own output and
+fails if either field survives, so plumbing cannot reach the registry.
+**No runtime check compares the published artifact against
+`redact(bundled git manifest)`** — this said one did until 2026-07-31; see
+#259, which decides whether to wire it or to drop the class.
 Versions are refuse-overwrite immutable.
 
 ## Account packages (`acct-*`) — implemented 2026-07-16 (#57)
