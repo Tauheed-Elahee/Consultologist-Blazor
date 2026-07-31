@@ -2,14 +2,15 @@
 #:package DocumentFormat.OpenXml@3.5.1
 #:property ManagePackageVersionsCentrally=false
 
-// Builds the fixtures derived from scripts/fixtures/ that are not PDFs: the
-// two Word documents the document-intake verification runs use (#254, for
-// #240), and the two text variants of prior_notes.txt that show-extraction.sh
-// sweeps by default (#256).
+// Builds the non-PDF input fixtures from scripts/fixtures/: the two Word
+// documents the document-intake verification runs use (#254, for #240), and
+// the two text variants of prior_notes.txt that show-extraction.sh sweeps by
+// default (#256). The PDFs have their own script because they need a
+// different library — see make-pdf-fixtures.cs.
 //
 // Usage:
-//   dotnet run --file scripts/make-docx-fixtures.cs -- <output-directory>
-//   dotnet run --file scripts/make-docx-fixtures.cs            # writes to the cwd
+//   dotnet run --file scripts/make-input-fixtures.cs -- <output-directory>
+//   dotnet run --file scripts/make-input-fixtures.cs            # writes to the cwd
 //
 // Why this is committed rather than kept as a scratch file: #240's close-out
 // rests on a production run against prior_notes.docx, and a verification whose
@@ -45,7 +46,8 @@
 //
 // Note that prior_notes.docx is NOT built from prior_notes.txt, though the two
 // text variants above are. The .docx content is structural — the tracked
-// change and the table — and lives here.
+// change and the table — and lives here, while the .txt is the source of the
+// text path's fixtures.
 
 using System.Runtime.CompilerServices;
 using System.Text;

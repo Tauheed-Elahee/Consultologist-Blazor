@@ -21,7 +21,7 @@
 # the working directory. They are generated, not committed:
 #
 #   dotnet run --file scripts/make-pdf-fixtures.cs -- <dir>
-#   dotnet run --file scripts/make-docx-fixtures.cs -- <dir>
+#   dotnet run --file scripts/make-input-fixtures.cs -- <dir>
 #
 # The referral text comes from scripts/fixtures/consult_draft.txt, beside this
 # script, because it is the same source the PDF fixture is built from — the two

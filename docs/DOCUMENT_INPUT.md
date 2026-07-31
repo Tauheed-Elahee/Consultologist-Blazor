@@ -312,7 +312,7 @@ and both doors agree.
 
 > **Amended 2026-07-30 during #254.** The two Word documents these claims
 > were verified against are built by
-> `scripts/make-docx-fixtures.cs` from `scripts/fixtures/`, so the runs
+> `scripts/make-input-fixtures.cs` from `scripts/fixtures/`, so the runs
 > can be repeated rather than remembered. `consult_draft.docx` carries
 > the same text as the `.txt` and `.pdf` fixtures, which is what makes a
 > cross-door hash comparison mean anything, and puts the clinic and date
@@ -328,7 +328,7 @@ and both doors agree.
 > | | |
 > | --- | --- |
 > | `scripts/make-pdf-fixtures.cs` | `referral-text.pdf`, `referral-scan.pdf` |
-> | `scripts/make-docx-fixtures.cs` | `consult_draft.docx`, `prior_notes.docx` |
+> | `scripts/make-input-fixtures.cs` | `consult_draft.docx`, `prior_notes.docx`, `prior_notes_utf16.txt`, `prior_notes_big.txt` |
 > | `scripts/show-extraction.sh` | what the parser reads out of any file |
 > | `scripts/verify-document-provenance.sh` | the § 7 provenance run (three real consults) |
 >
