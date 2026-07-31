@@ -139,6 +139,43 @@ public class AgentAttestationTests
         Assert.Empty(AttestedAgentManifest.Compare(manifest, deployed));
     }
 
+    [Fact]
+    public void Compare_ToleratesALoneCarriageReturn()
+    {
+        // #251 routed NormalizeText through the shared canonicaliser, which
+        // widened this comparison to a lone \r. That deliberately loosens a
+        // drift check: instructions differing only by a bare CR now attest as
+        // equal where they previously reported "instructions differ".
+        //
+        // Kept, on the reasoning that already justified tolerating CRLF — a
+        // carriage return is a transport artifact of YAML-to-JSON, not a
+        // behavioral difference in the agent. Pinned here so it reads as a
+        // decision rather than a side effect of sharing a helper, and so
+        // re-inlining NormalizeText fails a test.
+        var manifest = AttestedAgentManifest.Load(ManifestYaml);
+        var deployed = MatchingDeployed();
+        deployed["definition"]!["instructions"] =
+            "You are an AI assistant that helps physicians write consult notes.\r\rSTRICT: rule one.\r";
+
+        Assert.Empty(AttestedAgentManifest.Compare(manifest, deployed));
+    }
+
+    [Fact]
+    public void Compare_StillDetectsDriftThatChangesBehaviour()
+    {
+        // The bound on the tolerance above: everything that can change what
+        // an agent does is compared without normalisation, so widening line
+        // endings cannot hide any of it.
+        var manifest = AttestedAgentManifest.Load(ManifestYaml);
+        var deployed = MatchingDeployed();
+        deployed["definition"]!["instructions"] =
+            "You are an AI assistant that helps physicians write consult notes.\r\rSTRICT: rule two.\r";
+
+        Assert.Contains(
+            AttestedAgentManifest.Compare(manifest, deployed),
+            mismatch => mismatch.Contains("instructions differ"));
+    }
+
     [Theory]
     [InlineData("model", "gpt-4o", "model")]
     [InlineData("tool_choice", "required", "tool_choice")]

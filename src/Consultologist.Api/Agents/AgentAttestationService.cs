@@ -420,6 +420,16 @@ public sealed class AttestedAgentManifest
     // Line endings and trailing whitespace differ between YAML block scalars and the
     // API's JSON strings without changing agent behavior.
     //
+    // #251 widened this to a lone \r along with the rest of the codebase, which
+    // deliberately loosens a drift check: instructions differing only by a bare CR
+    // now attest as equal where they previously reported "instructions differ".
+    // Kept, on the same reasoning that already justified tolerating CRLF — a
+    // carriage return is a transport artifact of YAML-to-JSON, not a behavioral
+    // difference in the agent — and pinned by a test so it reads as a decision
+    // rather than a side effect. Everything that can change what an agent does
+    // (model, tool_choice, reasoning effort, the schema, the tool list) is compared
+    // without normalisation.
+    //
     // The ?? is here and not inside CanonicalText: this comparison has always
     // treated absent as empty, and the shared helper preserves null because its
     // other callers need it to.
