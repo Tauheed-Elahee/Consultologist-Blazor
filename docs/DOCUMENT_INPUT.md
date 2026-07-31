@@ -1,9 +1,11 @@
 # Document Input: One Parser, Two Sources
 
-**Status: design record for #234 (settled 2026-07-28), implementation
-tracked by its sub-issues — #235 the parser, #236 the app source, #237
-the email source, #238 files at job start, #240 DOCX, #241 hardening,
-#242 the decoding defect.** v7 declared named input slots (#209) and
+**Status: design record for #234 (settled 2026-07-28). Implemented and
+verified in production — #235 the parser, #236 the app source, #237 the
+email source, #238 files at job start, #240 DOCX, #241 hardening, #242
+the decoding defect, plus #251 lone-CR normalisation, #253 the extractor
+id, and #254/#256 the verification tooling. One thing is left, and it is
+tracked in #266: per-account rate limiting.** v7 declared named input slots (#209) and
 both intake paths then stalled at `.txt`/`.md`, which is not the shape
 referrals arrive in. Decisions taken with the operator: the file itself
 is submitted rather than text extracted from it in the browser;
@@ -647,7 +649,7 @@ job start, and email intake.
 > | malformed corpus | **done** in #241 — every case above has a test asserting a named outcome |
 > | never logged | **done** in #241 — audited and pinned |
 > | memory bound | **done** in #241 — a concurrency gate; see below for what that does and does not bound |
-> | per-account rate limiting | outstanding |
+> | per-account rate limiting | **moved to #266**, which is the whole of what is left |
 >
 > **Amended 2026-08-01 (#241): the memory bound is a concurrency gate.**
 > A true per-parse cap is not achievable in-process, so what ships bounds
@@ -697,7 +699,13 @@ job start, and email intake.
 >
 > `busy` is the first outcome here that is about us rather than the
 > document, and its copy says so: *"Nothing is wrong with this one."*
-> Tunable without a deploy via `DocumentExtraction__MaxConcurrentParses`.
+>
+> Tunable without a deploy via `DocumentExtraction__MaxConcurrentParses`
+> (`docs/CONFIGURATION.md`). **Set it to `1` to watch the gate fire**: with
+> one slot, two simultaneous uploads race for it and the loser gets 503. At
+> the default of 4 the gate is invisible to a single operator — which is
+> intended, and is why `1` is the only practical way to exercise the refusal
+> path in production.
 >
 > **The corpus outcomes were measured, not predicted**, and one is worth
 > recording: a zip that is not an OPC package comes back
