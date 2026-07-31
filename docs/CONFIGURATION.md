@@ -214,6 +214,40 @@ disagreement, not transient.
 | `WorkflowPackages__ConnectionStringName` | *Name of another setting* holding a storage connection string (local-dev fallback path) | `AzureWebJobsStorage` | no |
 | `WorkflowPackages__Default` | Package ref: `name@vYYYY.MM.N` or `name@latest` | `general@latest` | no |
 
+## Document extraction (`Documents/DocumentExtraction.cs`, #241)
+
+| Variable | Accepted values | Default | Required |
+|---|---|---|---|
+| `DocumentExtraction__MaxConcurrentParses` | A positive integer: how many documents this worker parses at once. Anything unparseable or ≤ 0 falls back to the default | `4` | no |
+
+Four because the Function App runs on Linux Flex Consumption at **2048 MB,
+which is one CPU core**. Past a handful of concurrent parses there is no
+throughput to gain and only memory to lose, and four still finish inside the
+20-second parse timeout where the platform's default of 16 concurrent HTTP
+requests would not. A parse retains 10–15 MB for documents we accept
+(measured against PdfPig 0.1.15; cost tracks pages and extracted text, not
+file size).
+
+**Set it to `1` to watch the gate fire.** With one slot, two simultaneous
+uploads race for it and the loser gets `503` with *"We are reading several
+documents right now. Nothing is wrong with this one — try again in a
+moment."* At the default of 4 the gate is invisible to a single operator,
+which is intended — so `1` is the only practical way to see the refusal path
+in production. No deploy is needed either way; remove the setting afterwards.
+
+```azurecli
+az functionapp config appsettings set --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
+    --settings DocumentExtraction__MaxConcurrentParses=1
+# and to restore the default:
+az functionapp config appsettings delete --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
+    --setting-names DocumentExtraction__MaxConcurrentParses
+```
+
+Note what this does **not** bound: the request body is buffered before the
+gate, so upload memory is bounded by platform concurrency rather than by this
+number, and one crafted file can still allocate its own worst case. See
+`docs/DOCUMENT_INPUT.md` § 9.
+
 ## Storage stores (Azure Tables)
 
 Entra ID first (#10, mirroring the workflow-package registry): when a
@@ -237,6 +271,22 @@ string remains only as the local-dev (Azurite) fallback.
 | `FUNCTIONS_WORKER_RUNTIME` | Must be `dotnet-isolated`. |
 | `WEBSITE_INSTANCE_ID` | Provided by Azure; the code only reads it to detect "running in Azure". Never set manually. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Telemetry destination. |
+
+### Flex Consumption scale settings (not app settings)
+
+Not in `host.json` and not environment variables — they live on the plan and
+are read with `az functionapp scale config show`. Recorded because #241's
+concurrency gate is sized against them.
+
+| Setting | Current | Notes |
+|---|---|---|
+| `instanceMemoryMB` | `2048` | Flex offers 512 / 2048 / 4096, giving 0.25 / 1 / 2 CPU cores. Plus 272 MB of platform buffer that is not billed |
+| HTTP concurrency | unset ⇒ **16** | The default comes from instance size: 512 → 4, 2048 → 16, 4096 → 32. Set explicitly with `az functionapp scale config set --trigger-type http --trigger-settings perInstanceConcurrency=N`, after which it stops tracking instance size |
+| `maximumInstanceCount` | `100` | Dropping below 40 for HTTP apps is documented as causing throttling under load |
+
+**HTTP concurrency cannot be set in `host.json` on Flex Consumption.**
+`maxConcurrentRequests` there is accepted into the file and silently ignored,
+which is worth knowing before anyone tries it.
 
 ## Legacy settings
 
