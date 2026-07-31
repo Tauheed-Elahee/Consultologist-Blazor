@@ -29,6 +29,10 @@ public static class DocumentExtractionOutcomes
     // #235: the parse outran its wall clock. See ExtractAsync for what this
     // does and does not bound.
     public const string TimedOut = "timed-out";
+    // #241: no parse slot came free in time. The only outcome here that is
+    // about us rather than about the document — the file may be perfectly
+    // readable, and resending is the right advice.
+    public const string Busy = "busy";
 }
 
 internal sealed record DocumentExtractionResult(
@@ -62,9 +66,15 @@ internal sealed record DocumentExtractionResult(
 /// gate would be a second authority that can disagree with this one, and a
 /// .txt full of PDF bytes is the case that exposes it.
 ///
-/// Pure: no I/O, no configuration, no logging. Adding a format means one
-/// entry in <see cref="Formats"/> plus its extractor, and nothing else
-/// anywhere — which is #240's acceptance criterion.
+/// <see cref="Extract"/> is pure: no I/O, no configuration, no logging.
+/// Adding a format means one entry in <see cref="Formats"/> plus its
+/// extractor, and nothing else anywhere — which is #240's acceptance
+/// criterion.
+///
+/// <see cref="ExtractAsync"/> is where that stops, and deliberately: it owns
+/// the wall clock and, since #241, the concurrency gate, which reads one app
+/// setting. Both bound the *running* of a parse rather than the reading of a
+/// format, so the pure core stays pure and the impure edge is one method.
 ///
 /// The one dependency outside this folder is
 /// <see cref="CanonicalText.Normalize"/>, and it is not a format concern: it
@@ -94,6 +104,52 @@ internal static class DocumentExtraction
     internal const int MaxArchiveEntries = 512;
 
     internal static readonly TimeSpan MaxParseDuration = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// How many documents may be parsed at once in this worker (#241,
+    /// docs/DOCUMENT_INPUT.md § 9).
+    ///
+    /// Four, and CPU decides that as much as memory does. A 2048 MB Flex
+    /// Consumption instance — what this app runs on — has one CPU core, so
+    /// past a handful of concurrent parses there is no throughput to gain and
+    /// only memory to lose. Four sharing one core still finish inside
+    /// MaxParseDuration; the platform's default of sixteen would not
+    /// reliably.
+    ///
+    /// On memory: a realistic parse retains 10-15 MB (measured against
+    /// PdfPig 0.1.15 — cost tracks pages and extracted text, not file size),
+    /// and even at a pessimistic 100 MB for a pathological one, four is
+    /// 400 MB inside 2048.
+    ///
+    /// An app setting so it can be tuned without a deploy.
+    /// </summary>
+    internal static int MaxConcurrentParses { get; } =
+        int.TryParse(Environment.GetEnvironmentVariable("DocumentExtraction__MaxConcurrentParses"), out var configured)
+        && configured > 0
+            ? configured
+            : 4;
+
+    /// <summary>
+    /// What an interactive caller waits for a slot before being told we are
+    /// busy: the preview endpoint and app-originated job start, where someone
+    /// is watching a spinner.
+    /// </summary>
+    internal static readonly TimeSpan InteractiveGateWait = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// What the email poller waits. Long enough that expiry means a real
+    /// outage rather than a busy minute, because <c>busy</c> must never reach
+    /// that door: every start-failure path in EmailIntakeProcessor moves the
+    /// message to the Rejected folder and replies to the sender, so a
+    /// transient refusal would permanently reject a referral and tell a
+    /// clinician their document could not be read — which would be false.
+    ///
+    /// Bounded rather than infinite because a slot can be held by an orphaned
+    /// parse (see ExtractAsync), so waiting forever could hang the poll.
+    /// </summary>
+    internal static readonly TimeSpan BackgroundGateWait = TimeSpan.FromMinutes(5);
+
+    private static readonly SemaphoreSlim ParseGate = new(MaxConcurrentParses, MaxConcurrentParses);
 
     private sealed record DocumentFormat(Func<byte[], bool> Matches, Func<byte[], DocumentExtractionResult> Extract);
 
@@ -126,12 +182,55 @@ internal static class DocumentExtraction
     /// brute-force rescan of the entire file when that table is damaged —
     /// and the page tree inside Open, which is where its historical hangs
     /// lived.
+    ///
+    /// <paramref name="gateWait"/> is how long to wait for one of
+    /// <see cref="MaxConcurrentParses"/> slots. It is deliberately separate
+    /// from <see cref="MaxParseDuration"/>: queueing must not eat the parse
+    /// budget, or a busy minute would turn readable documents into
+    /// <c>timed-out</c>.
     /// </remarks>
+    internal static Task<DocumentExtractionResult> ExtractAsync(
+        byte[] bytes,
+        TimeSpan gateWait,
+        CancellationToken cancellationToken) =>
+        ExtractAsync(bytes, gateWait, ParseGate, cancellationToken);
+
+    /// <summary>
+    /// The gate as a parameter, so saturation can be tested by handing in a
+    /// semaphore with no permits rather than by racing real parses against a
+    /// clock. Production always uses <see cref="ParseGate"/>.
+    /// </summary>
     internal static async Task<DocumentExtractionResult> ExtractAsync(
         byte[] bytes,
+        TimeSpan gateWait,
+        SemaphoreSlim gate,
         CancellationToken cancellationToken)
     {
-        var parse = Task.Run(() => Extract(bytes), cancellationToken);
+        if (!await gate.WaitAsync(gateWait, cancellationToken))
+        {
+            return DocumentExtractionResult.Refused(DocumentExtractionOutcomes.Busy);
+        }
+
+        // The token is deliberately NOT passed to Task.Run. An already-
+        // cancelled token would cancel the task without ever running the
+        // delegate, so the finally below would not run and the slot would
+        // leak. The work is not cancellable once started anyway — that is
+        // what the remarks above say — so the token bought nothing here.
+        var parse = Task.Run(() =>
+        {
+            try
+            {
+                return Extract(bytes);
+            }
+            finally
+            {
+                // Released when the WORK finishes, not when the caller stops
+                // waiting. A timed-out parse keeps its slot until the orphan
+                // finishes, which is correct: it is still holding the memory
+                // this gate exists to bound.
+                gate.Release();
+            }
+        });
 
         try
         {

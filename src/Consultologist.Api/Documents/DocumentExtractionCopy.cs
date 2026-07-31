@@ -50,6 +50,12 @@ internal static class DocumentExtractionCopy
         DocumentExtractionOutcomes.TimedOut =>
             "This file took too long to read. It may be unusually complex or damaged.",
 
+        // The one sentence here that is not about the file. It says so,
+        // because "could not be read" would send someone looking for a fault
+        // in a document that has none.
+        DocumentExtractionOutcomes.Busy =>
+            "We are reading several documents right now. Nothing is wrong with this one — try again in a moment.",
+
         _ => "This file could not be read."
     };
 }
