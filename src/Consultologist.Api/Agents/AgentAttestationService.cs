@@ -418,9 +418,11 @@ public sealed class AttestedAgentManifest
     }
 
     // Line endings and trailing whitespace differ between YAML block scalars and the
-    // API's JSON strings without changing agent behavior.
+    // API's JSON strings without changing agent behavior. The ?? here and not inside
+    // LineEndings: this comparison has always treated absent as empty, and the shared
+    // helper preserves null because its other callers need it to.
     internal static string NormalizeText(string? text) =>
-        (text ?? string.Empty).Replace("\r\n", "\n").TrimEnd();
+        LineEndings.Normalize(text) ?? string.Empty;
 
     /// <summary>Order-insensitive JSON equality: objects re-serialized with sorted keys.</summary>
     internal static string CanonicalJson(JsonNode? node)

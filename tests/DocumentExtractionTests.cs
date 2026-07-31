@@ -107,6 +107,35 @@ public class DocumentExtractionTests
     }
 
     [Fact]
+    public void ALoneCarriageReturn_IsALineEndingToo()
+    {
+        // Classic Mac endings, and what some PDF viewers put on the
+        // clipboard. These survived normalisation until #251, so the same
+        // referral typed by hand was different input to the hash.
+        var result = DocumentExtraction.Extract(Encoding.UTF8.GetBytes("One.\rTwo.\r"));
+
+        Assert.Equal("One.\nTwo.", result.Text);
+    }
+
+    [Fact]
+    public void CrlfIsNotTurnedIntoABlankLine()
+    {
+        // Order inside the normaliser: replacing a lone CR first would make
+        // every \r\n into \n\n and invent a blank line between every pair.
+        Assert.Equal("One.\nTwo.", LineEndings.Normalize("One.\r\nTwo."));
+    }
+
+    [Fact]
+    public void NormalisingNull_StaysNull()
+    {
+        // Not cosmetic. The job starter runs this over ConsultDraft, and
+        // {"consultDraft":null} and {"consultDraft":""} are different
+        // canonical JSON — collapsing one to the other would silently move
+        // the v2 draft-only hash.
+        Assert.Null(LineEndings.Normalize(null));
+    }
+
+    [Fact]
     public void WhitespaceOnly_IsEmptyRatherThanExtracted()
     {
         // Otherwise it would fill a required slot with a blank string and be

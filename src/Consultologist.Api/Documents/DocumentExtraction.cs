@@ -173,9 +173,10 @@ internal static class DocumentExtraction
     }
 
     /// <summary>
-    /// Conservative and nothing more: CRLF to LF, trailing whitespace off
-    /// the end. The same canonicalisation AgentDefinitionRedaction and
-    /// AgentAttestationService already apply before comparing text.
+    /// Conservative and nothing more: line endings to LF, trailing
+    /// whitespace off the end — <see cref="LineEndings.Normalize"/>, the
+    /// same call the job starter makes over every input so that a document
+    /// and the same text typed cannot differ on line endings alone.
     ///
     /// Deliberately not done here (docs/DOCUMENT_INPUT.md § 2): de-hyphenating
     /// words split across a line break, rejoining hard-wrapped lines into
@@ -190,7 +191,7 @@ internal static class DocumentExtraction
             return result;
         }
 
-        var text = result.Text.Replace("\r\n", "\n").TrimEnd();
+        var text = LineEndings.Normalize(result.Text);
 
         // A document of nothing but whitespace is empty, not extracted —
         // otherwise it would fill a required input slot with a blank string

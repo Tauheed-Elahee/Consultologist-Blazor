@@ -412,6 +412,41 @@ public class ConsultGenerationJobStarterTests
             ConsultGenerationProvenance.ComputeDeclaredInputsHash(unix.Inputs!));
     }
 
+    [Fact]
+    public void BareCrText_HashesLikeItsLfEquivalent()
+    {
+        // The CRLF case above was closed in #238; a lone \r survived both
+        // normalisation sites until #251, so § 2's "conservative and
+        // universal" was broader than the code. A referral carrying classic
+        // Mac endings hashed differently from the same referral typed, and
+        // the record called them different input for a reason no reader
+        // could see.
+        var mac = ConsultGenerationJobStarter.NormalizeInputs(new ConsultGenerationRequest(
+            null,
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = "One.\rTwo.\r" }));
+        var unix = ConsultGenerationJobStarter.NormalizeInputs(new ConsultGenerationRequest(
+            null,
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = "One.\nTwo." }));
+
+        Assert.Equal(
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(mac.Inputs!),
+            ConsultGenerationProvenance.ComputeDeclaredInputsHash(unix.Inputs!));
+    }
+
+    [Fact]
+    public void ANullConsultDraft_SurvivesNormalisationAsNull()
+    {
+        // The trap in sharing one normaliser across call sites: this runs
+        // over ConsultDraft too, and a helper that collapsed null to ""
+        // would turn a v5/v6 job's absent draft into an empty one. The v2
+        // draft-only hash serialises the field, so {"consultDraft":null}
+        // and {"consultDraft":""} are different hashes.
+        var normalized = ConsultGenerationJobStarter.NormalizeInputs(
+            new ConsultGenerationRequest(null, Inputs: null));
+
+        Assert.Null(normalized.ConsultDraft);
+    }
+
     private sealed record StartCapture(
         ConsultGenerationJobStartOutcome Outcome,
         ConsultGenerationJobInitialize? Initialize,
