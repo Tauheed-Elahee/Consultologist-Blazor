@@ -61,7 +61,7 @@ var fontDirectory = Path.Combine(repository, "src", "Consultologist.Api", "Fonts
 if (!File.Exists(referralSource))
 {
     // Fatal rather than falling back to embedded text, for the same reason
-    // make-docx-fixtures.cs is: a substitution would still produce a valid
+    // make-input-fixtures.cs is: a substitution would still produce a valid
     // PDF, of different content, and the fixture would quietly stop being the
     // referral the other fixtures carry.
     Console.Error.WriteLine($"missing source text: {referralSource}");

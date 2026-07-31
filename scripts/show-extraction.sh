@@ -11,7 +11,7 @@
 # Fixtures are generated, not committed:
 #
 #   dotnet run --file scripts/make-pdf-fixtures.cs -- <dir>
-#   dotnet run --file scripts/make-docx-fixtures.cs -- <dir>
+#   dotnet run --file scripts/make-input-fixtures.cs -- <dir>
 #
 # Why this is the right way to answer "what did the job actually read":
 # History deliberately stores hashes and origins, never input text, and the
