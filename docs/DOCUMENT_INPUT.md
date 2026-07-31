@@ -458,7 +458,7 @@ POST /api/ConsultGenerationJobs
 
 - **Record the origin, beside the hash and not inside it.** Per slot:
   whether the text was typed or extracted, the extractor's
-  `name@version`, and the page count. `Source` today is only `app` or
+  `name/version`, and the page count. `Source` today is only `app` or
   `email` (`ConsultGenerationJobSources`), which cannot express that a
   slot was machine-read from a document.
 - **Why it matters here specifically.** `provenance.md` says the
@@ -469,6 +469,27 @@ POST /api/ConsultGenerationJobs
 - **Why the extractor version is part of it.** A pinned pre-1.0 library
   can change its output for identical input across versions. Recording
   the version is what makes "re-run this record" a meaningful request.
+
+> **Amended 2026-07-30 during #253.** The separator is `/` and always
+> has been — `text/1`, `pdfpig/0.1.15+f131f642`, `openxml/3.5.1+3139fdfd`.
+> The `name@version` above was wrong about code that shipped, and the
+> ids are persisted, so the doc is what changed.
+>
+> **The id is normalised where it is built** (`ExtractorIdentity`), not
+> where it is shown. Both extractors used to take
+> `AssemblyInformationalVersionAttribute` verbatim, which read acceptably
+> for PdfPig and put
+> `3.5.1+Branch.main.Sha.<sha>.<sha>` — a branch name and two copies of a
+> commit — into the panel for OpenXml. Now: everything before the `+`,
+> then the first build-metadata token that is hex and at least 32
+> characters, shortened to 8. No qualifying token means the version
+> alone. The floor matters: build metadata is mostly not commits, and a
+> branch named `deadbee` is hex.
+>
+> **One value, stored and displayed.** The commit stays in both rather
+> than being trimmed for the panel, so a reviewer comparing a screenshot
+> against the record sees one string. Records written before this keep
+> the value they were written with — a past record displays what it said.
 - **Durable replay safety**: the annotation travels as trailing optional
   record parameters on the orchestration input, deserialising null for
   jobs already in flight — the discipline #215 and #217 followed.
