@@ -617,9 +617,9 @@ job start, and email intake.
   bombs are bytes-cheap and expansion-expensive), and a **disabled XML
   resolver** so an external entity cannot reach the network or the
   filesystem.
-- **Per-account rate limiting** on the preview endpoint. There is no
-  rate limiting anywhere in the app today; this is the first endpoint
-  where one caller can impose real CPU cost.
+- **Per-account rate limiting** on every door that reaches the parser —
+  not only the preview endpoint, since a limit on one of three is not a
+  limit. This was the first rate limiting of any kind in the app.
 - **Bytes are never persisted and never logged**, including on the
   exception paths. The filename never being sent is only half of PHI
   minimisation; the other half is what our own error handling writes
@@ -649,7 +649,7 @@ job start, and email intake.
 > | malformed corpus | **done** in #241 — every case above has a test asserting a named outcome |
 > | never logged | **done** in #241 — audited and pinned |
 > | memory bound | **done** in #241 — a concurrency gate; see below for what that does and does not bound |
-> | per-account rate limiting | **moved to #266**, which is the whole of what is left |
+> | per-account rate limiting | **done** in #266 — a fixed hourly window per account; see below |
 >
 > **Amended 2026-08-01 (#241): the memory bound is a concurrency gate.**
 > A true per-parse cap is not achievable in-process, so what ships bounds
@@ -724,6 +724,85 @@ job start, and email intake.
 > observed — the tests capture structured values and scopes, not only
 > rendered messages, because Application Insights stores template
 > arguments as customDimensions.
+>
+> **Rate limiting, added 2026-08-01 (#266).** The unit is **one
+> submission** — one preview call or one job start, whatever it carries.
+> That is deliberately *not* the CPU unit: a submission with three
+> attachments costs exactly what a 20 KB text file costs. It bounds how
+> often an account can ask; the concurrency gate above bounds what each
+> ask costs. Fixed window on the UTC hour, so a burst straddling a
+> boundary can reach twice the limit — accepted, because sliding would
+> cost a row per submission and a pruning story for an edge that does not
+> matter at this scale.
+>
+> **Table-backed, not in-memory.** Flex Consumption scales to many
+> instances and recycles workers, so an in-process counter would mean N
+> instances × the stated limit, reset on every recycle — the stated limit
+> would not be the enforced one.
+>
+> **Two enforcement points cover three doors**, because the email poller
+> reaches the parser *through* the job starter: the check lives in
+> `ConsultGenerationJobStarter.StartAsync` and at the preview endpoint,
+> the same split `GateWaitFor` already makes. It is **not** an extraction
+> outcome — every value in that vocabulary describes what became of an
+> attempt to read a document, and a rate-limited caller made no attempt.
+> Interactive callers get `429` with `Retry-After`.
+>
+> **It fails open.** A storage fault allows the submission and logs. The
+> asymmetry is the justification: losing the limit during an outage costs
+> CPU, refusing during one costs a clinician their referral.
+>
+> **The email door queues instead of being refused, and that is the
+> load-bearing part — again.** #265 could simply never refuse that door;
+> a rate limit cannot be waited out inside one poll when the window is an
+> hour. So a rate-limited message moves to a **`Queued` Inbox child
+> folder** beside `Processed` and `Rejected`, and its sender is told
+> **once, on the way in**, that it is queued and needs no action. Silence
+> for two hours is indistinguishable from a black hole; a reply on every
+> retry would be about thirty emails. Which one happens is decided by
+> *the folder the message was listed from* — Inbox means first time,
+> `Queued` means retry — so replying exactly once needs no counter and no
+> stored flag.
+>
+> A child folder's messages never appear in the Inbox listing, so the
+> poll makes **two calls, `Queued` first**, sharing one
+> `MaxMessagesPerPoll` budget. Queue-first is fairness, not tidiness:
+> otherwise a steady stream of new arrivals spends the budget every
+> window and the backlog never drains. The `Queued` listing carries no
+> `isRead` filter — membership is the state — and that absence is also
+> what makes `$orderby=receivedDateTime` legal on it. Graph requires
+> every property in `$orderby` to also appear in `$filter` for messages,
+> so asking the Inbox listing to sort would return `InefficientFilter`
+> rather than sorted results; it is left unordered.
+>
+> **Order on the queue path is load-bearing: mark, then reply, then
+> move.** A failed mark leaves an unread Inbox message with a null claim,
+> which the existing stale-claim repair already handles; a failed move
+> leaves a `queued` claim that the next poll's `RepairAsync` clears.
+> `queued` is the first non-terminal value in `EmailIntakeOutcomes` —
+> the row is released and the message retried in full, which is safe
+> precisely because a queued message started no job.
+>
+> **Giving up is checked on the way in**, as the first thing done to a
+> message listed from `Queued`, before it is claimed and before its body
+> is fetched. That makes the bound a property of the folder — nothing
+> waits in `Queued` longer than `RateLimits__MaxEmailDeferralHours` —
+> rather than a property of still being over the limit, and an expired
+> message costs no Graph reads at all. **Received time is the clock**: it
+> measures what the sender experiences, not how long we held it, and
+> after that long a fresh re-send is safer than silently generating a
+> consult from stale clinical context. An unknown received time never
+> expires — refusing a referral over missing metadata is the wrong
+> failure direction.
+>
+> **That check never runs against the Inbox listing**, and the asymmetry
+> is the whole justification: after a poller outage every unread message
+> is hours old, and auto-rejecting that backlog would tell senders who
+> had heard nothing at all that they had failed. A queued message has
+> already been told it is queued, so the rejection completes a
+> conversation rather than starting one. This must not be "helpfully"
+> generalised to both listings later; there is a test whose only job is
+> to fail if it is.
 >
 > **Two guards cannot be mutation-tested and should not be claimed as
 > though they were.** The stack-depth bound's failure mode is an
