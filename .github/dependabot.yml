@@ -1,0 +1,24 @@
+# Keeps the SHA-pinned actions current (#270).
+#
+# Pinning to a full commit SHA is the control that freezes reviewed code, and
+# its cost is that a pin never moves on its own. Nobody bumps six hex strings
+# by hand, so without this the pins rot — and a rotted pin is worse than a tag
+# when the thing that moved upstream was a security fix.
+#
+# Dependabot updates the SHA *and* the trailing version comment, so a bump
+# arrives as a reviewable PR rather than as trust in a tag that can be
+# repointed. That is the combination worth having: frozen until reviewed,
+# rather than frozen forever.
+#
+# The organization requires actions to be pinned to a full-length commit SHA,
+# so any PR from here that proposed a tag would be rejected by policy. It does
+# not: Dependabot preserves the pinning style it finds.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "Bump"
+    labels: []
