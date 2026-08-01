@@ -58,8 +58,35 @@ files: `src/Consultologist.Api/Email/*`, settings in
   unread mail — zero public surface, no subscription lifecycle; the
   processor is webhook-reusable if latency ever matters.
 - **Disposition**: accepted → `Inbox/Processed`, everything else →
-  `Inbox/Rejected` (debuggable v1), with an Exchange retention policy
-  expected on the mailbox — the folders hold PHI at rest.
+  `Inbox/Rejected` (debuggable v1), and since #266 rate-limited →
+  `Inbox/Queued`, with an Exchange retention policy expected on the
+  mailbox — the folders hold PHI at rest.
+- **The `Queued` folder (#266, 2026-08-01)**: when the sender's account
+  is over its hourly submission limit the message is parked rather than
+  rejected, because every other failure path here replies that the
+  consult could not be processed and for a rate limit that would be
+  false. The sender is told **once**, on the way in, that it is queued
+  and needs no action — and which of those two things happens is decided
+  by the folder the message was listed from, so replying exactly once
+  needs no counter and no stored flag.
+
+  A child folder's messages never appear in the Inbox listing, so each
+  poll makes **two calls, `Queued` first**, sharing one
+  `MaxMessagesPerPoll` budget. Queue-first is fairness: otherwise new
+  arrivals spend the account's budget every window and the backlog never
+  drains. The order on the queue path is **mark, then reply, then move**
+  — every failure then either self-corrects or degrades to behaviour
+  that already exists.
+
+  `queued` is the first non-terminal value in `EmailIntakeOutcomes`:
+  `RepairAsync` releases the claim and the message is retried in full,
+  safe because a queued message started no job. A message that outlives
+  `RateLimits__MaxEmailDeferralHours` is given up on with one further
+  reply — checked at the `Queued` listing, before the message is claimed
+  or read, and **never against the Inbox listing**, since after an
+  outage every unread message is old and auto-rejecting that backlog
+  would tell senders who had heard nothing that they had failed. Full
+  rationale in `docs/DOCUMENT_INPUT.md` § 9.
 - **Authentication floor** (corrected after the first production e2e):
   intra-tenant mail arrives via authenticated submission with NO
   SPF/DKIM/DMARC stamps, so the floor accepts

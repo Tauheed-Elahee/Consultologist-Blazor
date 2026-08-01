@@ -38,6 +38,17 @@ public interface IGraphMailClient
 {
     Task<IReadOnlyList<GraphMessageRef>> ListUnreadInboxMessagesAsync(string mailbox, int top, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Every message in one folder, oldest first — the Queued backlog (#266).
+    /// A child folder's messages never appear in the Inbox listing, so this is
+    /// a second call rather than a wider one.
+    /// </summary>
+    Task<IReadOnlyList<GraphMessageRef>> ListFolderMessagesAsync(
+        string mailbox,
+        string folderId,
+        int top,
+        CancellationToken cancellationToken);
+
     /// <summary>Full message with text body and internet headers; null on 404.</summary>
     Task<GraphMessage?> GetMessageAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
@@ -51,6 +62,14 @@ public interface IGraphMailClient
 
     /// <summary>Resolves (creating if needed) an Inbox child folder id; memoized per process.</summary>
     Task<string> EnsureInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The folder id, or null when it does not exist (#266). The read-only
+    /// half of <see cref="EnsureInboxChildFolderAsync"/>: polling for a
+    /// backlog must not conjure a Queued folder into every mailbox that has
+    /// never needed one.
+    /// </summary>
+    Task<string?> FindInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken);
 
     Task MoveMessageAsync(string mailbox, string messageId, string destinationFolderId, CancellationToken cancellationToken);
 
@@ -91,11 +110,42 @@ public sealed class GraphMailClient : IGraphMailClient
         _logger = logger;
     }
 
+    private const string MessageRefSelect = "$select=id,internetMessageId,receivedDateTime";
+
     public async Task<IReadOnlyList<GraphMessageRef>> ListUnreadInboxMessagesAsync(string mailbox, int top, CancellationToken cancellationToken)
     {
+        // Deliberately unordered. Graph requires every property named in
+        // $orderby to also appear in $filter for messages, so adding
+        // "$orderby=receivedDateTime" beside "isRead eq false" returns
+        // InefficientFilter ("the restriction or sort order is too complex")
+        // rather than sorted results. Ordering that matters is on the Queued
+        // listing, which needs no filter and can therefore ask for it.
         var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/messages"
-            + $"?$filter=isRead eq false&$top={top}&$select=id,internetMessageId,receivedDateTime";
+            + $"?$filter=isRead eq false&$top={top}&{MessageRefSelect}";
 
+        return await ListMessageRefsAsync(url, cancellationToken);
+    }
+
+    /// <summary>
+    /// Every message in a folder, oldest first (#266). No <c>isRead</c>
+    /// filter: for the Queued folder, membership is the state, and read
+    /// status says nothing about whether a message still needs processing.
+    /// That absence is also what makes the sort legal — see the note above.
+    /// </summary>
+    public async Task<IReadOnlyList<GraphMessageRef>> ListFolderMessagesAsync(
+        string mailbox,
+        string folderId,
+        int top,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/{Uri.EscapeDataString(folderId)}/messages"
+            + $"?$top={top}&$orderby=receivedDateTime asc&{MessageRefSelect}";
+
+        return await ListMessageRefsAsync(url, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<GraphMessageRef>> ListMessageRefsAsync(string url, CancellationToken cancellationToken)
+    {
         using var document = await SendAsync(HttpMethod.Get, url, body: null, cancellationToken)
             ?? throw new InvalidOperationException("Graph message listing failed.");
 
@@ -218,6 +268,45 @@ public sealed class GraphMailClient : IGraphMailClient
         using var _ = await SendAsync(new HttpMethod("PATCH"), url, "{\"isRead\":true}", cancellationToken, tolerateNotFound: true);
     }
 
+    public async Task<string?> FindInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{mailbox}|{displayName}";
+
+        await _folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            return _folderIds.TryGetValue(cacheKey, out var cached)
+                ? cached
+                : await FindUncachedAsync(mailbox, displayName, cacheKey, cancellationToken);
+        }
+        finally
+        {
+            _folderLock.Release();
+        }
+    }
+
+    private async Task<string?> FindUncachedAsync(
+        string mailbox,
+        string displayName,
+        string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        var listUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders"
+            + $"?$filter=displayName eq '{displayName.Replace("'", "''")}'";
+
+        using var listDocument = await SendAsync(HttpMethod.Get, listUrl, body: null, cancellationToken);
+        var existing = listDocument?.RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
+
+        if (existing is not { ValueKind: JsonValueKind.Object })
+        {
+            return null;
+        }
+
+        var id = existing.Value.GetProperty("id").GetString()!;
+        _folderIds[cacheKey] = id;
+        return id;
+    }
+
     public async Task<string> EnsureInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken)
     {
         var cacheKey = $"{mailbox}|{displayName}";
@@ -230,18 +319,9 @@ public sealed class GraphMailClient : IGraphMailClient
                 return cached;
             }
 
-            var listUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders"
-                + $"?$filter=displayName eq '{displayName.Replace("'", "''")}'";
-
-            using (var listDocument = await SendAsync(HttpMethod.Get, listUrl, body: null, cancellationToken))
+            if (await FindUncachedAsync(mailbox, displayName, cacheKey, cancellationToken) is { } found)
             {
-                var existing = listDocument?.RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
-                if (existing is { ValueKind: JsonValueKind.Object })
-                {
-                    var id = existing.Value.GetProperty("id").GetString()!;
-                    _folderIds[cacheKey] = id;
-                    return id;
-                }
+                return found;
             }
 
             var createUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders";

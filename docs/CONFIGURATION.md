@@ -248,6 +248,43 @@ gate, so upload memory is bounded by platform concurrency rather than by this
 number, and one crafted file can still allocate its own worst case. See
 `docs/DOCUMENT_INPUT.md` § 9.
 
+## Rate limiting (`RateLimiting/AccountRateLimiter.cs`, #266)
+
+| Variable | Accepted values | Default | Required |
+|---|---|---|---|
+| `RateLimits__SubmissionsPerHour` | A positive integer: submissions one account may make per clock hour. **`0` or negative disables the limit entirely** — the kill switch, and what local dev and CI run on | `60` | no |
+| `RateLimits__MaxEmailDeferralHours` | How long an emailed consult may sit in the `Queued` folder before it is given up on and answered with a rejection reply | `2` | no |
+
+**One submission is one preview call or one job start**, whatever it carries.
+A submission with three attachments costs exactly what a 20 KB text file
+costs — this bounds how often an account can ask, not what each ask costs.
+Parse cost is bounded by `DocumentExtraction__MaxConcurrentParses` above.
+
+60/hour is roughly 20 consults an hour at two attachments each: far beyond a
+single operator, and a 12× cut from the 750/hour the email door can otherwise
+sustain (25 messages per poll × 30 polls). The window is fixed and aligned to
+the UTC hour, so a burst straddling a boundary can reach twice the limit.
+
+**The limiter fails open.** If its table is unreachable the submission
+proceeds and the fault is logged: losing the limit during an outage costs
+CPU, while refusing during one costs a clinician their referral.
+
+**Set it to `2` to watch a refusal fire.** Interactive callers get `429` with
+`Retry-After`; an emailed consult is moved to the `Queued` folder instead and
+its sender told once that it is queued and needs no action.
+
+```azurecli
+az functionapp config appsettings set --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
+    --settings RateLimits__SubmissionsPerHour=2
+# and to restore the default:
+az functionapp config appsettings delete --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
+    --setting-names RateLimits__SubmissionsPerHour
+```
+
+Rows are one per account per hour in the `AccountRateLimits` table and are
+never deleted; at that volume a cleanup is worth having eventually rather
+than now.
+
 ## Storage stores (Azure Tables)
 
 Entra ID first (#10, mirroring the workflow-package registry): when a

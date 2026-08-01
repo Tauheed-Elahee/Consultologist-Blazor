@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -179,9 +180,18 @@ public sealed class ConsultGenerationJobs
                     // document inside it could not be read. Same status the
                     // preview endpoint returns for the same cause.
                     ConsultGenerationJobStartError.InputFileUnreadable => HttpStatusCode.UnprocessableEntity,
+                    // #266: nothing is wrong with the request at all — the
+                    // account has spent its window. 429 is the one status
+                    // that says "the same request will work later".
+                    ConsultGenerationJobStartError.RateLimited => HttpStatusCode.TooManyRequests,
                     _ => HttpStatusCode.InternalServerError
                 };
-                return await CreateJsonResponseAsync(req, status, new { error = outcome.ErrorDetail }, cancellationToken);
+                return await CreateJsonResponseAsync(
+                    req,
+                    status,
+                    new { error = outcome.ErrorDetail },
+                    cancellationToken,
+                    outcome.RetryAfter);
             }
 
             var instanceId = outcome.JobId!;
@@ -943,10 +953,21 @@ public sealed class ConsultGenerationJobs
         HttpRequestData req,
         HttpStatusCode statusCode,
         T payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? retryAfter = null)
     {
         var response = req.CreateResponse(statusCode);
         FunctionCors.Apply(req, response);
+
+        if (retryAfter is { } wait)
+        {
+            // Whole seconds, and never zero — the header is delta-seconds and
+            // a 0 invites an immediate retry that is certain to be refused.
+            response.Headers.Add(
+                "Retry-After",
+                Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture));
+        }
+
         await response.WriteAsJsonAsync(payload, cancellationToken);
         return response;
     }

@@ -7,7 +7,16 @@ using Microsoft.Extensions.Logging;
 
 namespace Consultologist.Api.Email;
 
-public sealed record EmailIntakeRunSummary(int Listed, int Accepted, int Rejected, int Skipped, int Repaired);
+public sealed record EmailIntakeRunSummary(
+    int Listed,
+    int Accepted,
+    int Rejected,
+    int Skipped,
+    int Repaired,
+    // #266: parked in the Queued folder because the account was over its
+    // submission limit, and given up on after MaxEmailDeferral respectively.
+    int Queued = 0,
+    int Expired = 0);
 
 /// <summary>
 /// The email-intake pipeline (#158, docs/ASYNC_DELIVERY.md §2). Per message:
@@ -21,7 +30,12 @@ public sealed class EmailIntakeProcessor
 {
     internal const string ProcessedFolder = "Processed";
     internal const string RejectedFolder = "Rejected";
+    // #266: where a message waits out its account's rate limit. A folder
+    // rather than an unread flag, because folder membership is a state an
+    // operator can see and count, and read status is not a state machine.
+    internal const string QueuedFolder = "Queued";
     private const int DefaultMaxMessagesPerPoll = 25;
+    private const int DefaultMaxEmailDeferralHours = 2;
     private const int MaxDraftLength = 256 * 1024;
     // #237: bytes per attachment and across one message, matching the app
     // door (ConsultGenerationJobs.MaxInputFileBytes / MaxInputFilesTotalBytes).
@@ -80,48 +94,108 @@ public sealed class EmailIntakeProcessor
         }
 
         var top = _configuration.GetValue("EmailIntake:MaxMessagesPerPoll", DefaultMaxMessagesPerPoll);
-        var refs = await _mail.ListUnreadInboxMessagesAsync(mailbox, top, cancellationToken);
 
-        int accepted = 0, rejected = 0, skipped = 0, repaired = 0;
+        // #266: the Queued backlog first, and this ordering is a fairness
+        // property rather than a tidiness one. Without it a steady stream of
+        // new arrivals spends the account's budget every window and the
+        // backlog behind it never drains.
+        //
+        // One budget across both listings. Twice `top` would double the work
+        // a single poll can do, which is the number the timer cadence was
+        // chosen against.
+        var queued = await ListQueuedAsync(mailbox, top, cancellationToken);
+        var refs = queued
+            .Select(messageRef => (Ref: messageRef, Source: MessageSource.Queued))
+            .Concat((await _mail.ListUnreadInboxMessagesAsync(mailbox, Math.Max(0, top - queued.Count), cancellationToken))
+                .Select(messageRef => (Ref: messageRef, Source: MessageSource.Inbox)))
+            .ToList();
 
-        foreach (var messageRef in refs)
+        int accepted = 0, rejected = 0, skipped = 0, repaired = 0, requeued = 0, expired = 0;
+
+        foreach (var (messageRef, source) in refs)
         {
-            var outcome = await ProcessMessageAsync(client, mailbox, messageRef, cancellationToken);
+            var outcome = await ProcessMessageAsync(client, mailbox, messageRef, source, cancellationToken);
             switch (outcome)
             {
                 case MessageOutcome.Accepted: accepted++; break;
                 case MessageOutcome.Rejected: rejected++; break;
                 case MessageOutcome.Skipped: skipped++; break;
                 case MessageOutcome.Repaired: repaired++; break;
+                case MessageOutcome.Queued: requeued++; break;
+                case MessageOutcome.Expired: expired++; break;
             }
         }
 
-        var summary = new EmailIntakeRunSummary(refs.Count, accepted, rejected, skipped, repaired);
+        var summary = new EmailIntakeRunSummary(refs.Count, accepted, rejected, skipped, repaired, requeued, expired);
 
         if (refs.Count > 0)
         {
             _logger.LogInformation(
-                "Email intake poll complete. Listed={Listed}, Accepted={Accepted}, Rejected={Rejected}, Skipped={Skipped}, Repaired={Repaired}",
+                "Email intake poll complete. Listed={Listed}, Accepted={Accepted}, Rejected={Rejected}, Skipped={Skipped}, Repaired={Repaired}, Queued={Queued}, Expired={Expired}",
                 summary.Listed,
                 summary.Accepted,
                 summary.Rejected,
                 summary.Skipped,
-                summary.Repaired);
+                summary.Repaired,
+                summary.Queued,
+                summary.Expired);
         }
 
         return summary;
     }
 
-    private enum MessageOutcome { Accepted, Rejected, Skipped, Repaired }
+    /// <summary>
+    /// The Queued backlog, or nothing when the folder has never been created —
+    /// which is the normal state until the first message is rate limited.
+    /// EnsureInboxChildFolderAsync would create it eagerly on every poll, so
+    /// this tolerates its absence rather than manufacturing an empty folder in
+    /// every mailbox that never needs one.
+    /// </summary>
+    private async Task<IReadOnlyList<GraphMessageRef>> ListQueuedAsync(
+        string mailbox,
+        int top,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var folderId = await _mail.FindInboxChildFolderAsync(mailbox, QueuedFolder, cancellationToken);
+
+            return string.IsNullOrWhiteSpace(folderId)
+                ? Array.Empty<GraphMessageRef>()
+                : await _mail.ListFolderMessagesAsync(mailbox, folderId, top, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // A failure here must not stop the Inbox being drained: new
+            // referrals matter more than retries of old ones.
+            _logger.LogError(ex, "Email intake could not list the Queued folder; continuing with the Inbox.");
+            return Array.Empty<GraphMessageRef>();
+        }
+    }
+
+    private enum MessageSource { Inbox, Queued }
+
+    private enum MessageOutcome { Accepted, Rejected, Skipped, Repaired, Queued, Expired }
 
     private async Task<MessageOutcome> ProcessMessageAsync(
         DurableTaskClient client,
         string mailbox,
         GraphMessageRef messageRef,
+        MessageSource source,
         CancellationToken cancellationToken)
     {
         var claimKey = messageRef.InternetMessageId ?? messageRef.Id;
         var now = _timeProvider.GetUtcNow();
+
+        // #266: the first thing done to a queued message, before it is
+        // claimed and before its body is fetched. That makes the bound a
+        // property of the folder — nothing waits in Queued longer than
+        // MaxEmailDeferral — rather than a property of still being over the
+        // limit, and it costs an expired message no Graph reads at all.
+        if (source == MessageSource.Queued && HasWaitedTooLong(messageRef, now))
+        {
+            return await ExpireAsync(mailbox, messageRef, claimKey, now, cancellationToken);
+        }
 
         var claimed = await _claims.TryClaimAsync(
             new EmailIntakeClaim(claimKey, messageRef.Id, null, now),
@@ -245,6 +319,15 @@ public sealed class EmailIntakeProcessor
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, message.FromAddress),
             cancellationToken);
 
+        // #266: a rate limit is not a rejection. Every other start-failure
+        // path below moves the message to Rejected and tells the sender their
+        // consult could not be processed, which here would be false — the
+        // message is fine and the account is merely ahead of its budget.
+        if (start.Error == ConsultGenerationJobStartError.RateLimited)
+        {
+            return await QueueAsync(mailbox, message, claimKey, now, match.AppUserId, source, cancellationToken);
+        }
+
         if (start.Error != null)
         {
             _logger.LogError(
@@ -299,6 +382,21 @@ public sealed class EmailIntakeProcessor
         {
             // Claim add raced with a delete-less 409 anomaly; leave for next tick.
             return MessageOutcome.Skipped;
+        }
+
+        if (existing.Outcome == EmailIntakeOutcomes.Queued)
+        {
+            // #266: the one non-terminal outcome. The message is parked in
+            // Queued and started no job, so releasing the claim is safe and
+            // the next poll retries it in full.
+            //
+            // Deleting here rather than at queueing time is what makes the
+            // cycle self-healing: if the move to Queued failed, the row still
+            // reads `queued` and this clears it, so the message is retried
+            // from wherever it actually is instead of being repaired into the
+            // Rejected folder by the stale-claim branch below.
+            await _claims.DeleteAsync(claimKey, cancellationToken);
+            return MessageOutcome.Queued;
         }
 
         if (existing.Outcome == null && now - existing.ClaimedAtUtc < StaleClaimAge)
@@ -393,6 +491,116 @@ public sealed class EmailIntakeProcessor
     }
 
     /// <summary>
+    /// Parks a message until its account's window resets (#266).
+    ///
+    /// **Order is load-bearing: mark, then reply, then move.** If the mark
+    /// fails nothing has happened and the message is still an unread Inbox
+    /// message with a null claim, which the existing stale-claim repair
+    /// already handles. If the reply fails it is swallowed and logged and the
+    /// move still happens. If the move fails the claim reads <c>queued</c>
+    /// while the message sits in the Inbox, and the next poll's RepairAsync
+    /// clears the row and retries it. Moving first would leave a message
+    /// parked in Queued with a claim row saying nothing about why.
+    /// </summary>
+    private async Task<MessageOutcome> QueueAsync(
+        string mailbox,
+        GraphMessage message,
+        string claimKey,
+        DateTimeOffset now,
+        string? appUserId,
+        MessageSource source,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "Email intake queued: the account is over its submission limit. From={From}, InternetMessageId={InternetMessageId}, FirstTime={FirstTime}",
+            message.FromAddress,
+            claimKey,
+            source == MessageSource.Inbox);
+
+        await _claims.UpdateAsync(
+            new EmailIntakeClaim(claimKey, message.Id, message.FromAddress, now, appUserId, Outcome: EmailIntakeOutcomes.Queued),
+            cancellationToken);
+
+        // Exactly once, on the way in. The source folder is the whole test: a
+        // message queued off the Inbox listing is a first-time queueing, one
+        // re-listed from Queued is a retry. Replying on every retry would send
+        // roughly thirty emails over a two-hour wait, and silence for two
+        // hours is indistinguishable from a black hole — so it is neither.
+        if (source == MessageSource.Inbox && message.FromAddress != null)
+        {
+            await SendQueuedReplyAsync(mailbox, message.FromAddress, cancellationToken);
+        }
+
+        var folderId = await _mail.EnsureInboxChildFolderAsync(mailbox, QueuedFolder, cancellationToken);
+        await _mail.MoveMessageAsync(mailbox, message.Id, folderId, cancellationToken);
+
+        return MessageOutcome.Queued;
+    }
+
+    /// <summary>
+    /// Whether a queued message has waited longer than we are willing to make
+    /// a clinician wait (#266).
+    ///
+    /// Received time is the clock, and it is the right one rather than a
+    /// compromise: it measures what the sender experiences — how long since
+    /// they sent it — not how long we happened to hold it. A null defers
+    /// forever and never expires, because refusing a referral over missing
+    /// metadata is the wrong failure direction.
+    /// </summary>
+    private bool HasWaitedTooLong(GraphMessageRef messageRef, DateTimeOffset now) =>
+        messageRef.ReceivedDateTime is { } received
+        && now - received > TimeSpan.FromHours(
+            _configuration.GetValue("RateLimits:MaxEmailDeferralHours", DefaultMaxEmailDeferralHours));
+
+    /// <summary>
+    /// Gives up on a queued message and says so. The second and last reply of
+    /// its life — the first said it was queued, so this completes a
+    /// conversation rather than starting one, which is precisely why the same
+    /// age test is never applied to the Inbox listing: after a poller outage
+    /// every unread message is hours old, and auto-rejecting that backlog
+    /// would tell senders who had heard nothing that they had failed.
+    /// </summary>
+    private async Task<MessageOutcome> ExpireAsync(
+        string mailbox,
+        GraphMessageRef messageRef,
+        string claimKey,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "Email intake giving up on a queued message: it waited longer than the deferral bound. InternetMessageId={InternetMessageId}, ReceivedAtUtc={ReceivedAtUtc}",
+            claimKey,
+            messageRef.ReceivedDateTime);
+
+        var existing = await _claims.GetAsync(claimKey, cancellationToken);
+
+        // Upsert-merge, so this lands whether or not the row survived the
+        // retry cycle. The address comes from the claim: the message body was
+        // never fetched, which is the point of checking at the listing.
+        await _claims.UpdateAsync(
+            new EmailIntakeClaim(
+                claimKey,
+                messageRef.Id,
+                existing?.FromAddress,
+                existing?.ClaimedAtUtc ?? now,
+                existing?.AppUserId,
+                Outcome: EmailIntakeOutcomes.RejectedRateLimit),
+            cancellationToken);
+
+        if (existing?.FromAddress != null)
+        {
+            await SendStartFailureReplyAsync(
+                mailbox,
+                existing.FromAddress,
+                "It waited too long for this account's submission limit to reset. Please re-send it.",
+                cancellationToken);
+        }
+
+        await DisposeMessageAsync(mailbox, messageRef.Id, RejectedFolder, cancellationToken);
+        return MessageOutcome.Expired;
+    }
+
+    /// <summary>
     /// A rejection the sender is told about: attachment problems are things
     /// they can fix by resending, unlike the silent auth and sender gates.
     /// </summary>
@@ -448,6 +656,33 @@ public sealed class EmailIntakeProcessor
     /// between resending the same fax and exporting a readable PDF. Filenames
     /// are still never echoed (docs/DOCUMENT_INPUT.md § 6).
     /// </param>
+    /// <summary>
+    /// Tells the sender their consult is queued (#266), so a wait is a wait
+    /// rather than a silence. Says there is nothing to do, because there is
+    /// not — re-sending would only add another message to the same queue.
+    ///
+    /// Same constraints as every reply on this path: no subject or body
+    /// echoed, no filenames, no clinical content of any kind.
+    /// </summary>
+    private async Task SendQueuedReplyAsync(string mailbox, string toAddress, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var appBaseUrl = _configuration["EmailIntake:AppBaseUrl"]?.TrimEnd('/');
+            var body = "Your consult submitted by email has been received and is queued.\n\n"
+                + "This account has submitted a lot in a short time, so this one is waiting its turn. "
+                + "It will be processed automatically and you do not need to re-send it.\n"
+                + (appBaseUrl == null ? string.Empty : $"\nYou can also use the app directly:\n{appBaseUrl}\n")
+                + "\nThis message intentionally contains no clinical content.";
+
+            await _mail.SendMailAsync(mailbox, toAddress, "Your consult email is queued", body, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Email intake queued reply could not be sent.");
+        }
+    }
+
     private async Task SendStartFailureReplyAsync(
         string mailbox,
         string toAddress,

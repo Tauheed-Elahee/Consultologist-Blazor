@@ -30,6 +30,14 @@ public static class EmailIntakeOutcomes
     public const string RejectedAttachments = "rejected-attachments";
     public const string StartFailed = "start-failed";
     public const string Vanished = "vanished";
+    // #266: NOT terminal. The account was over its submission limit, so the
+    // message is parked in the Queued folder and this row is a marker saying
+    // "mid-flight across polls". RepairAsync clears it and the message is
+    // retried in full; nothing else in this vocabulary is transient.
+    public const string Queued = "queued";
+    // #266: terminal, and the only rate-limit outcome that ends a message.
+    // Reached when a queued message outlives MaxEmailDeferral.
+    public const string RejectedRateLimit = "rejected-rate-limit";
 }
 
 public interface IEmailIntakeClaimStore
@@ -40,6 +48,14 @@ public interface IEmailIntakeClaimStore
     Task<EmailIntakeClaim?> GetAsync(string claimKey, CancellationToken cancellationToken);
 
     Task UpdateAsync(EmailIntakeClaim claim, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Releases a claim so the message can be claimed again (#266). Only ever
+    /// called for a <see cref="EmailIntakeOutcomes.Queued"/> row, which is by
+    /// construction a message that started no job — so this cannot resurrect
+    /// one that already ran, and the at-most-once bias survives.
+    /// </summary>
+    Task DeleteAsync(string claimKey, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -99,6 +115,21 @@ public sealed class TableEmailIntakeClaimStore : IEmailIntakeClaimStore
     {
         await EnsureTableAsync(cancellationToken);
         await _table.UpsertEntityAsync(ToEntity(claim), TableUpdateMode.Merge, cancellationToken);
+    }
+
+    public async Task DeleteAsync(string claimKey, CancellationToken cancellationToken)
+    {
+        await EnsureTableAsync(cancellationToken);
+
+        try
+        {
+            await _table.DeleteEntityAsync(PartitionKey, CreateRowKey(claimKey), cancellationToken: cancellationToken);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // Already gone: another host cleared the same queued claim this
+            // tick. The desired state is "no row", and it holds.
+        }
     }
 
     private async Task EnsureTableAsync(CancellationToken cancellationToken)
