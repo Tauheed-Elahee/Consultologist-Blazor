@@ -146,7 +146,15 @@ for i in $(seq 1 "$attempts"); do
                 printf '  %s. \033[31m200 — accepted AFTER a refusal\033[0m\n' "$i"
             else
                 successes=$((successes + 1))
-                chars="$(printf '%s' "$payload" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("text","")))' 2>/dev/null || echo '?')"
+                # Both casings. The success payload is a record, so it
+                # serializes PascalCase ("Text"); the refusal payload is an
+                # anonymous object declared `new { error = ... }` and really
+                # is lowercase. Reading only one of them silently reports
+                # zero characters for a document that extracted fine.
+                chars="$(printf '%s' "$payload" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(len(d.get("Text") or d.get("text") or ""))' 2>/dev/null || echo '?')"
                 printf '  %s. \033[32m200\033[0m  extracted %s characters\n' "$i" "$chars"
             fi
             ;;
@@ -154,7 +162,10 @@ for i in $(seq 1 "$attempts"); do
             [ "$first_refusal" -eq 0 ] && first_refusal=$i
             this_retry="$(grep -i '^retry-after:' "$headers" | tr -d '\r' | awk '{print $2}' | head -1)"
             [ -z "$retry_after" ] && retry_after="$this_retry"
-            this_sentence="$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("error",""))' 2>/dev/null)"
+            this_sentence="$(printf '%s' "$payload" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d.get("error") or d.get("Error") or "")' 2>/dev/null)"
             [ -z "$sentence" ] && sentence="$this_sentence"
             printf '  %s. \033[33m429\033[0m  Retry-After: %ss\n' "$i" "${this_retry:-<missing>}"
             ;;
