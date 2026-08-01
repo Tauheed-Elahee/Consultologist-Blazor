@@ -24,12 +24,12 @@ jobs:
 
     steps:
       - name: "Checkout GitHub Action"
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: true
 
       - name: Setup DotNet ${{ env.DOTNET_VERSION }} Environment
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -41,14 +41,14 @@ jobs:
           popd
 
       - name: Login to Azure
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_BD48734B3BF54596889E52B40C8DB9BC }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3A6E0C076D014F97B72013A8FAF73817 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_446D6ACA8E9B4280AB0466590D8DEE0A }}
 
       - name: "Run Azure Functions Action"
-        uses: Azure/functions-action@v1
+        uses: Azure/functions-action@bc63708cc6539760eea18d8a7de4ce8ef5fdf593 # v1
         id: fa
         with:
           app-name: "canada-east-ai-function"
