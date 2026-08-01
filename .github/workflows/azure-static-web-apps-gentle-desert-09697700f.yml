@@ -65,6 +65,14 @@ jobs:
           api_location: "" # Empty - Azure Functions deployed separately
           output_location: "wwwroot" # Blazor static content within the publish output
           github_id_token: ${{ steps.idtoken.outputs.result }} # Required: this SWA uses GitHub OIDC deployment authorization (the "unexpected input" warning is benign)
+          # Dependabot-triggered runs are deliberately denied repository secrets
+          # by GitHub, so the deployment token is absent and this step would
+          # fail with "deployment_token was not provided" — on every Dependabot
+          # PR, regardless of what it changes. A permanently red check is worse
+          # than no check: it trains reviewers to merge past red. With this set
+          # the step still builds and simply skips the upload, so the build
+          # itself becomes real signal on exactly the PRs that most need it.
+          skip_deploy_on_missing_secrets: true
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:
