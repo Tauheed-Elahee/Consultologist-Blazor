@@ -111,7 +111,7 @@ diffing two published versions locally.
 
 Publishing is not a browse operation: author changes in the repo's `packages/` sources,
 bump the manifest's CalVer version, and run
-publishing from the [consultologist-workflows](https://github.com/Tauheed-Elahee/consultologist-workflows)
+publishing from the [consultologist-workflows](https://github.com/Consultologist/consultologist-workflows)
 repo: tag `{name}-vYYYY.MM.N` and CI publishes via OIDC (#16). Human registry
 writes are retired.
 The script uploads the version folder, updates the `latest` pointer, and refuses to

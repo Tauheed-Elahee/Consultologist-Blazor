@@ -1,9 +1,9 @@
 # Content Repos: Workflows and Agents as GitOps-Published Artifacts
 
 Design recorded 2026-07-10; **implemented 2026-07-23 (#16)**. Both repos exist
-and publish through CI OIDC: [consultologist-workflows](https://github.com/Tauheed-Elahee/consultologist-workflows)
+and publish through CI OIDC: [consultologist-workflows](https://github.com/Consultologist/consultologist-workflows)
 (tag `{name}-vYYYY.MM.N` → registry) and
-[consultologist-agents](https://github.com/Tauheed-Elahee/consultologist-agents)
+[consultologist-agents](https://github.com/Consultologist/consultologist-agents)
 (merge → Foundry version + redacted registry mirror + catalog). Implementation
 notes vs the original text: the agent mirror layout is
 `agent-definitions/{name}/{version}/definition.yaml` (redacted); the agents repo
@@ -73,7 +73,9 @@ harder-to-change channel than the thing it verifies.
    repo's `packages/` and `agents/` (short history — plain copy with a pointer commit is
    acceptable; `git filter-repo` if history preservation is wanted).
 2. Entra: one app registration or user-assigned MI per repo CI with federated credentials
-   for `repo:Tauheed-Elahee/<repo>:ref:refs/heads/main` (and tags); role assignments as
+   for `repo:Consultologist@<org-id>/<repo>@<repo-id>:environment:registry` — GitHub
+   emits the immutable subject form for these repos, confirmed after the org
+   transfer (#268); role assignments as
    above.
 3. CI workflows: validate (schema, CalVer format, immutability check) → publish on tag
    (workflows) / on merge (agents, plus Foundry publish).
