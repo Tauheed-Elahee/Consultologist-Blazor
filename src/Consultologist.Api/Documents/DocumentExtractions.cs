@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Net;
 using Consultologist.Api.Auth;
+using Consultologist.Api.RateLimiting;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
@@ -25,11 +27,16 @@ public sealed class DocumentExtractions
 {
     private readonly ILogger<DocumentExtractions> _logger;
     private readonly IAccountAuthorizer _authorizer;
+    private readonly IAccountRateLimiter _rateLimiter;
 
-    public DocumentExtractions(ILogger<DocumentExtractions> logger, IAccountAuthorizer authorizer)
+    public DocumentExtractions(
+        ILogger<DocumentExtractions> logger,
+        IAccountAuthorizer authorizer,
+        IAccountRateLimiter rateLimiter)
     {
         _logger = logger;
         _authorizer = authorizer;
+        _rateLimiter = rateLimiter;
     }
 
     [Function("CreateDocumentExtraction")]
@@ -55,6 +62,33 @@ public sealed class DocumentExtractions
         if (!AccountAuthorizer.IsActive(account))
         {
             return AccountAuthorizer.CreateForbiddenResponse(req);
+        }
+
+        // #266: before the body is read, not after. Buffering up to 10 MB is
+        // itself a cost this bounds, and there is nothing to learn from the
+        // bytes of a request we have already decided to refuse.
+        var decision = await _rateLimiter.AcquireOrAllowAsync(account.AppUserId, _logger, cancellationToken);
+
+        if (!decision.Allowed)
+        {
+            _logger.LogWarning(
+                "Document extraction refused: the account is over its submission limit. Limit={Limit}",
+                decision.Limit);
+
+            // No `outcome` field. Every value in that vocabulary describes
+            // what became of an attempt to read a document, and no attempt
+            // was made — claiming one here would be a lie in the one place
+            // the client reads to explain itself to a clinician.
+            return await CreateJsonResponseAsync(
+                req,
+                HttpStatusCode.TooManyRequests,
+                new
+                {
+                    error = $"This account has read {decision.Limit} documents in the past hour, which is its limit. "
+                        + "Nothing is wrong with this file — please try again shortly."
+                },
+                cancellationToken,
+                decision.RetryAfter);
         }
 
         using var buffer = new MemoryStream();
@@ -112,10 +146,19 @@ public sealed class DocumentExtractions
         HttpRequestData req,
         HttpStatusCode statusCode,
         T payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? retryAfter = null)
     {
         var response = req.CreateResponse(statusCode);
         FunctionCors.Apply(req, response);
+
+        if (retryAfter is { } wait)
+        {
+            response.Headers.Add(
+                "Retry-After",
+                Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture));
+        }
+
         await response.WriteAsJsonAsync(payload, cancellationToken);
         return response;
     }

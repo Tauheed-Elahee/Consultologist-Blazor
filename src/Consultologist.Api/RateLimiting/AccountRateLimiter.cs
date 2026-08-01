@@ -24,6 +24,36 @@ public interface IAccountRateLimiter
     Task<RateLimitDecision> TryAcquireAsync(string appUserId, CancellationToken cancellationToken);
 }
 
+public static class AccountRateLimiterExtensions
+{
+    /// <summary>
+    /// What every door calls. <see cref="TableAccountRateLimiter"/> already
+    /// fails open on its own storage faults, so this is a second layer of the
+    /// same guarantee — worth having precisely because the failure is
+    /// asymmetric: losing the limit costs CPU for the duration of a fault,
+    /// while refusing on one costs a clinician their referral. Enforcing it at
+    /// the boundary makes it true of any implementation, not just that one.
+    ///
+    /// Cancellation is not a fault and is not swallowed.
+    /// </summary>
+    public static async Task<RateLimitDecision> AcquireOrAllowAsync(
+        this IAccountRateLimiter limiter,
+        string appUserId,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await limiter.TryAcquireAsync(appUserId, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "Rate limiter faulted; allowing the submission. AppUserId={AppUserId}", appUserId);
+            return new RateLimitDecision(true, 0, int.MaxValue, TimeSpan.Zero);
+        }
+    }
+}
+
 /// <summary>
 /// Per-account rate limiting (#266, docs/DOCUMENT_INPUT.md § 9). The first
 /// thing in this app that deliberately refuses a valid request from a

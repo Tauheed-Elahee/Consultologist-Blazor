@@ -2,6 +2,7 @@ using System.Text;
 using Consultologist.Api.Documents;
 using Consultologist.Api.Jobs;
 using Consultologist.Api.Models;
+using Consultologist.Api.RateLimiting;
 using Consultologist.Api.Workflow;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -17,19 +18,33 @@ public class ConsultGenerationJobStarterTests
 {
     private readonly IWorkflowPackageStore _packageStore = Substitute.For<IWorkflowPackageStore>();
     private readonly IWorkflowPackagePinResolver _pinResolver = Substitute.For<IWorkflowPackagePinResolver>();
+    private readonly IAccountRateLimiter _rateLimiter = Substitute.For<IAccountRateLimiter>();
     private readonly DurableTaskClient _client = Substitute.For<DurableTaskClient>("test");
     private readonly DurableEntityClient _entities = Substitute.For<DurableEntityClient>("test");
 
     private ConsultGenerationJobStarter CreateStarter(ILogger<ConsultGenerationJobStarter>? logger = null)
     {
         _client.Entities.Returns(_entities);
+        _rateLimiter
+            .TryAcquireAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RateLimitDecision(true, 60, 59, TimeSpan.FromMinutes(37)));
 
         return new ConsultGenerationJobStarter(
             logger ?? NullLogger<ConsultGenerationJobStarter>.Instance,
             _packageStore,
             _pinResolver,
-            TestCatalog.Instance);
+            TestCatalog.Instance,
+            _rateLimiter);
     }
+
+    /// <summary>
+    /// Overrides the permissive default CreateStarter installs. Must be
+    /// called AFTER it, since NSubstitute lets the last matching stub win.
+    /// </summary>
+    private void Refuse() =>
+        _rateLimiter
+            .TryAcquireAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new RateLimitDecision(false, 60, 0, TimeSpan.FromMinutes(37)));
 
     private static WorkflowPackage ExecutableV5Package()
     {
@@ -561,6 +576,93 @@ public class ConsultGenerationJobStarterTests
         return new StartCapture(outcome, initialize, orchestrationInput);
     }
 
+    // #266 — the rate limit is checked here because this door serves both the
+    // app and the email poller. Two enforcement points cover all three ways in.
+
+    [Fact]
+    public async Task OverTheLimit_IsRefusedWithHowLongUntilItResets()
+    {
+        var starter = CreateStarter();
+        Refuse();
+
+        var outcome = await starter.StartAsync(
+            _client,
+            new ConsultGenerationRequest("draft"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.RateLimited, outcome.Error);
+        Assert.Null(outcome.JobId);
+        Assert.Equal(TimeSpan.FromMinutes(37), outcome.RetryAfter);
+        Assert.Contains("60", outcome.ErrorDetail);
+    }
+
+    [Fact]
+    public async Task OverTheLimit_IsRefusedBeforeTheRegistryIsTouched()
+    {
+        // The check is first in StartAsync deliberately: a refused submission
+        // must not buy free registry round trips.
+        var starter = CreateStarter();
+        Refuse();
+
+        await starter.StartAsync(
+            _client,
+            new ConsultGenerationRequest("draft"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        await _pinResolver.DidNotReceive().ResolvePinAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _packageStore.DidNotReceive().ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TheEmailDoorIsRateLimitedToo()
+    {
+        // It reaches the parser through this method, so exempting it would
+        // leave the limit trivially bypassable — 25 messages every two
+        // minutes. What the email door does with the refusal is
+        // EmailIntakeProcessor's business, and it is not a rejection reply.
+        var starter = CreateStarter();
+        Refuse();
+
+        var outcome = await starter.StartAsync(
+            _client,
+            new ConsultGenerationRequest("draft"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "user@example.com"),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.RateLimited, outcome.Error);
+    }
+
+    [Fact]
+    public async Task ALimiterThatThrows_DoesNotStopTheSubmission()
+    {
+        // TableAccountRateLimiter catches its own storage faults, so this
+        // pins the second layer: AcquireOrAllowAsync makes fail-open true of
+        // any implementation. The asymmetry is the justification — losing the
+        // limit costs CPU, refusing on a fault costs a referral.
+        var starter = CreateStarter();
+        _rateLimiter
+            .TryAcquireAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<Task<RateLimitDecision>>(_ => throw new InvalidOperationException("table down"));
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV5Package());
+
+        var outcome = await starter.StartAsync(
+            _client,
+            new ConsultGenerationRequest("draft"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Null(outcome.Error);
+        Assert.NotNull(outcome.JobId);
+    }
 }
 
 public class ResolveEffectiveInputsTests

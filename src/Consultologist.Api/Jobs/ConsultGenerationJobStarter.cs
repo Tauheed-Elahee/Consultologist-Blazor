@@ -1,6 +1,7 @@
 using Consultologist.Api.Agents;
 using Consultologist.Api.Documents;
 using Consultologist.Api.Models;
+using Consultologist.Api.RateLimiting;
 using Consultologist.Api.Workflow;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -29,7 +30,11 @@ public enum ConsultGenerationJobStartError
     InputsMismatch,
     // #238: a supplied document could not be read. Well-formed request,
     // unsatisfiable content — 422 like InputsMismatch, not 400.
-    InputFileUnreadable
+    InputFileUnreadable,
+    // #266: the account has spent its window. The one error here that is
+    // about the caller's history rather than about this request, and the
+    // only one the email door must not answer with a rejection reply.
+    RateLimited
 }
 
 /// <summary>
@@ -46,7 +51,10 @@ internal sealed record EffectiveInputsResolution(
 public sealed record ConsultGenerationJobStartOutcome(
     string? JobId,
     ConsultGenerationJobStartError? Error = null,
-    string? ErrorDetail = null);
+    string? ErrorDetail = null,
+    // #266: how long until the caller's window resets. Only set on
+    // RateLimited, and only the HTTP door renders it — as Retry-After.
+    TimeSpan? RetryAfter = null);
 
 public interface IConsultGenerationJobStarter
 {
@@ -69,17 +77,20 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
     private readonly IWorkflowPackageStore _packageStore;
     private readonly IWorkflowPackagePinResolver _pinResolver;
     private readonly OutputContractCatalog _catalog;
+    private readonly IAccountRateLimiter _rateLimiter;
 
     public ConsultGenerationJobStarter(
         ILogger<ConsultGenerationJobStarter> logger,
         IWorkflowPackageStore packageStore,
         IWorkflowPackagePinResolver pinResolver,
-        OutputContractCatalog catalog)
+        OutputContractCatalog catalog,
+        IAccountRateLimiter rateLimiter)
     {
         _logger = logger;
         _packageStore = packageStore;
         _pinResolver = pinResolver;
         _catalog = catalog;
+        _rateLimiter = rateLimiter;
     }
 
     public async Task<ConsultGenerationJobStartOutcome> StartAsync(
@@ -89,6 +100,29 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
         ConsultGenerationJobOrigin origin,
         CancellationToken cancellationToken)
     {
+        // #266: first, before any registry read. This door and the preview
+        // endpoint are the only two enforcement points, and between them they
+        // cover all three ways in — email reaches the parser through here.
+        //
+        // A malformed package ref therefore costs a unit. That is correct: it
+        // was still a submission, and moving the check below resolution would
+        // buy an attacker free registry round trips.
+        var decision = await _rateLimiter.AcquireOrAllowAsync(appUserId, _logger, cancellationToken);
+
+        if (!decision.Allowed)
+        {
+            _logger.LogWarning(
+                "Rejected job start: the account is over its submission limit. AppUserId={AppUserId}, Source={Source}, Limit={Limit}",
+                appUserId,
+                origin.Source,
+                decision.Limit);
+            return new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.RateLimited,
+                $"This account has submitted {decision.Limit} consults in the past hour, which is its limit. Please try again shortly.",
+                decision.RetryAfter);
+        }
+
         var jobId = Guid.NewGuid().ToString("N");
         var entityId = new EntityInstanceId(nameof(ConsultGenerationJobEntity), jobId);
 
