@@ -63,6 +63,14 @@ public interface IGraphMailClient
     /// <summary>Resolves (creating if needed) an Inbox child folder id; memoized per process.</summary>
     Task<string> EnsureInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The folder id, or null when it does not exist (#266). The read-only
+    /// half of <see cref="EnsureInboxChildFolderAsync"/>: polling for a
+    /// backlog must not conjure a Queued folder into every mailbox that has
+    /// never needed one.
+    /// </summary>
+    Task<string?> FindInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken);
+
     Task MoveMessageAsync(string mailbox, string messageId, string destinationFolderId, CancellationToken cancellationToken);
 
     Task SendMailAsync(
@@ -260,6 +268,45 @@ public sealed class GraphMailClient : IGraphMailClient
         using var _ = await SendAsync(new HttpMethod("PATCH"), url, "{\"isRead\":true}", cancellationToken, tolerateNotFound: true);
     }
 
+    public async Task<string?> FindInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{mailbox}|{displayName}";
+
+        await _folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            return _folderIds.TryGetValue(cacheKey, out var cached)
+                ? cached
+                : await FindUncachedAsync(mailbox, displayName, cacheKey, cancellationToken);
+        }
+        finally
+        {
+            _folderLock.Release();
+        }
+    }
+
+    private async Task<string?> FindUncachedAsync(
+        string mailbox,
+        string displayName,
+        string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        var listUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders"
+            + $"?$filter=displayName eq '{displayName.Replace("'", "''")}'";
+
+        using var listDocument = await SendAsync(HttpMethod.Get, listUrl, body: null, cancellationToken);
+        var existing = listDocument?.RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
+
+        if (existing is not { ValueKind: JsonValueKind.Object })
+        {
+            return null;
+        }
+
+        var id = existing.Value.GetProperty("id").GetString()!;
+        _folderIds[cacheKey] = id;
+        return id;
+    }
+
     public async Task<string> EnsureInboxChildFolderAsync(string mailbox, string displayName, CancellationToken cancellationToken)
     {
         var cacheKey = $"{mailbox}|{displayName}";
@@ -272,18 +319,9 @@ public sealed class GraphMailClient : IGraphMailClient
                 return cached;
             }
 
-            var listUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders"
-                + $"?$filter=displayName eq '{displayName.Replace("'", "''")}'";
-
-            using (var listDocument = await SendAsync(HttpMethod.Get, listUrl, body: null, cancellationToken))
+            if (await FindUncachedAsync(mailbox, displayName, cacheKey, cancellationToken) is { } found)
             {
-                var existing = listDocument?.RootElement.GetProperty("value").EnumerateArray().FirstOrDefault();
-                if (existing is { ValueKind: JsonValueKind.Object })
-                {
-                    var id = existing.Value.GetProperty("id").GetString()!;
-                    _folderIds[cacheKey] = id;
-                    return id;
-                }
+                return found;
             }
 
             var createUrl = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/mailFolders/inbox/childFolders";

@@ -44,13 +44,25 @@ public class EmailIntakeProcessorTests
 
     private EmailIntakeProcessor CreateProcessor(
         bool configured = true,
-        ILogger<EmailIntakeProcessor>? logger = null)
+        ILogger<EmailIntakeProcessor>? logger = null,
+        int? maxEmailDeferralHours = null,
+        int? maxMessagesPerPoll = null)
     {
         var settings = new Dictionary<string, string?>();
         if (configured)
         {
             settings["EmailIntake:MailboxAddress"] = Mailbox;
             settings["EmailIntake:AppBaseUrl"] = "https://app.example.com";
+        }
+
+        if (maxEmailDeferralHours is { } hours)
+        {
+            settings["RateLimits:MaxEmailDeferralHours"] = hours.ToString();
+        }
+
+        if (maxMessagesPerPoll is { } perPoll)
+        {
+            settings["EmailIntake:MaxMessagesPerPoll"] = perPoll.ToString();
         }
 
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
@@ -551,5 +563,248 @@ public class EmailIntakeProcessorTests
         await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
 
         await _mail.DidNotReceiveWithAnyArgs().ListAttachmentsAsync(default!, default!, default);
+    }
+
+    // #266 — the Queued folder. This is the branch that did not exist before:
+    // every other start failure moves the message to Rejected and tells the
+    // sender their consult could not be processed, which for a rate limit
+    // would be false.
+
+    private const string QueuedFolderId = "folder-Queued";
+
+    /// <summary>Puts a message in the Queued folder listing rather than the Inbox.</summary>
+    private void SetupQueued(params GraphMessageRef[] refs)
+    {
+        _mail.FindInboxChildFolderAsync(Mailbox, "Queued", Arg.Any<CancellationToken>())
+            .Returns(QueuedFolderId);
+        _mail.ListFolderMessagesAsync(Mailbox, QueuedFolderId, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(refs);
+    }
+
+    private void RateLimitTheSender() =>
+        _starter.StartAsync(_client, Arg.Any<ConsultGenerationRequest>(), "user-1",
+                Arg.Any<ConsultGenerationJobOrigin>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.RateLimited,
+                "over the limit",
+                TimeSpan.FromMinutes(37)));
+
+    [Fact]
+    public async Task RateLimited_ParksTheMessageInQueuedAndTellsTheSenderOnce()
+    {
+        SetupAcceptedSender(Message());
+        RateLimitTheSender();
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Queued);
+        Assert.Equal(0, summary.Rejected);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.Queued),
+            Arg.Any<CancellationToken>());
+        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", QueuedFolderId, Arg.Any<CancellationToken>());
+        await _mail.Received(1).SendMailAsync(
+            Mailbox, "doc@example.com", "Your consult email is queued",
+            Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+    }
+
+    [Fact]
+    public async Task RateLimited_NeverSendsTheRejectionReply()
+    {
+        // The failure this branch exists to prevent: a clinician told their
+        // referral could not be read when nothing is wrong with it.
+        SetupAcceptedSender(Message());
+        RateLimitTheSender();
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        await _mail.DidNotReceive().SendMailAsync(
+            Mailbox, Arg.Any<string>(), "Your consult email could not be processed",
+            Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+        await _mail.DidNotReceive().MoveMessageAsync(
+            Mailbox, Arg.Any<string>(), "folder-Rejected", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AMessageRequeuedFromTheQueuedFolder_IsNotRepliedToAgain()
+    {
+        // The one assertion that justifies threading the source folder
+        // through: replying on every retry would be ~30 emails over a
+        // two-hour wait.
+        SetupQueued(Ref());
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(Message());
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        RateLimitTheSender();
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Queued);
+        await _mail.DidNotReceiveWithAnyArgs().SendMailAsync(
+            default!, default!, default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task RateLimited_MarksTheClaimBeforeMovingTheMessage()
+    {
+        // Order is load-bearing. A move that fails must leave a `queued` claim
+        // behind, so the next poll's repair clears it and retries the message
+        // from wherever it actually is — rather than a message parked in
+        // Queued with a claim saying nothing about why.
+        SetupAcceptedSender(Message());
+        RateLimitTheSender();
+        _mail.MoveMessageAsync(Mailbox, "g-1", QueuedFolderId, Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("graph down"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CreateProcessor().RunOnceAsync(_client, CancellationToken.None));
+
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.Queued),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AQueuedClaimOnALaterPoll_IsReleasedAndTheMessageLeftWhereItIs()
+    {
+        SetupQueued(Ref());
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(false);
+        _claims.GetAsync("<m1@x>", Arg.Any<CancellationToken>()).Returns(new EmailIntakeClaim(
+            "<m1@x>", "g-1", "doc@example.com", _time.GetUtcNow(), "user-1",
+            Outcome: EmailIntakeOutcomes.Queued));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Queued);
+        await _claims.Received(1).DeleteAsync("<m1@x>", Arg.Any<CancellationToken>());
+        await _mail.DidNotReceiveWithAnyArgs().MoveMessageAsync(default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task AQueuedMessageThatWaitedTooLong_IsRejectedWithoutEverBeingRead()
+    {
+        // Checked at the listing, so an expired message costs no message
+        // fetch, no attachment fetch and no job start.
+        SetupQueued(new GraphMessageRef("g-1", "<m1@x>", DateTimeOffset.Parse("2026-07-25T09:00:00Z")));
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.GetAsync("<m1@x>", Arg.Any<CancellationToken>()).Returns(new EmailIntakeClaim(
+            "<m1@x>", "g-1", "doc@example.com", _time.GetUtcNow(), "user-1",
+            Outcome: EmailIntakeOutcomes.Queued));
+
+        var summary = await CreateProcessor(maxEmailDeferralHours: 2).RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Expired);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedRateLimit),
+            Arg.Any<CancellationToken>());
+        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", "folder-Rejected", Arg.Any<CancellationToken>());
+        await _mail.DidNotReceiveWithAnyArgs().GetMessageAsync(default!, default!, default);
+        await _claims.DidNotReceiveWithAnyArgs().TryClaimAsync(default!, default);
+        await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task AnOldUnreadInboxMessage_IsProcessedRatherThanExpired()
+    {
+        // The post-outage guarantee. After the poller has been down for hours
+        // every unread message is old, and auto-rejecting that backlog would
+        // tell senders who had heard nothing at all that they had failed. The
+        // age test applies to Queued only, and this is what stops it being
+        // "helpfully" generalised to both listings later.
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new[] { new GraphMessageRef("g-1", "<m1@x>", DateTimeOffset.Parse("2026-07-20T09:00:00Z")) });
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(Message());
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        _starter.StartAsync(_client, Arg.Any<ConsultGenerationRequest>(), "user-1",
+                Arg.Any<ConsultGenerationJobOrigin>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsultGenerationJobStartOutcome("job-1"));
+
+        var summary = await CreateProcessor(maxEmailDeferralHours: 2).RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        Assert.Equal(0, summary.Expired);
+    }
+
+    [Fact]
+    public async Task AQueuedMessageWithNoReceivedTime_WaitsRatherThanBeingRejected()
+    {
+        // Refusing a referral over missing metadata is the wrong failure
+        // direction, so an unknown age never expires.
+        SetupQueued(new GraphMessageRef("g-1", "<m1@x>", null));
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(Message());
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        RateLimitTheSender();
+
+        var summary = await CreateProcessor(maxEmailDeferralHours: 0).RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(0, summary.Expired);
+        Assert.Equal(1, summary.Queued);
+    }
+
+    [Fact]
+    public async Task AQueuedMessageWhoseAccountIsBackUnderTheLimit_IsProcessed()
+    {
+        SetupQueued(Ref());
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mail.GetMessageAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(Message());
+        _senderResolver.ResolveAsync("doc@example.com", Arg.Any<CancellationToken>())
+            .Returns(new EmailSenderMatch(EmailSenderMatchOutcome.Matched, "user-1"));
+        _starter.StartAsync(_client, Arg.Any<ConsultGenerationRequest>(), "user-1",
+                Arg.Any<ConsultGenerationJobOrigin>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsultGenerationJobStartOutcome("job-1"));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        await _mail.Received(1).MoveMessageAsync(Mailbox, "g-1", "folder-Processed", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TheQueuedBacklogIsDrainedBeforeTheInboxAndSharesThePollBudget()
+    {
+        // Without queue-first, a steady stream of new arrivals spends the
+        // account's budget every window and the backlog never drains.
+        SetupQueued(Ref("q-1", "<q1@x>"), Ref("q-2", "<q2@x>"));
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.TryClaimAsync(Arg.Any<EmailIntakeClaim>(), Arg.Any<CancellationToken>()).Returns(false);
+        _claims.GetAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(callInfo =>
+            new EmailIntakeClaim(callInfo.ArgAt<string>(0), "g", "doc@example.com", _time.GetUtcNow(), "user-1",
+                Outcome: EmailIntakeOutcomes.Queued));
+
+        await CreateProcessor(maxMessagesPerPoll: 3).RunOnceAsync(_client, CancellationToken.None);
+
+        // Two of the three slots went to the backlog, so the Inbox was asked
+        // for the one that was left.
+        await _mail.Received(1).ListFolderMessagesAsync(Mailbox, QueuedFolderId, 3, Arg.Any<CancellationToken>());
+        await _mail.Received(1).ListUnreadInboxMessagesAsync(Mailbox, 1, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WithNoQueuedFolder_TheInboxIsStillDrainedAndNothingIsCreated()
+    {
+        // The normal state until the first message is ever rate limited.
+        SetupAcceptedSender(Message());
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        await _mail.DidNotReceiveWithAnyArgs().ListFolderMessagesAsync(default!, default!, default, default);
+        await _mail.DidNotReceive().EnsureInboxChildFolderAsync(Mailbox, "Queued", Arg.Any<CancellationToken>());
     }
 }
