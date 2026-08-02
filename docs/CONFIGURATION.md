@@ -269,21 +269,73 @@ the UTC hour, so a burst straddling a boundary can reach twice the limit.
 proceeds and the fault is logged: losing the limit during an outage costs
 CPU, while refusing during one costs a clinician their referral.
 
-**Set it to `2` to watch a refusal fire.** Interactive callers get `429` with
-`Retry-After`; an emailed consult is moved to the `Queued` folder instead and
-its sender told once that it is queued and needs no action.
-
-```azurecli
-az functionapp config appsettings set --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
-    --settings RateLimits__SubmissionsPerHour=2
-# and to restore the default:
-az functionapp config appsettings delete --name <APP_NAME> --resource-group <RESOURCE_GROUP> \
-    --setting-names RateLimits__SubmissionsPerHour
-```
-
 Rows are one per account per hour in the `AccountRateLimits` table and are
 never deleted; at that volume a cleanup is worth having eventually rather
 than now.
+
+### Driving it by hand (verified in production 2026-08-01)
+
+Both settings exist to be turned down: at their defaults the limit is
+invisible to a single operator, which is intended and is why exercising
+either refusal takes deliberate setup. Both apply on the app setting write —
+no deploy.
+
+```azurecli
+# the interactive refusal: third preview in an hour returns 429
+az functionapp config appsettings set --name canada-east-ai-function \
+    --resource-group consultologist_group --settings RateLimits__SubmissionsPerHour=2
+
+# the email expiry: anything in Queued is given up on at the next poll
+az functionapp config appsettings set --name canada-east-ai-function \
+    --resource-group consultologist_group --settings RateLimits__MaxEmailDeferralHours=0
+
+# restore BOTH afterwards — neither has a sane production value here
+az functionapp config appsettings delete --name canada-east-ai-function \
+    --resource-group consultologist_group \
+    --setting-names RateLimits__SubmissionsPerHour RateLimits__MaxEmailDeferralHours
+```
+
+`scripts/verify-rate-limit.sh` drives the interactive door and asserts the
+refusal; the email door has no script, because the authentication floor needs
+a real mail path and the sender must be the address matched in `AppUsers`.
+
+**Seed the counter rather than racing the clock.** The window is the UTC
+hour, so budget spent by hand evaporates at the top of it and a test set up
+at :55 tests nothing at :01. Writing the counter directly is deterministic,
+and seeding the *next* window too removes the boundary from the picture
+entirely. `Count` must be `Edm.Int32` — as a string the entity fails to
+deserialize, the limiter fails open, and the submission sails through
+looking like a bug in the limiter:
+
+```azurecli
+az storage entity insert --account-name consultologistjobqueue --auth-mode login \
+    --table-name AccountRateLimits --if-exists replace \
+    --entity PartitionKey=<APP_USER_ID> RowKey=2026-08-01T23 \
+             Count=2 Count@odata.type=Edm.Int32 \
+             UpdatedAtUtc=2026-08-01T23:47:00Z UpdatedAtUtc@odata.type=Edm.DateTime
+```
+
+**What to watch, and how long it takes.** The claim table is the audit
+surface; expect `queued` → (row released) → re-claimed, about two polls per
+retry cycle at the 2-minute cadence:
+
+```azurecli
+az storage entity query --account-name consultologistjobqueue --auth-mode login \
+    --table-name EmailIntakeProcessed --query "items[].{c:ClaimedAtUtc,o:Outcome,j:JobId}"
+```
+
+A queued message has `Outcome=queued` and **no** `JobId`, and the counter
+does **not** move while it is refused — a refusal spends nothing, which is
+what stops a rate-limited referral starving its own account on every retry.
+
+**Delete the seeded rows when finished.** They are indistinguishable from
+real ones and will refuse that account's genuine traffic for the rest of the
+hour:
+
+```azurecli
+az storage entity delete --account-name consultologistjobqueue --auth-mode login \
+    --table-name AccountRateLimits --partition-key <APP_USER_ID> --row-key <WINDOW>
+```
 
 ## Storage stores (Azure Tables)
 
