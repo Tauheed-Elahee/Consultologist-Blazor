@@ -589,11 +589,7 @@ public sealed class EmailIntakeProcessor
 
         if (existing?.FromAddress != null)
         {
-            await SendStartFailureReplyAsync(
-                mailbox,
-                existing.FromAddress,
-                "It waited too long for this account's submission limit to reset. Please re-send it.",
-                cancellationToken);
+            await SendExpiredReplyAsync(mailbox, existing.FromAddress, cancellationToken);
         }
 
         await DisposeMessageAsync(mailbox, messageRef.Id, RejectedFolder, cancellationToken);
@@ -671,7 +667,17 @@ public sealed class EmailIntakeProcessor
             var appBaseUrl = _configuration["EmailIntake:AppBaseUrl"]?.TrimEnd('/');
             var body = "Your consult submitted by email has been received and is queued.\n\n"
                 + "This account has submitted a lot in a short time, so this one is waiting its turn. "
-                + "It will be processed automatically and you do not need to re-send it.\n"
+                + "It will be processed automatically and you do not need to re-send it.\n\n"
+                // Promise a follow-up rather than an outcome. Queued mail can
+                // still be given up on (see ExpireAsync), and the first
+                // production run of that path sent "you do not need to
+                // re-send it" and then "please re-send it" ninety seconds
+                // apart. Whichever way it goes, this sentence stays true, and
+                // the second email completes a promise instead of reversing
+                // one. Deliberately vague about the interval: naming hours
+                // here would couple the copy to a setting that can change
+                // without a deploy.
+                + "If it does not go through, we will write again and ask you to re-send.\n"
                 + (appBaseUrl == null ? string.Empty : $"\nYou can also use the app directly:\n{appBaseUrl}\n")
                 + "\nThis message intentionally contains no clinical content.";
 
@@ -682,6 +688,45 @@ public sealed class EmailIntakeProcessor
             _logger.LogWarning(ex, "Email intake queued reply could not be sent.");
         }
     }
+
+    /// <summary>
+    /// Tells the sender their queued consult was given up on (#266) — and
+    /// says plainly that nothing is wrong with what they sent.
+    ///
+    /// It has its own subject and opening line rather than reusing
+    /// <see cref="SendStartFailureReplyAsync"/>, which the first production
+    /// run of this path did. That opened with "your consult could not be
+    /// processed" under the subject "Your consult email could not be
+    /// processed" — byte-identical to the reply for a scan with no text
+    /// layer, and so a clinician whose message was fine was told to go
+    /// looking for a fault in their document.
+    ///
+    /// The milestone already settled this elsewhere: <c>busy</c> says
+    /// "Nothing is wrong with this one" and the preview endpoint's 429 says
+    /// "Nothing is wrong with this file". A refusal that is about us rather
+    /// than the document has to say so, on every door.
+    /// </summary>
+    private async Task SendExpiredReplyAsync(string mailbox, string toAddress, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var appBaseUrl = _configuration["EmailIntake:AppBaseUrl"]?.TrimEnd('/');
+            var body = "Your consult submitted by email is no longer queued.\n\n"
+                + "It waited longer than this account's submission limit allowed. "
+                + "Nothing is wrong with the message or its attachments — please re-send it.\n"
+                + (appBaseUrl == null ? string.Empty : $"\nYou can also use the app directly:\n{appBaseUrl}\n")
+                + "\nThis message intentionally contains no clinical content.";
+
+            await _mail.SendMailAsync(mailbox, toAddress, ExpiredReplySubject, body, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Email intake expiry reply could not be sent.");
+        }
+    }
+
+    internal const string ExpiredReplySubject = "Your queued consult email was not processed";
+    internal const string StartFailureReplySubject = "Your consult email could not be processed";
 
     private async Task SendStartFailureReplyAsync(
         string mailbox,
@@ -698,7 +743,7 @@ public sealed class EmailIntakeProcessor
                 + (appBaseUrl == null ? "." : $", or use the app directly:\n{appBaseUrl}\n")
                 + "\nThis message intentionally contains no clinical content.";
 
-            await _mail.SendMailAsync(mailbox, toAddress, "Your consult email could not be processed", body, cancellationToken);
+            await _mail.SendMailAsync(mailbox, toAddress, StartFailureReplySubject, body, cancellationToken);
         }
         catch (Exception ex)
         {
