@@ -55,4 +55,104 @@ public class ConsultDocumentPdfTests
 
         Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
     }
+
+    // #252 — a consult copied out of Outlook as `hormone␂blocking`. The cause
+    // is not the encoding: PDFsharp already emits a Type0/Identity-H font with
+    // a ToUnicode map for anything outside Windows-1252. It is that Liberation
+    // Sans has no glyph for U+2011, so the map faithfully records .notdef and
+    // readers copy a control character.
+
+    private static string ExtractText(byte[] pdf)
+    {
+        using var document = UglyToad.PdfPig.PdfDocument.Open(
+            new MemoryStream(pdf),
+            new UglyToad.PdfPig.ParsingOptions { Password = Password });
+
+        return string.Join("\n", document.GetPages().Select(page => page.Text));
+    }
+
+    [Fact]
+    public void Render_ANonBreakingHyphenSurvivesAsAHyphen()
+    {
+        // The reported failure, reproduced and fixed. Before the fold this
+        // came back as U+0000.
+        var bytes = ConsultDocumentPdf.Render("Continue hormone‑blocking treatment.", Password);
+
+        var text = ExtractText(bytes);
+
+        Assert.Contains("hormone‐blocking", text);
+        // The exact regression: .notdef copied out as a NUL.
+        Assert.False(text.Contains('\0'), "the rendered text still carries a NUL");
+    }
+
+    [Fact]
+    public void Render_ProducesNoControlCharactersAtAll()
+    {
+        // The general form of the defect: whatever we cannot draw, a reader
+        // must never be handed a control character in a clinical document.
+        var bytes = ConsultDocumentPdf.Render(
+            "Dose ‑ unchanged. Range ≤ 5 mg. Patient’s — note – here. μg.",
+            Password);
+
+        var text = ExtractText(bytes);
+
+        Assert.DoesNotContain(text, c => char.IsControl(c) && c != '\n' && c != '\r');
+    }
+
+    [Fact]
+    public void Render_LeavesCharactersTheFontCanDrawExactlyAsWritten()
+    {
+        // The control for the test above: these are all in Liberation Sans,
+        // so nothing may be folded. A fix that normalised punctuation
+        // wholesale would pass the previous test and fail this one.
+        var bytes = ConsultDocumentPdf.Render("Patient’s dose — unchanged – today. μg ≤ 5.", Password);
+
+        var text = ExtractText(bytes);
+
+        Assert.Contains("’", text);
+        Assert.Contains("—", text);
+        Assert.Contains("–", text);
+        Assert.Contains("μ", text);
+        Assert.Contains("≤", text);
+    }
+
+    [Fact]
+    public void Render_WarnsWithCodepointsWhenSomethingCannotBeDrawn()
+    {
+        // U+4E00 has no glyph and no safe stand-in, so it stays — and is
+        // reported, because the point of this issue is that it used to not be.
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render("Note 一 here.", Password, logger);
+
+        // Recorded holds the rendered message and its structured values, so
+        // assert over the whole capture rather than expecting one entry.
+        Assert.Contains("cannot draw", logger.Everything);
+        Assert.Contains("U+4E00", logger.Everything);
+        // The codepoint, never the prose around it.
+        Assert.DoesNotContain("Note", logger.Everything);
+    }
+
+    [Fact]
+    public void Render_DoesNotWarnForOrdinaryProse()
+    {
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render(Document, Password, logger);
+
+        Assert.DoesNotContain(logger.Recorded, m => m.Contains("cannot draw"));
+    }
+
+    [Fact]
+    public void Render_CarriesAGenericTitleAndTheDocumentLanguage()
+    {
+        var bytes = ConsultDocumentPdf.Render(Document, Password);
+
+        using var stream = new MemoryStream(bytes);
+        using var reopened = PdfReader.Open(stream, Password, PdfDocumentOpenMode.ReadOnly);
+
+        // Generic on purpose: the title shows in a mail client's preview.
+        Assert.Equal("Consult", reopened.Info.Title);
+        Assert.Equal("en-CA", reopened.Internals.Catalog.Elements.GetString("/Lang"));
+    }
 }
