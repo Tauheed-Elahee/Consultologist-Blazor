@@ -40,3 +40,60 @@ Two independently deployed applications in one solution, plus two test projects:
 - The scoped-CSS bundle is named after the assembly: `wwwroot/index.html` links `Consultologist.Web.styles.css`. Renaming the Web project breaks this link unless index.html is updated.
 - CI is path-filtered: the Function App deploys only on `src/Consultologist.Api/**` changes; the SWA deploy ignores api/tests/docs/markdown changes but builds previews for every PR. Tests run in their own workflow.
 - Design docs live in `docs/` (indexed by `docs/README.md`); `docs/research/` is historical point-in-time material — don't update it to match later refactors.
+
+## Traps
+
+Each of these has cost real debugging time. They are listed by **symptom**,
+because the symptom never points at the cause.
+
+### NSubstitute returns `""` for unstubbed strings, not `null`
+
+*Symptom: a null-check branch is never taken, and the code proceeds with an
+empty id.* Auto-values give `string.Empty` for `string` and
+`Task<string?>` — so `if (folderId == null)` is false on a substitute that
+was never told what to return. Check `string.IsNullOrWhiteSpace` instead of
+`== null` at any boundary a test can reach.
+
+### The last matching NSubstitute stub wins
+
+*Symptom: a `NullReferenceException` deep inside the code under test, nowhere
+near the stub.* A helper that ends with
+`.TryAcquireAsync(Arg.Any<string>(), …).Returns(allowed)` silently overrides
+a specific `.TryAcquireAsync("user-1", …).Returns(refused)` set **before** it,
+so the test runs the wrong path and dies on the first unstubbed thing it
+meets. Construct first, override after — and put the override in a named
+helper so the ordering requirement is visible.
+
+### `gh pr edit` and `gh issue close` fail on this repo
+
+*Symptom: `GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.*
+Nothing is wrong with the PR or the token. Use REST:
+
+```bash
+gh api -X PATCH repos/OWNER/REPO/pulls/N -F body=@body.md
+gh api -X PATCH repos/OWNER/REPO/issues/N -f state=closed
+```
+
+### JSON response casing is not uniform
+
+*Symptom: a client reads a field and gets an empty value with no error.*
+Records serialize **PascalCase** (`DocumentExtractionResponse` → `"Text"`),
+while anonymous objects keep their declared casing (`new { error = … }` →
+`"error"`). The same endpoint therefore answers `Text` on success and `error`
+on refusal. Scripts should read both (`d.get("Text") or d.get("text")`);
+`scripts/show-extraction.sh` and `scripts/verify-rate-limit.sh` do.
+
+### A test file may hold more than one class
+
+*Symptom: `CS0103: The name '_field' does not exist in the current context`
+on a test that looks correctly placed.* `ConsultGenerationJobStarterTests.cs`
+holds `ConsultGenerationJobStarterTests`, `ResolveEffectiveInputsTests` and a
+`file static` helper. Anchoring an edit on "the last test in the file" lands
+in the wrong class. Check the enclosing class before adding a test.
+
+### `az functionapp show --query state` is null on Flex Consumption
+
+*Symptom: `state`, `defaultHostName` and `availabilityState` all return
+`None`.* The Flex Consumption shape does not populate them through those
+JMESPath paths. Probe the app over HTTP instead — `GET /api/HttpProbe`
+returns 204 — which is better evidence anyway.
