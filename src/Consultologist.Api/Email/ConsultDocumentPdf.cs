@@ -6,6 +6,7 @@ using MigraDoc.DocumentObjectModel;
 using MigraDoc.Rendering;
 using PdfSharp.Fonts;
 using PdfSharp.Pdf.Security;
+using Microsoft.Extensions.Logging;
 
 namespace Consultologist.Api.Email;
 
@@ -27,10 +28,26 @@ internal static class ConsultDocumentPdf
         .Build();
 
     private static readonly object FontResolverLock = new();
+    private static FontGlyphCoverage? _coverage;
 
-    internal static byte[] Render(string markdown, string password)
+    internal static byte[] Render(string markdown, string password, ILogger? logger = null)
     {
         EnsureFontResolver();
+
+        // #252: what the embedded font can actually draw. Characters it
+        // cannot are folded onto identical marks it can, and whatever is left
+        // is counted so it stops being silent.
+        var coverage = EnsureCoverage();
+        var prepared = RenderableText.Prepare(markdown, coverage);
+
+        if (prepared.Unrenderable.Count > 0)
+        {
+            logger?.LogWarning(
+                "Consult PDF contains characters the embedded font cannot draw; they will render as missing glyphs. Codepoints={Codepoints}",
+                RenderableText.Describe(prepared.Unrenderable));
+        }
+
+        markdown = prepared.Text;
 
         var document = new Document();
         var section = document.Sections.AddSection();
@@ -53,6 +70,17 @@ internal static class ConsultDocumentPdf
         renderer.RenderDocument();
 
         var pdf = renderer.PdfDocument;
+
+        // A generic title: it names the document in a mail client's preview
+        // and in a reader's title bar, and must therefore carry nothing about
+        // the patient (docs/ASYNC_DELIVERY.md § 3).
+        pdf.Info.Title = "Consult";
+
+        // #252: the document language, for screen readers and for any reader
+        // deciding how to hyphenate or pronounce it. PDFsharp exposes no
+        // typed property, so it goes on the catalog directly.
+        pdf.Internals.Catalog.Elements.SetString("/Lang", "en-CA");
+
         var securitySettings = pdf.SecuritySettings;
         securitySettings.UserPassword = password;
         securitySettings.OwnerPassword = password;
@@ -233,6 +261,27 @@ internal static class ConsultDocumentPdf
         lock (FontResolverLock)
         {
             GlobalFontSettings.FontResolver ??= new LiberationSansFontResolver();
+        }
+    }
+
+    /// <summary>
+    /// Read once from the same bytes the resolver embeds, so coverage can
+    /// never disagree with the font actually in the file.
+    /// </summary>
+    private static FontGlyphCoverage EnsureCoverage()
+    {
+        lock (FontResolverLock)
+        {
+            if (_coverage != null)
+            {
+                return _coverage;
+            }
+
+            var bytes = new LiberationSansFontResolver().GetFont("LiberationSans-Regular");
+            _coverage = bytes == null
+                ? FontGlyphCoverage.Read([])
+                : FontGlyphCoverage.Read(bytes);
+            return _coverage;
         }
     }
 

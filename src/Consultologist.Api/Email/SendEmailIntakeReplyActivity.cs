@@ -161,7 +161,11 @@ public sealed class SendEmailIntakeReplyActivity
                 // Filenames carry no PHI — an authored result id and the short job id.
                 .Select(document => new GraphMailAttachment(
                     $"{document.ResultId}-{jobIdPrefix}.pdf",
-                    ConsultDocumentPdf.Render(document.Text, password.Value)))
+                    // #252: the logger is what makes an undrawable character
+                    // visible. Without it the render still folds what it can,
+                    // but anything it cannot goes unreported — which is the
+                    // silence this issue exists to end.
+                    ConsultDocumentPdf.Render(document.Text, password.Value, _logger)))
                 .ToList();
 
             var outcome = ApplyBudget(attachments, documents.Select(document => document.Label).ToList());
