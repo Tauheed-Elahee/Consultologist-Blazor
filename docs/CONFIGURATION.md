@@ -331,7 +331,11 @@ None. The assistants-era leftovers (`AzureAI__AgentId__old`, `AzureAI__Endpoint_
 `AzureAI__ApiVersion__old`) and the retired agent pin settings
 (`AzureAI__AgentName`/`AgentVersion`/`ConceptAgentName`/`ConceptAgentVersion`,
 replaced by the output-contract catalog) were deleted from the Function App
-2026-07-15.
+2026-07-15 — and from the **`consultologist-blazor` Static Web App**
+2026-08-01, which that first pass missed. Worth remembering that these are two
+resources with separate configuration: a setting deleted from one survives on
+the other, and this section said "None" for two weeks while three of them were
+still sitting on the site.
 
 ## Frontend (`src/Consultologist.Web/wwwroot/appsettings.json`)
 
