@@ -795,6 +795,62 @@ public class EmailIntakeProcessorTests
         await _mail.Received(1).ListUnreadInboxMessagesAsync(Mailbox, 1, Arg.Any<CancellationToken>());
     }
 
+    // #266, found by reading the two replies a real run actually sent.
+
+    [Fact]
+    public async Task TheQueuedReply_PromisesAFollowUpRatherThanAnOutcome()
+    {
+        // It said "you do not need to re-send it" full stop, and the expiry
+        // path then said "please re-send it" ninety seconds later. Whichever
+        // way a queued message goes, this reply has to stay true.
+        SetupAcceptedSender(Message());
+        RateLimitTheSender();
+
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com", "Your consult email is queued",
+            Arg.Do<string>(b => body = b), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.NotNull(body);
+        Assert.Contains("write again", body);
+        // No hard-coded interval: MaxEmailDeferralHours changes without a
+        // deploy, so naming hours here would make the copy lie on a re-tune.
+        Assert.DoesNotContain("two hours", body);
+        Assert.DoesNotContain("2 hours", body);
+    }
+
+    [Fact]
+    public async Task TheExpiryReply_DoesNotReadLikeADocumentFailure()
+    {
+        // It reused the start-failure copy, so a clinician whose message was
+        // perfectly fine got the same subject and opening line as someone who
+        // sent a scan with no text layer. busy and the preview 429 both say
+        // "nothing is wrong"; this door has to say it too.
+        SetupQueued(new GraphMessageRef("g-1", "<m1@x>", DateTimeOffset.Parse("2026-07-25T09:00:00Z")));
+        _mail.ListUnreadInboxMessagesAsync(Mailbox, Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<GraphMessageRef>());
+        _claims.GetAsync("<m1@x>", Arg.Any<CancellationToken>()).Returns(new EmailIntakeClaim(
+            "<m1@x>", "g-1", "doc@example.com", _time.GetUtcNow(), "user-1",
+            Outcome: EmailIntakeOutcomes.Queued));
+
+        string? subject = null;
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com",
+            Arg.Do<string>(s => subject = s), Arg.Do<string>(b => body = b),
+            Arg.Any<CancellationToken>(), Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        await CreateProcessor(maxEmailDeferralHours: 2).RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(EmailIntakeProcessor.ExpiredReplySubject, subject);
+        Assert.NotEqual(EmailIntakeProcessor.StartFailureReplySubject, subject);
+        Assert.NotNull(body);
+        Assert.Contains("Nothing is wrong", body);
+        Assert.DoesNotContain("could not be processed", body);
+        Assert.Contains("no clinical content", body);
+    }
+
     [Fact]
     public async Task WithNoQueuedFolder_TheInboxIsStillDrainedAndNothingIsCreated()
     {
