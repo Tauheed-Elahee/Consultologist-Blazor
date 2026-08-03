@@ -169,6 +169,47 @@ activity, `Account/DeliveryPassword` endpoints):
   when the password is set and the run Completed with a document; Failed
   runs and password-less accounts get link-only replies; any failure in
   the attachment leg degrades to link-only, never silence.
+- **Characters the font cannot draw are folded before rendering (#252,
+  2026-08-02)** — `Email/RenderableText.cs`, and the one place this project
+  edits the *delivered* clinical text.
+
+  A font with no glyph does not leave a blank: it draws `.notdef`, and the
+  PDF's ToUnicode map then correctly records that the character means
+  nothing, so a reader copies a **control character into the chart**.
+  Measured: Liberation Sans has no U+2011 NON-BREAKING HYPHEN, and a
+  consult reading `hormone‑blocking` copied out of Outlook on the web as
+  `hormone␂blocking`. `Email/FontGlyphCoverage.cs` reads the embedded
+  font's `cmap` so the font itself is the authority on what it can draw.
+
+  **The bar for a substitution is the same mark, not a similar one.**
+  U+2011 → U+2010 differ only in whether a line may break there, and in a
+  fixed-layout PDF that difference is already spent; figure/thin/narrow
+  spaces → space; zero-width joiners and BOMs are dropped because they
+  have no visual. That is the whole table. Deliberately **not** done, in
+  the register of `DOCUMENT_INPUT.md` § 2's refusals: de-hyphenating,
+  transliterating accents, normalising a µ or a ≤. Those would be
+  corrections to clinical prose, and every one of those characters is in
+  the font anyway.
+
+  Each substitution is **conditional on the gap** — it applies only when
+  the font genuinely lacks the original, so adopting a wider font retires
+  entries rather than changing behaviour.
+
+  **The defect was never a missing ToUnicode map**, which is what #252's
+  title says and what its body proposed fixing. PDFsharp already emits a
+  `/Type0` `/Identity-H` font carrying one for everything outside
+  Windows-1252, and it works — a correction is recorded on the issue.
+
+  **Still open (#287):** a character with no same-mark stand-in is kept —
+  a missing-glyph box is at least visible on the page — and counted, with
+  the codepoints logged (`Codepoints=U+XXXXxN`, never the surrounding
+  prose). Its copy still carries U+0000, and Outlook additionally drops
+  the character *following* a missing glyph. Liberation Sans has no
+  U+FFFD, so the replacement is not an obvious choice and gets its own
+  argument.
+- **The document carries a generic `Consult` title** — it shows in a mail
+  client's preview and a reader's title bar, so it can hold nothing about
+  the patient — and `/Lang` `en-CA` for screen readers (#252).
 
 ### Per-deliverable delivery (#217) — IMPLEMENTED 2026-07-27
 
