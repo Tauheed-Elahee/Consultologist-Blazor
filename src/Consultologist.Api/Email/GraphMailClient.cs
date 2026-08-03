@@ -34,6 +34,23 @@ public sealed record GraphInboundAttachment(
     int Size,
     byte[] Content);
 
+/// <summary>
+/// What a message's attachment collection actually yielded (#249):
+/// <paramref name="Files"/> is what we can read, <paramref name="UnreadableKinds"/>
+/// the <c>@odata.type</c> of everything listed that produced no bytes.
+///
+/// **Kinds, never names.** A filename can itself be PHI
+/// ("Smith_John_referral.pdf" — see <see cref="EmailAttachmentInputs"/>), and
+/// this list exists to be put in a log line and a reply to the sender. The
+/// kind is enough to tell someone what to do differently.
+///
+/// Inline parts never appear here. A signature logo is deliberately skipped
+/// and is not a discrepancy.
+/// </summary>
+public sealed record GraphAttachmentListing(
+    IReadOnlyList<GraphInboundAttachment> Files,
+    IReadOnlyList<string> UnreadableKinds);
+
 public interface IGraphMailClient
 {
     Task<IReadOnlyList<GraphMessageRef>> ListUnreadInboxMessagesAsync(string mailbox, int top, CancellationToken cancellationToken);
@@ -53,10 +70,20 @@ public interface IGraphMailClient
     Task<GraphMessage?> GetMessageAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// The message's non-inline file attachments (#210). Graph returns
-    /// contentBytes base64 in the JSON body, so no raw-bytes path is needed.
+    /// The message's non-inline file attachments (#210), and the kinds of
+    /// anything listed that yielded no bytes (#249).
+    ///
+    /// This used to state as settled fact that "Graph returns contentBytes
+    /// base64 in the JSON body, so no raw-bytes path is needed". That holds
+    /// for file attachments at the sizes we accept — a 5.7 MB probe inlined
+    /// whole — but it was never true of every attachment. An
+    /// <c>itemAttachment</c> (a forwarded email) and a
+    /// <c>referenceAttachment</c> (a link to a file) carry no
+    /// <c>contentBytes</c> at all, and both were being passed over in
+    /// silence. The caller decides what to do about that; this only reports
+    /// it honestly.
     /// </summary>
-    Task<IReadOnlyList<GraphInboundAttachment>> ListAttachmentsAsync(string mailbox, string messageId, CancellationToken cancellationToken);
+    Task<GraphAttachmentListing> ListAttachmentsAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
     Task MarkReadAsync(string mailbox, string messageId, CancellationToken cancellationToken);
 
@@ -222,45 +249,115 @@ public sealed class GraphMailClient : IGraphMailClient
             root.TryGetProperty("hasAttachments", out var hasAttachments) && hasAttachments.ValueKind == JsonValueKind.True);
     }
 
-    public async Task<IReadOnlyList<GraphInboundAttachment>> ListAttachmentsAsync(
+    public async Task<GraphAttachmentListing> ListAttachmentsAsync(
         string mailbox,
         string messageId,
         CancellationToken cancellationToken)
     {
+        var attachments = new List<GraphInboundAttachment>();
+        var unreadable = new List<string>();
         var url = $"{GraphBase}/users/{Uri.EscapeDataString(mailbox)}/messages/{messageId}/attachments";
 
-        using var document = await SendAsync(HttpMethod.Get, url, body: null, cancellationToken, tolerateNotFound: true);
-
-        var attachments = new List<GraphInboundAttachment>();
-
-        if (document == null
-            || !document.RootElement.TryGetProperty("value", out var items)
-            || items.ValueKind != JsonValueKind.Array)
+        // Graph's contract is explicit: "To read all results, you must
+        // continue to call Microsoft Graph with the @odata.nextLink property
+        // returned in each response until the @odata.nextLink property is no
+        // longer returned." We never did, so a second page would have been
+        // invisible — including to the reconciliation below, which would
+        // cheerfully report that everything listed had been read.
+        //
+        // Bounded rather than while(true): a nextLink that never terminates
+        // would otherwise hang the whole poll on one message.
+        for (var page = 0; page < MaxAttachmentPages && url != null; page++)
         {
-            return attachments;
-        }
+            using var document = await SendAsync(HttpMethod.Get, url, body: null, cancellationToken, tolerateNotFound: true);
 
-        foreach (var item in items.EnumerateArray())
-        {
-            // Only file attachments carry contentBytes; item and reference
-            // attachments are a different @odata.type entirely.
-            var isInline = item.TryGetProperty("isInline", out var inline) && inline.ValueKind == JsonValueKind.True;
-            var contentBytes = item.TryGetProperty("contentBytes", out var bytes) ? bytes.GetString() : null;
-
-            if (isInline || contentBytes == null)
+            if (document == null
+                || !document.RootElement.TryGetProperty("value", out var items)
+                || items.ValueKind != JsonValueKind.Array)
             {
-                continue;
+                break;
             }
 
-            attachments.Add(new GraphInboundAttachment(
-                item.TryGetProperty("name", out var name) ? name.GetString() ?? string.Empty : string.Empty,
-                item.TryGetProperty("contentType", out var contentType) ? contentType.GetString() ?? string.Empty : string.Empty,
-                item.TryGetProperty("size", out var size) && size.TryGetInt32(out var sizeValue) ? sizeValue : 0,
-                Convert.FromBase64String(contentBytes)));
+            foreach (var item in items.EnumerateArray())
+            {
+                var classified = Classify(item);
+
+                if (classified.IsInline)
+                {
+                    continue;
+                }
+
+                if (classified.UnreadableKind != null)
+                {
+                    unreadable.Add(classified.UnreadableKind);
+                    continue;
+                }
+
+                attachments.Add(new GraphInboundAttachment(
+                    item.TryGetProperty("name", out var name) ? name.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty("contentType", out var contentType) ? contentType.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty("size", out var size) && size.TryGetInt32(out var sizeValue) ? sizeValue : 0,
+                    Convert.FromBase64String(classified.ContentBytes!)));
+            }
+
+            url = document.RootElement.TryGetProperty("@odata.nextLink", out var next)
+                ? next.GetString()
+                : null;
         }
 
-        return attachments;
+        return new GraphAttachmentListing(attachments, unreadable);
     }
+
+    internal const string UnknownAttachmentKind = "unknown";
+
+    /// <summary>
+    /// What one entry in the attachments collection is (#249). Pulled out of
+    /// the loop so the rule can be tested: every test substitutes
+    /// <see cref="IGraphMailClient"/> wholesale, so anything left inside the
+    /// request loop ships unverified — and the inline rule is the one guard
+    /// here that must not be got wrong, since treating a signature logo as a
+    /// discrepancy would bounce every signed email.
+    /// </summary>
+    internal sealed record GraphAttachmentClassification(
+        bool IsInline,
+        string? UnreadableKind,
+        string? ContentBytes);
+
+    internal static GraphAttachmentClassification Classify(JsonElement item)
+    {
+        // Inline parts are signature logos and the like. Deliberately skipped
+        // since #210 — treating them as content would change behaviour for
+        // every signed email — and so NOT a discrepancy.
+        if (item.TryGetProperty("isInline", out var inline) && inline.ValueKind == JsonValueKind.True)
+        {
+            return new GraphAttachmentClassification(true, null, null);
+        }
+
+        var contentBytes = item.TryGetProperty("contentBytes", out var bytes)
+            && bytes.ValueKind == JsonValueKind.String
+                ? bytes.GetString()
+                : null;
+
+        if (contentBytes != null)
+        {
+            return new GraphAttachmentClassification(false, null, contentBytes);
+        }
+
+        // An itemAttachment (forwarded mail) or referenceAttachment (a link),
+        // or a fileAttachment that unexpectedly arrived without bytes. The
+        // kind is reportable; the name never is — it can itself be PHI.
+        return new GraphAttachmentClassification(
+            false,
+            item.TryGetProperty("@odata.type", out var kind) && kind.ValueKind == JsonValueKind.String
+                ? kind.GetString() ?? UnknownAttachmentKind
+                : UnknownAttachmentKind,
+            null);
+    }
+
+    // Generous: the message caps are 10 MB per attachment and 20 MB in total,
+    // so a message reaching this many pages is pathological rather than
+    // clinical.
+    private const int MaxAttachmentPages = 20;
 
     public async Task MarkReadAsync(string mailbox, string messageId, CancellationToken cancellationToken)
     {

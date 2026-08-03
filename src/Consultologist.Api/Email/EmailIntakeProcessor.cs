@@ -459,11 +459,28 @@ public sealed class EmailIntakeProcessor
         string messageId,
         CancellationToken cancellationToken)
     {
-        var fetched = await _mail.ListAttachmentsAsync(mailbox, messageId, cancellationToken);
+        var listing = await _mail.ListAttachmentsAsync(mailbox, messageId, cancellationToken);
+
+        // #249: something was attached that we could not read. Refuse the
+        // message rather than proceeding on the part that did arrive — we
+        // cannot know whether the unread part was the referral, and a consult
+        // built from half of one and presented as whole is the failure this
+        // is about. The same reasoning makes an ambiguous slot assignment a
+        // rejection in #210 rather than a guess.
+        if (listing.UnreadableKinds.Count > 0)
+        {
+            _logger.LogWarning(
+                "Email intake found attachments it could not read. MessageId={MessageId}, Kinds={Kinds}",
+                messageId,
+                string.Join(", ", listing.UnreadableKinds));
+
+            return (Array.Empty<EmailInputAttachment>(), DescribeUnreadable(listing.UnreadableKinds));
+        }
+
         var attachments = new List<EmailInputAttachment>();
         var totalBytes = 0L;
 
-        foreach (var attachment in fetched)
+        foreach (var attachment in listing.Files)
         {
             if (attachment.Content.Length > MaxAttachmentLength)
             {
@@ -488,6 +505,33 @@ public sealed class EmailIntakeProcessor
         }
 
         return (attachments, null);
+    }
+
+    /// <summary>
+    /// The sentence the sender gets when something they attached could not be
+    /// read (#249). Names the **kind**, never the file: a filename can itself
+    /// be PHI, and replies on this path carry none (§ 6 of
+    /// docs/DOCUMENT_INPUT.md).
+    ///
+    /// Each sentence has to tell them what to do differently, because "one
+    /// attachment could not be read" alone would leave a clinician re-sending
+    /// the identical message.
+    /// </summary>
+    internal static string DescribeUnreadable(IReadOnlyList<string> kinds)
+    {
+        if (kinds.Any(kind => kind.Contains("referenceAttachment", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "An attachment is a link to a file rather than the file itself. "
+                + "Please attach the document directly and re-send.";
+        }
+
+        if (kinds.Any(kind => kind.Contains("itemAttachment", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "An attachment is a forwarded email rather than a file. "
+                + "Please attach the document itself and re-send.";
+        }
+
+        return "An attachment could not be read. Please re-send it as a file attachment.";
     }
 
     /// <summary>

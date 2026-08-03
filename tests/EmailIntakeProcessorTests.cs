@@ -39,7 +39,7 @@ public class EmailIntakeProcessorTests
         // The default: no attachments. Set here rather than in CreateProcessor
         // so a test's own stub is not overwritten by processor construction.
         _mail.ListAttachmentsAsync(Mailbox, Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Array.Empty<GraphInboundAttachment>());
+            .Returns(new GraphAttachmentListing(Array.Empty<GraphInboundAttachment>(), Array.Empty<string>()));
     }
 
     private EmailIntakeProcessor CreateProcessor(
@@ -113,7 +113,13 @@ public class EmailIntakeProcessorTests
     }
 
     private void WithAttachments(params GraphInboundAttachment[] attachments) =>
-        _mail.ListAttachmentsAsync(Mailbox, "g-1", Arg.Any<CancellationToken>()).Returns(attachments);
+        _mail.ListAttachmentsAsync(Mailbox, "g-1", Arg.Any<CancellationToken>())
+            .Returns(new GraphAttachmentListing(attachments, Array.Empty<string>()));
+
+    /// <summary>#249: Graph listed something that yielded no bytes.</summary>
+    private void WithUnreadable(string kind, params GraphInboundAttachment[] readable) =>
+        _mail.ListAttachmentsAsync(Mailbox, "g-1", Arg.Any<CancellationToken>())
+            .Returns(new GraphAttachmentListing(readable, new[] { kind }));
 
     private static GraphInboundAttachment Attachment(string name, string text) =>
         Attachment(name, System.Text.Encoding.UTF8.GetBytes(text));
@@ -553,6 +559,124 @@ public class EmailIntakeProcessorTests
             "user-1",
             Arg.Any<ConsultGenerationJobOrigin>(),
             Arg.Any<CancellationToken>());
+    }
+
+    // #249 — an attachment Graph lists but yields no bytes for was skipped
+    // with no log, no error and no count check, so a consult could be built
+    // from a partial referral and presented as a whole one.
+
+    [Fact]
+    public async Task AnUnreadableAttachment_RejectsTheMessageRatherThanProceeding()
+    {
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithUnreadable("#microsoft.graph.referenceAttachment");
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedAttachments),
+            Arg.Any<CancellationToken>());
+        // The whole point: no consult runs on what did arrive.
+        await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task AnUnreadableAttachment_TellsTheSenderWhatToDoDifferently()
+    {
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithUnreadable("#microsoft.graph.referenceAttachment");
+
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com", Arg.Any<string>(),
+            Arg.Do<string>(b => body = b), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.NotNull(body);
+        Assert.Contains("link to a file", body);
+        Assert.Contains("attach the document directly", body);
+    }
+
+    [Fact]
+    public async Task AForwardedEmailAttachment_GetsItsOwnAdvice()
+    {
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithUnreadable("#microsoft.graph.itemAttachment");
+
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com", Arg.Any<string>(),
+            Arg.Do<string>(b => body = b), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Contains("forwarded email", body);
+    }
+
+    [Fact]
+    public async Task TheRejectionReply_NeverNamesTheFile()
+    {
+        // A filename can itself be PHI. One readable attachment alongside the
+        // unreadable one, so there is a name available to leak.
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithUnreadable("#microsoft.graph.referenceAttachment",
+            Attachment("Smith_John_referral.pdf", "Referral text"));
+
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com", Arg.Any<string>(),
+            Arg.Do<string>(b => body = b), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.NotNull(body);
+        Assert.DoesNotContain("Smith", body);
+        Assert.DoesNotContain(".pdf", body);
+    }
+
+    [Fact]
+    public async Task OneReadableAndOneUnreadable_IsStillRejected()
+    {
+        // The harm is the partial referral, not the empty one.
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithUnreadable("#microsoft.graph.referenceAttachment",
+            Attachment("prior_notes.txt", "Old notes"));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _starter.DidNotReceiveWithAnyArgs().StartAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task AListingWithNoUnreadableKinds_IsProcessedAsBefore()
+    {
+        // The control: the rejection fires on UnreadableKinds alone, so a
+        // message with only readable attachments is untouched by #249.
+        // That inline parts never *reach* UnreadableKinds is pinned where the
+        // rule actually runs — GraphAttachmentClassificationTests.
+        SetupAcceptedSender(Message(hasAttachments: true));
+        WithV7Package();
+        WithAttachments(Attachment("prior_notes.txt", "Old notes"));
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Accepted);
+        Assert.Equal(0, summary.Rejected);
+    }
+
+    [Theory]
+    [InlineData("#microsoft.graph.referenceAttachment", "link to a file")]
+    [InlineData("#microsoft.graph.itemAttachment", "forwarded email")]
+    [InlineData("unknown", "could not be read")]
+    public void DescribeUnreadable_NamesTheKindAndTheRemedy(string kind, string expected)
+    {
+        var described = EmailIntakeProcessor.DescribeUnreadable([kind]);
+
+        Assert.Contains(expected, described);
+        Assert.Contains("re-send", described);
     }
 
     [Fact]
