@@ -12,12 +12,17 @@
 			"Azure.Core": "Warning",
 			"Azure.Storage": "Warning",
 			"Azure.Data.Tables": "Warning",
-			"Api.InvocationDiagnostics": "Information"
+			"Api.InvocationDiagnostics": "Information",
+			"Azure.Identity": "Warning",
+			"DurableTask.AzureStorage": "Warning",
+			"DurableTask.Core": "Warning",
+			"Microsoft.Azure.WebJobs.Hosting.OptionsLoggingService": "Warning",
+			"Host.Startup": "Warning"
 		},
 		"applicationInsights": {
 			"samplingSettings": {
 				"isEnabled": true,
-				"excludedTypes": "Request"
+				"excludedTypes": "Request;Exception;Trace"
 			},
 			"enableLiveMetricsFilters": true
 		}
