@@ -680,6 +680,34 @@ public class EmailIntakeProcessorTests
     }
 
     [Fact]
+    public async Task AReferralWithNoContent_IsRejectedWithASentenceTheSenderCanActOn()
+    {
+        // #290: the message parsed and the sender matched; there was simply
+        // no referral in it. The reply has to say so, and say what to do.
+        SetupAcceptedSender(Message());
+        _starter.StartAsync(_client, Arg.Any<ConsultGenerationRequest>(), "user-1",
+                Arg.Any<ConsultGenerationJobOrigin>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputWithoutContent,
+                "'consult_draft' does not contain a referral to work from. If the document was attached as a cloud link, please attach the file itself and re-send."));
+
+        string? body = null;
+        await _mail.SendMailAsync(Mailbox, "doc@example.com", Arg.Any<string>(),
+            Arg.Do<string>(b => body = b), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyList<GraphMailAttachment>?>());
+
+        var summary = await CreateProcessor().RunOnceAsync(_client, CancellationToken.None);
+
+        Assert.Equal(1, summary.Rejected);
+        await _claims.Received(1).UpdateAsync(
+            Arg.Is<EmailIntakeClaim>(c => c.Outcome == EmailIntakeOutcomes.RejectedEmpty),
+            Arg.Any<CancellationToken>());
+        Assert.NotNull(body);
+        Assert.Contains("attach the file itself", body);
+    }
+
+    [Fact]
     public async Task MessageWithoutAttachments_NeverCallsGraphForThem()
     {
         SetupAcceptedSender(Message());

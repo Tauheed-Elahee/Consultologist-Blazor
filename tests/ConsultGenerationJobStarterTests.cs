@@ -22,6 +22,13 @@ public class ConsultGenerationJobStarterTests
     private readonly DurableTaskClient _client = Substitute.For<DurableTaskClient>("test");
     private readonly DurableEntityClient _entities = Substitute.For<DurableEntityClient>("test");
 
+    // #290: a terse but genuine referral. These fixtures used to say
+    // "draft", which is not a referral and which the content floor
+    // correctly refuses — the tests were asserting behaviour against
+    // input no clinician would send.
+    private const string Referral =
+        "65M, newly diagnosed adenocarcinoma of the lung, stage IIIA, for consideration of chemoradiation. PMHx HTN.";
+
     private ConsultGenerationJobStarter CreateStarter(ILogger<ConsultGenerationJobStarter>? logger = null)
     {
         _client.Entities.Returns(_entities);
@@ -67,7 +74,7 @@ public class ConsultGenerationJobStarterTests
     {
         var outcome = await CreateStarter().StartAsync(
             _client,
-            new ConsultGenerationRequest("draft", "not a valid ref"),
+            new ConsultGenerationRequest(Referral, "not a valid ref"),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
@@ -81,7 +88,7 @@ public class ConsultGenerationJobStarterTests
     {
         var outcome = await CreateStarter().StartAsync(
             _client,
-            new ConsultGenerationRequest("draft", "acct-deadbeefdead@latest"),
+            new ConsultGenerationRequest(Referral, "acct-deadbeefdead@latest"),
             "11112222333344445555666677778888",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
@@ -99,7 +106,7 @@ public class ConsultGenerationJobStarterTests
 
         var outcome = await CreateStarter().StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "user@example.com"),
             CancellationToken.None);
@@ -117,7 +124,7 @@ public class ConsultGenerationJobStarterTests
 
         var outcome = await CreateStarter().StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
@@ -149,7 +156,7 @@ public class ConsultGenerationJobStarterTests
         // The legacy draft field back-fills the consult_draft slot; the
         // snapshot carries prefixed block ids, the result set, the effective
         // input map, and hash version 3.
-        var request = new ConsultGenerationRequest("The referral body");
+        var request = new ConsultGenerationRequest(Referral);
         _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackageRef("general", "latest"));
         _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
@@ -188,13 +195,13 @@ public class ConsultGenerationJobStarterTests
         Assert.Equal(3, orchestrationInput.EffectiveInputHashVersion);
         Assert.Equal(
             ConsultGenerationProvenance.ComputeDeclaredInputsHash(
-                new Dictionary<string, string> { ["consult_draft"] = "The referral body" }),
+                new Dictionary<string, string> { ["consult_draft"] = Referral }),
             orchestrationInput.EffectiveInputHash);
         Assert.Equal(
             new[] { new ConsultResultDescriptor("consult", "assemble-note", "Assemble note") },
             orchestrationInput.Results!.ToArray());
         Assert.Equal(
-            new Dictionary<string, string> { ["consult_draft"] = "The referral body" },
+            new Dictionary<string, string> { ["consult_draft"] = Referral },
             orchestrationInput.Inputs);
     }
 
@@ -205,7 +212,7 @@ public class ConsultGenerationJobStarterTests
         // set itself is the executability signal.
         var request = new ConsultGenerationRequest(
             null,
-            Inputs: new Dictionary<string, string> { ["consult_draft"] = "The referral body" });
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = Referral });
         _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackageRef("general", "latest"));
         _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
@@ -241,7 +248,7 @@ public class ConsultGenerationJobStarterTests
         Assert.Equal(string.Empty, orchestrationInput.Inputs!["prior_notes"]);
         Assert.Equal(
             ConsultGenerationProvenance.ComputeDeclaredInputsHash(
-                new Dictionary<string, string> { ["consult_draft"] = "The referral body" }),
+                new Dictionary<string, string> { ["consult_draft"] = Referral }),
             orchestrationInput.EffectiveInputHash);
     }
 
@@ -270,7 +277,7 @@ public class ConsultGenerationJobStarterTests
     [Fact]
     public async Task Success_SignalsInitializeAndSchedulesWithSameJobIdAndDraftHash()
     {
-        var request = new ConsultGenerationRequest("The referral body");
+        var request = new ConsultGenerationRequest(Referral);
         _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
             .Returns(new WorkflowPackageRef("general", "latest"));
         _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
@@ -323,18 +330,18 @@ public class ConsultGenerationJobStarterTests
             null,
             InputFiles: new Dictionary<string, InputFilePayload>
             {
-                ["consult_draft"] = new("text/plain", "The referral body"u8.ToArray())
+                ["consult_draft"] = new("text/plain", System.Text.Encoding.UTF8.GetBytes(Referral))
             });
 
         var captured = await StartV7AndCaptureAsync(request);
 
         Assert.Null(captured.Outcome.Error);
         Assert.Equal(
-            new Dictionary<string, string> { ["consult_draft"] = "The referral body" },
+            new Dictionary<string, string> { ["consult_draft"] = Referral },
             captured.OrchestrationInput!.Inputs);
         Assert.Equal(
             ConsultGenerationProvenance.ComputeDeclaredInputsHash(
-                new Dictionary<string, string> { ["consult_draft"] = "The referral body" }),
+                new Dictionary<string, string> { ["consult_draft"] = Referral }),
             captured.OrchestrationInput.EffectiveInputHash);
     }
 
@@ -345,7 +352,7 @@ public class ConsultGenerationJobStarterTests
             null,
             InputFiles: new Dictionary<string, InputFilePayload>
             {
-                ["consult_draft"] = new("text/plain", "The referral body"u8.ToArray())
+                ["consult_draft"] = new("text/plain", System.Text.Encoding.UTF8.GetBytes(Referral))
             });
 
         var captured = await StartV7AndCaptureAsync(request);
@@ -362,7 +369,7 @@ public class ConsultGenerationJobStarterTests
         // until #237, and every job predating this field has none either.
         var request = new ConsultGenerationRequest(
             null,
-            Inputs: new Dictionary<string, string> { ["consult_draft"] = "The referral body" });
+            Inputs: new Dictionary<string, string> { ["consult_draft"] = Referral });
 
         var captured = await StartV7AndCaptureAsync(request);
 
@@ -382,7 +389,7 @@ public class ConsultGenerationJobStarterTests
             null,
             InputFiles: new Dictionary<string, InputFilePayload>
             {
-                ["consult_draft"] = new("text/plain", "The referral body"u8.ToArray())
+                ["consult_draft"] = new("text/plain", System.Text.Encoding.UTF8.GetBytes(Referral))
             });
 
         var captured = await StartV7AndCaptureAsync(request);
@@ -587,7 +594,7 @@ public class ConsultGenerationJobStarterTests
 
         var outcome = await starter.StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
@@ -608,7 +615,7 @@ public class ConsultGenerationJobStarterTests
 
         await starter.StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
@@ -629,12 +636,64 @@ public class ConsultGenerationJobStarterTests
 
         var outcome = await starter.StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "user@example.com"),
             CancellationToken.None);
 
         Assert.Equal(ConsultGenerationJobStartError.RateLimited, outcome.Error);
+    }
+
+    // #290 — a required input that is present but carries no referral. The
+    // failure this prevents: a full consult generated from a body containing
+    // only a OneDrive link, every section reading "not documented", delivered.
+
+    [Fact]
+    public async Task AReferralThatIsOnlyALink_DoesNotStartAJob()
+    {
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV5Package());
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest(
+                "https://consultologist-my.sharepoint.com/:w:/g/personal/u/EX9fLk2mQ_dHqB7wZ8vNc1kBqL3rT6yPmA2sK4uW0nXeVg"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "doc@example.com"),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.InputWithoutContent, outcome.Error);
+        Assert.Null(outcome.JobId);
+        // The sentence has to tell them what to do differently.
+        Assert.Contains("attach the file itself", outcome.ErrorDetail);
+        await _client.DidNotReceiveWithAnyArgs().ScheduleNewOrchestrationInstanceAsync(
+            default, default, default, default);
+    }
+
+    [Fact]
+    public async Task ATerseButRealReferral_StillStarts()
+    {
+        // The regression in the other direction, and the reason the floor
+        // strips URLs rather than counting characters.
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV5Package());
+        _client.ScheduleNewOrchestrationInstanceAsync(
+                Arg.Any<TaskName>(), Arg.Any<object?>(), Arg.Any<StartOrchestrationOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(((StartOrchestrationOptions?)callInfo[2])!.InstanceId!));
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest(Referral),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Null(outcome.Error);
+        Assert.NotNull(outcome.JobId);
     }
 
     [Fact]
@@ -655,7 +714,7 @@ public class ConsultGenerationJobStarterTests
 
         var outcome = await starter.StartAsync(
             _client,
-            new ConsultGenerationRequest("draft"),
+            new ConsultGenerationRequest(Referral),
             "user-1",
             new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
             CancellationToken.None);
