@@ -673,6 +673,31 @@ public class ConsultGenerationJobStarterTests
     }
 
     [Fact]
+    public async Task AReferralBehindACloudLink_DoesNotStartAJob()
+    {
+        // #291: the message that defeated #290's floor -- a OneDrive link
+        // wrapped in a greeting and a signature, which clears forty
+        // characters and generated a complete empty consult.
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(ExecutableV5Package());
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest(
+                "Hi, here is the referral. https://consultologist-my.sharepoint.com/:w:/g/personal/u/EX9fLk2m Regards, Dr X, Oncology"),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.Email, "doc@example.com"),
+            CancellationToken.None);
+
+        Assert.Equal(ConsultGenerationJobStartError.InputBehindACloudLink, outcome.Error);
+        Assert.Contains("attach the document", outcome.ErrorDetail);
+        await _client.DidNotReceiveWithAnyArgs().ScheduleNewOrchestrationInstanceAsync(
+            default, default, default, default);
+    }
+
+    [Fact]
     public async Task ATerseButRealReferral_StillStarts()
     {
         // The regression in the other direction, and the reason the floor

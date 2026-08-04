@@ -345,6 +345,7 @@ public sealed class EmailIntakeProcessor
                 // #290: the message arrived and parsed; there was simply no
                 // referral in it to generate from.
                 ConsultGenerationJobStartError.InputWithoutContent => EmailIntakeOutcomes.RejectedEmpty,
+                ConsultGenerationJobStartError.InputBehindACloudLink => EmailIntakeOutcomes.RejectedCloudLink,
                 _ => EmailIntakeOutcomes.StartFailed
             };
             await _claims.UpdateAsync(
@@ -359,6 +360,7 @@ public sealed class EmailIntakeProcessor
                 // authored input id, never a filename (#217).
                 start.Error is ConsultGenerationJobStartError.InputFileUnreadable
                     or ConsultGenerationJobStartError.InputWithoutContent
+                    or ConsultGenerationJobStartError.InputBehindACloudLink
                     ? start.ErrorDetail
                     : null,
                 cancellationToken);

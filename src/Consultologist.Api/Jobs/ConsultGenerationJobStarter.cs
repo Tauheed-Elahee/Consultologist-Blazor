@@ -38,7 +38,11 @@ public enum ConsultGenerationJobStartError
     // #290: a required input is present but carries no referral. Distinct
     // from InputsMismatch, which is about the shape of the request; this is
     // about there being nothing in it to generate from.
-    InputWithoutContent
+    InputWithoutContent,
+    // #291: the referral is behind a link we cannot open. Distinct from
+    // InputWithoutContent because the remedy differs -- there IS a document,
+    // it just never arrived.
+    InputBehindACloudLink
 }
 
 /// <summary>
@@ -234,6 +238,30 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 ConsultGenerationJobStartError.InputWithoutContent,
                 $"'{withoutContent}' does not contain a referral to work from. "
                     + "If the document was attached as a cloud link, please attach the file itself and re-send.");
+        }
+
+        // #291: #290's content floor is necessary but not sufficient. A body
+        // holding only a OneDrive link and a signature cleared forty
+        // characters and generated a consult anyway. The link is the signal
+        // the floor cannot see.
+        var behindLink = InputContent.FindInputBehindACloudLink(
+            request,
+            package.Manifest,
+            inputs.Effective,
+            inputOrigins);
+
+        if (behindLink != null)
+        {
+            _logger.LogWarning(
+                "Rejected job start: a required input points at a file we cannot open. Package={Package}, Input={Input}",
+                package.Ref,
+                behindLink);
+
+            return new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputBehindACloudLink,
+                $"'{behindLink}' refers to a file stored in the cloud rather than containing the referral itself. "
+                    + "We cannot open linked files — please attach the document to the message and re-send.");
         }
 
         // A consult_draft-only Inputs map against a legacy package folds into

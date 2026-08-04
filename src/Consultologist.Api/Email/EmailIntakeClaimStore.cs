@@ -38,6 +38,10 @@ public static class EmailIntakeOutcomes
     // #266: terminal, and the only rate-limit outcome that ends a message.
     // Reached when a queued message outlives MaxEmailDeferral.
     public const string RejectedRateLimit = "rejected-rate-limit";
+    // #291: the referral was attached as a cloud link, so it never arrived.
+    // Its own value because the claim table is the audit surface and this is
+    // the disposition anyone will actually come looking for.
+    public const string RejectedCloudLink = "rejected-cloud-link";
 }
 
 public interface IEmailIntakeClaimStore

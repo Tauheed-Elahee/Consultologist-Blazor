@@ -128,6 +128,82 @@ public class InputContentTests
             40));
     }
 
+    // --- #291: the referral is behind a link we cannot open ---
+    //
+    // #290's floor shipped and was defeated the same afternoon: a body of
+    // "here it is <onedrive link> Regards, Dr X" cleared forty characters and
+    // generated a consult. The link is the signal the floor cannot see.
+
+    private const string OneDriveLink =
+        "https://consultologist-my.sharepoint.com/:w:/g/personal/u/EX9fLk2mQ_dHqB7wZ8vNc1kBqL3rT6yPmA2sK4uW0nXeVg";
+
+    private static readonly Dictionary<string, ConsultInputOrigin> FromADocument =
+        new() { ["consult_draft"] = new ConsultInputOrigin("document", "openxml/3.5.1") };
+
+    [Fact]
+    public void ABodyThatIsOnlyALinkAndASignature_IsRefused()
+    {
+        // The exact message that defeated the floor at 17:32 on 2026-08-04.
+        var body = $"Hi, here is the referral. {OneDriveLink} Regards, Dr X, Oncology";
+
+        Assert.True(InputContent.MeaningfulLength(body) >= 40, "the floor alone does not catch this");
+        Assert.Equal("consult_draft", InputContent.FindInputBehindACloudLink(
+            new ConsultGenerationRequest(body), V5Fixtures.Manifest(), null, null));
+    }
+
+    [Fact]
+    public void ALinkBesideAnInputThatCameFromARealDocument_IsIgnored()
+    {
+        // The attachment supplied the input; the link is incidental.
+        Assert.Null(InputContent.FindInputBehindACloudLink(
+            new ConsultGenerationRequest($"See also {OneDriveLink}"),
+            V5Fixtures.Manifest(),
+            null,
+            FromADocument));
+    }
+
+    [Fact]
+    public void AnOrdinaryLinkIsNotACloudFile()
+    {
+        // A guideline or a journal article is clinical prose, not a document
+        // the sender thinks they attached.
+        Assert.False(InputContent.HasCloudStorageLink(
+            $"{TerseReferral} Per https://www.nccn.org/guidelines/category_1"));
+    }
+
+    [Theory]
+    [InlineData("https://x.sharepoint.com/a")]
+    [InlineData("https://1drv.ms/w/s!abc")]
+    [InlineData("https://onedrive.live.com/a")]
+    [InlineData("https://drive.google.com/file/d/a")]
+    [InlineData("https://www.dropbox.com/s/a")]
+    public void EveryCloudStorageHostWeKnowOf_IsRecognised(string link)
+    {
+        Assert.True(InputContent.HasCloudStorageLink($"Referral attached: {link}"));
+    }
+
+    [Fact]
+    public void V7_OnlyRequiredInputsAreChecked()
+    {
+        // prior_notes being a link is not grounds to refuse a consult whose
+        // referral arrived properly.
+        Assert.Null(InputContent.FindInputBehindACloudLink(
+            new ConsultGenerationRequest(null),
+            V7Fixtures.MultiDeliverable(),
+            new Dictionary<string, string> { ["consult_draft"] = TerseReferral, ["prior_notes"] = OneDriveLink },
+            null));
+    }
+
+    [Fact]
+    public void V7_ARequiredInputBehindALink_IsNamed()
+    {
+        Assert.Equal("consult_draft", InputContent.FindInputBehindACloudLink(
+            new ConsultGenerationRequest(null),
+            V7Fixtures.MultiDeliverable(),
+            new Dictionary<string, string> { ["consult_draft"] = $"Referral: {OneDriveLink} Regards", ["prior_notes"] = "" },
+            null));
+    }
+
     [Fact]
     public void AZeroMinimum_DisablesTheFloorEntirely()
     {
