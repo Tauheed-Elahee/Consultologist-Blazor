@@ -30,6 +30,12 @@ set -uo pipefail
 
 API="${API:-https://canada-east-ai-function-gmenbbe9erewh4bj.canadaeast-01.azurewebsites.net/api/ConsultGenerationJobs}"
 
+# The job response carries InputOrigins but NOT the declared input list, so
+# origins alone cannot show what is missing — and what is missing is the
+# whole point. The package manifest has the declaration, and repo-owned
+# packages are anonymously readable, so the ref in the response is enough.
+REGISTRY="${REGISTRY:-https://consultologistpublic.blob.core.windows.net/workflow-packages}"
+
 case "${1:-}" in
     -h|--help)
         sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
@@ -118,30 +124,72 @@ line("completed", (d.get("CompletedAtUtc") or "")[:19])
 line("package", d.get("WorkflowPackage"))
 line("input hash", "{} (v{})".format(d.get("EffectiveInputHash"), d.get("EffectiveInputHashVersion")))
 
+import os
+
 origins = d.get("InputOrigins") or {}
-declared = sorted(set(list(origins) + list(d.get("Inputs") or {})))
+
+# The declaration comes from the package manifest, not the job response --
+# the response has no Inputs key, so origins alone can only show what WAS
+# read and never what was not. Naming the absence is the point.
+required = {}
+for row in (os.environ.get("DECLARED") or "").splitlines():
+    if "\t" in row:
+        name, kind = row.split("\t", 1)
+        required[name] = kind
+
+declared = sorted(set(list(required) + list(origins)))
 
 print()
 if not declared:
     print("  no inputs recorded")
 else:
-    print("  inputs")
+    if not required:
+        print("  inputs (declaration unavailable - only inputs read from a")
+        print("          document are listed; an absent one cannot be shown)")
+    else:
+        print("  inputs")
     for name in declared:
         o = origins.get(name)
+        kind = required.get(name)
+        label = name if kind is None else "{} ({})".format(name, kind)
         if o:
             bits = ["read from a document by " + (o.get("Extractor") or DASH)]
             if o.get("PageCount") is not None:
                 bits.append("{} page(s)".format(o["PageCount"]))
             if o.get("TrackedChangesResolved"):
                 bits.append("tracked changes resolved")
-            print("    \033[32m{:<18}\033[0m {}".format(name, " \u00b7 ".join(bits)))
+            print("    \033[32m{:<30}\033[0m {}".format(label, " \u00b7 ".join(bits)))
         else:
             # The absence IS the finding: typed text, an email body, or a
             # document that never arrived. #290, #291 and #294 all turned on
             # exactly this line.
-            print("    \033[33m{:<18}\033[0m no document origin \u2014 typed, from an email body, or never arrived".format(name))
+            print("    \033[33m{:<30}\033[0m no document origin \u2014 typed, from an email body, or never arrived".format(label))
 PY
 )
+
+# Declared inputs for a package ref like "example-two-documents@v2026.07.1",
+# newline separated. Empty when the ref is an acct-* fork (private registry,
+# no anonymous read) or the fetch fails — the render then says so rather than
+# implying the declaration was empty.
+declared_inputs() {
+    local ref="$1" name version
+    name="${ref%@*}"
+    version="${ref#*@}"
+
+    case "$ref" in
+        ""|acct-*) return 0 ;;
+    esac
+
+    curl -sS --max-time 10 "$REGISTRY/$name/$version/manifest.json" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    m = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+for i in m.get("inputs") or []:
+    print("{}\t{}".format(i.get("id"), "required" if i.get("required") else "optional"))
+' 2>/dev/null
+}
 
 status=0
 
@@ -163,7 +211,8 @@ for job in "$@"; do
         continue
     fi
 
-    printf %s "$JOB_JSON" | python3 -c "$RENDER"
+    pkg="$(printf %s "$JOB_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("WorkflowPackage") or "")' 2>/dev/null)"
+    printf %s "$JOB_JSON" | DECLARED="$(declared_inputs "$pkg")" python3 -c "$RENDER"
 done
 
 echo
