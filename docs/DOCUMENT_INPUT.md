@@ -333,6 +333,7 @@ and both doors agree.
 > | `scripts/make-input-fixtures.cs` | `consult_draft.docx`, `prior_notes.docx`, `prior_notes_utf16.txt`, `prior_notes_big.txt` |
 > | `scripts/show-extraction.sh` | what the parser reads out of any file |
 > | `scripts/verify-document-provenance.sh` | the § 7 provenance run (three real consults) |
+> | `scripts/show-job-provenance.sh` | which documents an existing consult actually read (read-only) |
 >
 > **`referral-scan.pdf` is the only artifact that reaches
 > `no-text-layer`**, which § 8's copy and the provenance run both depend

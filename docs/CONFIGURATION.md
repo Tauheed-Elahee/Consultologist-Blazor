@@ -273,6 +273,29 @@ Rows are one per account per hour in the `AccountRateLimits` table and are
 never deleted; at that volume a cleanup is worth having eventually rather
 than now.
 
+### Where to look when investigating a job
+
+Tables answer *what happened to a message*; they do not answer *what a
+consult was built from*. Knowing which is which saves a wrong turn — during
+#294 the events table was the reachable one, was empty, and looked like an
+answer.
+
+| question | where |
+| --- | --- |
+| what became of an emailed message | `EmailIntakeProcessed` — one row per message, `Outcome` is the disposition |
+| status, timing, block counts of a job | `ConsultGenerationJobIndex` — one row per job |
+| how often an account has submitted | `AccountRateLimits` |
+| **which documents a consult actually read** | `/history/{jobId}` in the app, or `scripts/show-job-provenance.sh <job-id>` from a terminal |
+
+**Provenance is not in any table.** `InputOrigins` lives on the job's durable
+entity and is served by `GET /api/ConsultGenerationJobs/{jobId}`; History
+renders it as the Provenance panel and the script prints the same thing.
+
+**`ConsultGenerationJobEvents` is not an audit trail.** It is written only by
+the SSE endpoint, for browser resume. A job nobody streamed — which is every
+emailed one — correctly has zero rows, and that says nothing about the job.
+
+
 ### Driving it by hand (verified in production 2026-08-01)
 
 Both settings exist to be turned down: at their defaults the limit is
