@@ -171,4 +171,79 @@ public class EmailAttachmentInputsTests
         Assert.Null(result.RejectReason);
         Assert.Equal("The referral.", result.Inputs!["consult_draft"]);
     }
+
+    // #294 — the body is dropped whenever a named attachment already claimed
+    // the slot it could have filled. Correct, and silent until now. A dropped
+    // body carrying a cloud link is the one case that is evidence rather than
+    // noise: it produced a clinically detailed consult whose Medications
+    // section read "not documented" while reading as complete.
+
+    private const string OneDriveLink =
+        "https://consultologist-my.sharepoint.com/:w:/g/personal/u/EX9fLk2mQ_dHqB7wZ8vNc1kBqL3rT6yPmA2sK4uW0nXeVg";
+
+    [Fact]
+    public void ADiscardedBodyHoldingACloudLink_IsRefused()
+    {
+        // The exact #294 reproduction: consult_draft.docx attached directly,
+        // prior_notes.docx "attached" as a OneDrive link in the body.
+        var result = Resolve(
+            TwoSlots,
+            $"Hi, referral attached, prior notes here: {OneDriveLink} Regards, Dr X",
+            File("consult_draft.docx", "The referral."));
+
+        Assert.NotNull(result.RejectReason);
+        Assert.Contains("attach the document", result.RejectReason);
+        // A filename can itself be PHI.
+        Assert.DoesNotContain(".docx", result.RejectReason);
+    }
+
+    [Fact]
+    public void ADiscardedCoveringNote_IsCountedNotRefused()
+    {
+        // The false positive that must never happen: a covering note is a
+        // legitimate thing to drop.
+        const string note = "Thanks — referral attached. She is anxious about the scan.";
+
+        var result = Resolve(TwoSlots, note, File("consult_draft.docx", "The referral."));
+
+        Assert.Null(result.RejectReason);
+        Assert.Equal(note.Length, result.DiscardedBodyCharacters);
+    }
+
+    [Fact]
+    public void ABodyThatIsActuallyUsed_IsNotDiscardedEvenWithALink()
+    {
+        // No attachment claimed consult_draft, so the body fills it. A link in
+        // a body that is *used* is #291's case at job start, not this one --
+        // refusing here too would double-refuse and confuse the reason.
+        var result = Resolve(
+            TwoSlots,
+            $"Referral text. See also {OneDriveLink}",
+            File("prior_notes.docx", "Old notes."));
+
+        Assert.Null(result.RejectReason);
+        Assert.Equal(0, result.DiscardedBodyCharacters);
+        Assert.Equal("Referral text. See also " + OneDriveLink, result.Inputs!["consult_draft"]);
+    }
+
+    [Fact]
+    public void AGuidelineLinkInADiscardedBody_IsNotACloudFile()
+    {
+        var result = Resolve(
+            TwoSlots,
+            "Referral attached. Per https://www.nccn.org/guidelines/category_1",
+            File("consult_draft.docx", "The referral."));
+
+        Assert.Null(result.RejectReason);
+        Assert.True(result.DiscardedBodyCharacters > 0);
+    }
+
+    [Fact]
+    public void NoBodyAtAll_DiscardsNothing()
+    {
+        var result = Resolve(TwoSlots, null, File("consult_draft.docx", "The referral."));
+
+        Assert.Null(result.RejectReason);
+        Assert.Equal(0, result.DiscardedBodyCharacters);
+    }
 }
