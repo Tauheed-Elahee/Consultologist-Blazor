@@ -342,6 +342,9 @@ public sealed class EmailIntakeProcessor
             {
                 ConsultGenerationJobStartError.InputsMismatch => EmailIntakeOutcomes.RejectedInputs,
                 ConsultGenerationJobStartError.InputFileUnreadable => EmailIntakeOutcomes.RejectedAttachments,
+                // #290: the message arrived and parsed; there was simply no
+                // referral in it to generate from.
+                ConsultGenerationJobStartError.InputWithoutContent => EmailIntakeOutcomes.RejectedEmpty,
                 _ => EmailIntakeOutcomes.StartFailed
             };
             await _claims.UpdateAsync(
@@ -351,7 +354,13 @@ public sealed class EmailIntakeProcessor
             await SendStartFailureReplyAsync(
                 mailbox,
                 message.FromAddress!,
-                start.Error == ConsultGenerationJobStartError.InputFileUnreadable ? start.ErrorDetail : null,
+                // #290 joins #238 here: both are causes the sender can act
+                // on, so both carry their sentence. The detail names an
+                // authored input id, never a filename (#217).
+                start.Error is ConsultGenerationJobStartError.InputFileUnreadable
+                    or ConsultGenerationJobStartError.InputWithoutContent
+                    ? start.ErrorDetail
+                    : null,
                 cancellationToken);
             return MessageOutcome.Rejected;
         }

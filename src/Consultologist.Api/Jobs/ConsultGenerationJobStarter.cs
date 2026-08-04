@@ -34,7 +34,11 @@ public enum ConsultGenerationJobStartError
     // #266: the account has spent its window. The one error here that is
     // about the caller's history rather than about this request, and the
     // only one the email door must not answer with a rejection reply.
-    RateLimited
+    RateLimited,
+    // #290: a required input is present but carries no referral. Distinct
+    // from InputsMismatch, which is about the shape of the request; this is
+    // about there being nothing in it to generate from.
+    InputWithoutContent
 }
 
 /// <summary>
@@ -202,6 +206,34 @@ public sealed class ConsultGenerationJobStarter : IConsultGenerationJobStarter
                 null,
                 ConsultGenerationJobStartError.InputsMismatch,
                 inputs.Error);
+        }
+
+        // #290: present is not the same as filled. ResolveEffectiveInputs has
+        // just confirmed every required input exists and is not whitespace —
+        // which a body containing only a OneDrive link satisfies. Generating
+        // from that produced a complete consult whose every section read
+        // "not documented", and delivered it.
+        var withoutContent = InputContent.FindInputWithoutContent(
+            request,
+            package.Manifest,
+            inputs.Effective,
+            InputContent.MinimumCharacters);
+
+        if (withoutContent != null)
+        {
+            _logger.LogWarning(
+                "Rejected job start: a required input carries no referral. Package={Package}, Input={Input}, Characters={Characters}, Minimum={Minimum}",
+                package.Ref,
+                withoutContent,
+                InputContent.MeaningfulLength(
+                    inputs.Effective?.GetValueOrDefault(withoutContent) ?? request.ConsultDraft),
+                InputContent.MinimumCharacters);
+
+            return new ConsultGenerationJobStartOutcome(
+                null,
+                ConsultGenerationJobStartError.InputWithoutContent,
+                $"'{withoutContent}' does not contain a referral to work from. "
+                    + "If the document was attached as a cloud link, please attach the file itself and re-send.");
         }
 
         // A consult_draft-only Inputs map against a legacy package folds into
