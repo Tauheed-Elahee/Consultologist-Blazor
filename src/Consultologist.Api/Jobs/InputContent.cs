@@ -90,6 +90,82 @@ internal static class InputContent
     }
 
     /// <summary>
+    /// Hosts that mean "the document is somewhere we cannot reach" (#291).
+    ///
+    /// Deliberately file-storage hosts only. A link to a guideline or a
+    /// journal article is ordinary clinical prose and must not trigger
+    /// anything — the signal here is specifically a document the sender
+    /// believes they have sent.
+    /// </summary>
+    private static readonly string[] CloudStorageHosts =
+    [
+        "sharepoint.com",
+        "1drv.ms",
+        "onedrive.live.com",
+        "drive.google.com",
+        "docs.google.com",
+        "dropbox.com",
+        "box.com",
+        "wetransfer.com"
+    ];
+
+    /// <summary>
+    /// The id of the first required input that carries a cloud-storage link
+    /// and came from no document (#291).
+    ///
+    /// **Both halves are the rule.** #290's content floor shipped at 15:02 on
+    /// 2026-08-04; at 17:32 a message whose body held only a OneDrive link
+    /// and a signature still generated a consult, because a greeting and a
+    /// sign-off clear forty characters easily. Raising the floor is not the
+    /// answer — a full signature block would clear two hundred, and every
+    /// increase risks refusing a terse but genuine referral. The link is the
+    /// only unambiguous signal.
+    ///
+    /// **No document origin** is what makes it precise. An input filled by a
+    /// real attachment has one, so a link sitting elsewhere in the same
+    /// message is incidental and ignored. An input filled from an email body
+    /// or a typed draft has none — and if that text is pointing at a file we
+    /// cannot open, the referral is not here.
+    ///
+    /// The remaining false positive is a clinician who types a full referral
+    /// *and* pastes a cloud link. They are refused, and that is still the
+    /// better answer: the linked document would otherwise be dropped without
+    /// anyone knowing.
+    /// </summary>
+    internal static string? FindInputBehindACloudLink(
+        ConsultGenerationRequest request,
+        WorkflowPackageManifest manifest,
+        IReadOnlyDictionary<string, string>? effective,
+        IReadOnlyDictionary<string, ConsultInputOrigin>? origins)
+    {
+        bool FromNoDocument(string id) => origins?.ContainsKey(id) != true;
+
+        if (manifest.SpecVersion < 7 || effective == null)
+        {
+            return FromNoDocument(ConsultGenerationJobStarter.ConsultDraftInputId)
+                && HasCloudStorageLink(request.ConsultDraft)
+                    ? ConsultGenerationJobStarter.ConsultDraftInputId
+                    : null;
+        }
+
+        foreach (var declared in manifest.Inputs ?? [])
+        {
+            if (declared.Required
+                && FromNoDocument(declared.Id)
+                && HasCloudStorageLink(effective.GetValueOrDefault(declared.Id)))
+            {
+                return declared.Id;
+            }
+        }
+
+        return null;
+    }
+
+    internal static bool HasCloudStorageLink(string? text) =>
+        !string.IsNullOrEmpty(text)
+        && CloudStorageHosts.Any(host => text.Contains(host, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// The id of the first required input carrying no referral, or null when
     /// every one of them does. Declaration order, so the message names the
     /// same input every time for the same request.
