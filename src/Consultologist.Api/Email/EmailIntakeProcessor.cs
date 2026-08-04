@@ -299,6 +299,19 @@ public sealed class EmailIntakeProcessor
                 : await RejectAsync(mailbox, message, claimKey, now, slug, cancellationToken);
         }
 
+        // #294: a named attachment outranks the body for the slot it names, so
+        // a body can be dropped entirely. That is correct, and a covering note
+        // is a legitimate thing to drop — but we had no idea how often a body
+        // carrying real prose goes with it. The length only: a discarded body
+        // is exactly as likely to be PHI as any other.
+        if (resolution.DiscardedBodyCharacters > 0)
+        {
+            _logger.LogInformation(
+                "Email intake discarded the message body: an attachment already filled its slot. InternetMessageId={InternetMessageId}, DiscardedBodyCharacters={DiscardedBodyCharacters}",
+                claimKey,
+                resolution.DiscardedBodyCharacters);
+        }
+
         // #237: the body travels as text, the attachments travel as bytes.
         // The starter extracts them, so an emailed document records the same
         // origin the app door records — one mechanism, both doors.

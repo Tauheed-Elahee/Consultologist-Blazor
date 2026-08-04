@@ -1,3 +1,5 @@
+using Consultologist.Api.Jobs;
+
 namespace Consultologist.Api.Email;
 
 /// <summary>
@@ -30,7 +32,12 @@ public static class EmailAttachmentInputs
     public sealed record Resolution(
         IReadOnlyDictionary<string, string>? Inputs,
         IReadOnlyDictionary<string, EmailInputAttachment>? Files,
-        string? RejectReason)
+        string? RejectReason,
+        // #294: characters of body text that had nowhere to go. A named
+        // attachment outranks the body for the slot it names, so the body is
+        // simply dropped — silently, until now. Counted rather than kept: a
+        // discarded body is exactly as likely to be PHI as any other.
+        int DiscardedBodyCharacters = 0)
     {
         public static Resolution Rejected(string reason) => new(null, null, reason);
     }
@@ -106,16 +113,42 @@ public static class EmailAttachmentInputs
 
         var inputs = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        if (hasBody
+        var bodyUsed = hasBody
             && declaredInputIds.Contains(ConsultDraftInputId, StringComparer.Ordinal)
-            && !files.ContainsKey(ConsultDraftInputId))
+            && !files.ContainsKey(ConsultDraftInputId);
+
+        if (bodyUsed)
         {
             inputs[ConsultDraftInputId] = trimmedBody;
         }
 
+        // #294: the body is dropped whenever an attachment already claimed
+        // the slot it could have filled. That is correct — a named file
+        // outranks a body that may be nothing but a signature — but until now
+        // it happened without a trace.
+        //
+        // A dropped body carrying a cloud-storage link is the one case where
+        // it is evidence rather than noise: the sender attached a document
+        // through OneDrive, Graph never listed it (#291), and the consult ran
+        // without it. That produced a clinically detailed note whose
+        // Medications section read "not documented" while reading as complete
+        // — the failure #294 records.
+        //
+        // Everything else dropped here is counted, not refused. A covering
+        // note is legitimate and must keep working; the count is what will
+        // tell us, with evidence rather than a guess, whether more is needed.
+        var discarded = hasBody && !bodyUsed ? trimmedBody.Length : 0;
+
+        if (discarded > 0 && InputContent.HasCloudStorageLink(trimmedBody))
+        {
+            return Resolution.Rejected(
+                "The message points at a file stored in the cloud rather than attaching it. "
+                + "We cannot open linked files — please attach the document to the message and re-send.");
+        }
+
         if (unmatched.Count == 0)
         {
-            return new Resolution(inputs, files, null);
+            return new Resolution(inputs, files, null, discarded);
         }
 
         // A slot the body already took is not free: the same slot cannot be
@@ -138,6 +171,6 @@ public static class EmailAttachmentInputs
         }
 
         files[free[0]] = unmatched[0];
-        return new Resolution(inputs, files, null);
+        return new Resolution(inputs, files, null, discarded);
     }
 }
