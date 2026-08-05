@@ -155,14 +155,23 @@ Public account, container `agent-definitions`:
 **Foundry's version sequence**, the same numbers job records store in
 `agentVersions`, so a record resolves with zero translation. Published
 definitions are **redacted**: instructions, model, schema, and tool types are
-public; `tools[].server_url` and `project_connection_id` are stripped
-(`scripts/publish-agent-definition.sh`; the transform is line-for-line
-equivalent to `AgentDefinitionRedaction.Redact`, held by that class's tests
-over two checked-in manifests). The publish script greps its own output and
-fails if either field survives, so plumbing cannot reach the registry.
-**No runtime check compares the published artifact against
-`redact(bundled git manifest)`** — this said one did until 2026-07-31; see
-#259, which decides whether to wire it or to drop the class.
+public; `tools[].server_url` and `project_connection_id` are stripped. The
+transform lives **once**, in the agents repo's
+`scripts/publish-agent-definition.sh`, and the script greps its own output and
+fails if either field survives — so plumbing cannot reach the registry. A
+second implementation in this repo (`AgentDefinitionRedaction`) was deleted in
+#259: it had no production caller, so it proved only that two implementations
+agreed and nothing consumed the agreement.
+
+**No check compares the published artifact against `redact(git manifest)`** —
+this said a runtime one did until 2026-07-31. It cannot be done honestly from
+the app: the runtime fetches the version the catalog pins, while a bundled
+manifest tracks whatever the submodule points at, and the two legitimately
+differ (measured 2026-08-05: `test-json.yaml` declared 48, the catalog pinned
+47). The property belongs in the agents repo, where the publish script reads
+the version out of the manifest it is publishing so the two align by
+construction. Tracked there.
+
 Versions are refuse-overwrite immutable.
 
 ## Account packages (`acct-*`) — implemented 2026-07-16 (#57)
