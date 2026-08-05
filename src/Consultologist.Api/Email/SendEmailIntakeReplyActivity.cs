@@ -165,7 +165,16 @@ public sealed class SendEmailIntakeReplyActivity
                     // visible. Without it the render still folds what it can,
                     // but anything it cannot goes unreported — which is the
                     // silence this issue exists to end.
-                    ConsultDocumentPdf.Render(document.Text, password.Value, _logger)))
+                    //
+                    // #302: the context names which delivery, so a report can
+                    // be traced to one document rather than only counted. Both
+                    // values already appear in the filename above, so neither
+                    // is a new disclosure.
+                    ConsultDocumentPdf.Render(
+                        document.Text,
+                        password.Value,
+                        _logger,
+                        new PdfRenderContext(input.JobId, document.ResultId))))
                 .ToList();
 
             var outcome = ApplyBudget(attachments, documents.Select(document => document.Label).ToList());
