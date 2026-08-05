@@ -91,6 +91,27 @@ holds `ConsultGenerationJobStarterTests`, `ResolveEffectiveInputsTests` and a
 `file static` helper. Anchoring an edit on "the last test in the file" lands
 in the wrong class. Check the enclosing class before adding a test.
 
+### An App Insights query returns nothing and the data is there
+
+*Symptom: a Kusto query with an explicit `timestamp > todatetime(…)` filter
+returns zero rows for a window you know had traffic.* Two independent causes,
+and neither errors — both just answer "none", which reads exactly like
+"it never happened".
+
+**`--offset` clamps the range regardless of the query text.** It defaults to
+`PT1H`, so any filter reaching further back is silently intersected to the
+last hour. Pass an offset at least as wide as the window (`--offset P3D`).
+
+**There is more than one component.** The function app's is
+`e3f91af5-af22-43b6-a9d8-6cc0aa0cfde7` (`canada-east-ai-function`, in
+`consultologist_group` — *not* the hostname prefix). Querying
+`0b51e6cf-8720-48f6-9c84-6ed68c4e9914` instead produced a whole session of
+false "no telemetry" conclusions.
+
+Sanity-check any new query against a time range known to have data **before**
+trusting an empty result. An absence is evidence only once the read path is
+proven — the recurring wrong turn of Milestone 16, three times over.
+
 ### `az functionapp show --query state` is null on Flex Consumption
 
 *Symptom: `state`, `defaultHostName` and `availabilityState` all return
