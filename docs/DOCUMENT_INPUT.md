@@ -516,6 +516,38 @@ POST /api/ConsultGenerationJobs
   `ASYNC_DELIVERY.md` § 2 says so — and the reply already confirms that
   a message arrived.
 
+> **Amended 2026-08-05 during #249.** An attachment Graph **lists but yields
+> no bytes for** is now a rejection rather than a silent skip, and the two
+> assumptions that rests on are measured rather than assumed. Both were
+> unverifiable by unit test: every processor test substitutes
+> `IGraphMailClient` wholesale, so the tests assert our reaction to a listing
+> we invented.
+>
+> **A forwarded email arrives as `#microsoft.graph.itemAttachment` with no
+> `contentBytes`.** Confirmed in production 2026-08-05 against a message
+> carrying a readable `.docx` *and* a forwarded email: the message was refused
+> and no consult was generated. Refusing here rather than proceeding on the
+> part that did arrive is the whole point — the alternative is a consult built
+> from half a referral and presented as whole.
+>
+> **Outlook sets `isInline: true` on signature images.** The skip at the top
+> of `GraphMailClient.Classify` is therefore load-bearing in both directions.
+> Were it wrong, every signed email would bounce; and because a lone unmatched
+> readable attachment is assigned to the one free slot
+> (`EmailAttachmentInputs.cs`), a signature logo could otherwise land in
+> `prior_notes` as a silent wrong input. Verified by a signed message whose
+> provenance shows `consult_draft` read and `prior_notes` empty.
+>
+> **`referenceAttachment` is unreached, not verified.** `DescribeUnreadable`
+> has a branch for it, and no client tested so far produces one: Outlook on
+> the web's OneDrive attach puts a link in the message **body** and Graph
+> lists no attachment at all (#291). The branch is covered by unit test only
+> (`GraphAttachmentClassificationTests`, `DescribeUnreadable`). Stated
+> explicitly because a branch that reads as covered when it is not is the
+> failure this milestone is named for. If Outlook Desktop — whose *Attach
+> file → Share link* is the likeliest producer — becomes available, this is
+> the one case left to measure.
+
 ## 7. Provenance
 
 - **Record the origin, beside the hash and not inside it.** Per slot:
