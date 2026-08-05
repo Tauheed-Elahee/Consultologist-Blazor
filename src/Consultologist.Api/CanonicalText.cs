@@ -26,8 +26,14 @@ namespace Consultologist.Api;
 /// Line structure, hyphenation and hard wrapping survive untouched, for the
 /// reasons § 2 gives.
 ///
-/// <see cref="Agents.AgentDefinitionRedaction"/> deliberately does NOT use
-/// this — see the note there.
+/// The agent-definition redaction deliberately does NOT use this, and the
+/// reason outlives the C# copy #259 deleted. That transform lives once, in the
+/// agents repo's <c>publish-agent-definition.sh</c>, and its contract is
+/// byte-equivalence with a <c>sed</c> expression. <c>sed</c>'s line model is
+/// <c>\n</c>-only and blind to a lone <c>\r</c>, so canonicalising first would
+/// split a bare-CR manifest into many lines and strip the <c>server_url:</c>
+/// ones where <c>sed</c> sees a single line and strips nothing — same input,
+/// two different published documents.
 /// </summary>
 internal static class CanonicalText
 {

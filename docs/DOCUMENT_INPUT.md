@@ -168,18 +168,23 @@ three callers.
 > The rule having been written out four times is what let two of them
 > drift from it.
 >
-> **`AgentDefinitionRedaction` is deliberately not a caller**, which the
-> paragraph above should not be read as claiming. Its transform's
-> contract is byte-equivalence with the publish script's `sed` in the
-> agents repo, and `sed`'s line model is `\n`-only: canonicalising a lone
-> `\r` here would split a bare-CR manifest into many lines where `sed`
-> sees one, so the two would produce different documents. Both sides move
-> together or neither does.
+> **The agent-definition redaction is deliberately not a caller**, which
+> the paragraph above should not be read as claiming. That transform's
+> contract is byte-equivalence with a `sed` expression, and `sed`'s line
+> model is `\n`-only: canonicalising a lone `\r` first would split a
+> bare-CR manifest into many lines where `sed` sees one, so the two would
+> produce different documents.
 >
 > *Corrected 2026-07-31 (#259).* This first said startup attestation
 > enforces published == `Redact(manifest)`, repeating a claim from that
-> class's own summary. No code path does that, and `Redact` has no
-> production caller — the equivalence is held by tests, not at runtime.
+> class's own summary. No code path did that, and `Redact` had no
+> production caller — the equivalence was held by tests, not at runtime.
+>
+> *Superseded 2026-08-05 (#259).* `AgentDefinitionRedaction` is deleted.
+> The redaction lives once, in the agents repo's
+> `publish-agent-definition.sh`; the reason above is why that script does
+> not canonicalise, and is kept here because it is the same judgement
+> `CanonicalText` makes about how far to go.
 >
 > Still no hash-version bump, for the reason given above: the definition
 > is unchanged and only the text reaching it is cleaner.
