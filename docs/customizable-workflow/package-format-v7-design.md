@@ -318,3 +318,30 @@ the editor work is the authoring surfaces:
 - **Attachment-shaped inputs** — #210's named-input binding for email
   attachments builds directly on § 3; extraction (#208 phase 2) feeds
   text into slots and stays outside the format.
+- **Relaxing forEach reachability to the package** (#227) — the rule is
+  enforced per deliverable ("**each** result must transitively include at
+  least one forEach source", § 4) but justified per package: *a package
+  with no fan has no consult* (v6 design § 7). v5 required `result` to be
+  a forEach node because the deliverable **was** the fan; v6 restated that
+  as an aggregator including a forEach source; #214 then generalized it
+  per-result by symmetry with the other v6 closures, not because multiple
+  deliverables made it more necessary. That is where the scope outgrew the
+  argument — a package whose note fans over section standards and whose
+  letter is a single summarizing prompt satisfies the justification
+  completely and still fails the rule.
+
+  It is also **weak as a guarantee**: an author satisfies it with an
+  aggregator over the fan bound to a barely-used variable, since the
+  unused-variable check is a warning. But it worked as a **nudge** —
+  in `example-two-documents` it pushed the patient letter to read from an
+  aggregator over the assembled sections rather than generating
+  independently from trajectory concepts, so the letter can only summarize
+  what the note actually says. That is a real gain and the reason not to
+  relax it casually.
+
+  The relaxation would be *at least one* result reaches a fan. Because
+  manifests declare the rule set they validated under, a package authored
+  under relaxed rules would fail an older engine — so this belongs in **v8**
+  or an explicitly documented **v7 erratum**, never a quiet loosening.
+  There is one engine today, so the practical risk is nil; the discipline
+  is the point.
