@@ -515,6 +515,11 @@ public static class WorkflowPackageValidator
     /// orphan-prompt philosophy applied to execution (package-format-v6-design.md
     /// § 7). Each result must also transitively include at least one forEach
     /// source: a deliverable with no fan has no consult.
+    ///
+    /// #227: both errors name the fix, not only the rule. Whether the
+    /// per-result scope is right at all is a separate question, recorded in
+    /// package-format-v7-design.md § 11 — the justification is about the
+    /// package, the enforcement is per deliverable.
     /// </summary>
     private static void ValidateReachability(
         WorkflowPackageManifest manifest,
@@ -553,6 +558,20 @@ public static class WorkflowPackageValidator
 
         var reachableFromAny = new HashSet<string>(StringComparer.Ordinal);
 
+        // #227: the two shapes of this failure need different advice. An
+        // author whose package fans somewhere has a routing problem and wants
+        // to know what to route; an author whose package fans nowhere would be
+        // told to aggregate over something that does not exist.
+        var forEachNodeIds = nodes
+            .Where(node => node.ForEach != null)
+            .Select(node => node.Id)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        var forEachRemedy = forEachNodeIds.Count > 0
+            ? $"Add an aggregator whose sources include a forEach node and bind it into this result (forEach nodes in this package: {string.Join(", ", forEachNodeIds)})."
+            : "This package declares no forEach node — add one over a data collection, then aggregate it into this result.";
+
         foreach (var (resultId, rootId) in roots)
         {
             var reachable = WalkDependencies(rootId, edges);
@@ -560,9 +579,11 @@ public static class WorkflowPackageValidator
 
             if (!reachable.Any(id => nodesById.TryGetValue(id, out var reached) && reached.ForEach != null))
             {
+                // The rule first, unchanged: existing callers and tests match
+                // on it, and the guidance is additive.
                 errors.Add(resultId is null
-                    ? $"The result must transitively include at least one forEach source in specVersion {manifest.SpecVersion}."
-                    : $"Result '{resultId}' must transitively include at least one forEach source.");
+                    ? $"The result must transitively include at least one forEach source in specVersion {manifest.SpecVersion}: a deliverable with no fan has no consult. {forEachRemedy}"
+                    : $"Result '{resultId}' must transitively include at least one forEach source: a deliverable with no fan has no consult. {forEachRemedy}");
             }
         }
 
@@ -571,8 +592,8 @@ public static class WorkflowPackageValidator
             if (!reachableFromAny.Contains(node.Id))
             {
                 errors.Add(roots.Count == 1
-                    ? $"Node '{node.Id}' does not feed the result: every node must transitively reach '{roots[0].NodeId}' in specVersion {manifest.SpecVersion}."
-                    : $"Node '{node.Id}' does not feed any result: every node must transitively reach a result node in specVersion {manifest.SpecVersion}.");
+                    ? $"Node '{node.Id}' does not feed the result: every node must transitively reach '{roots[0].NodeId}' in specVersion {manifest.SpecVersion}. Bind it into a node that does, or add it to the result's aggregator."
+                    : $"Node '{node.Id}' does not feed any result: every node must transitively reach a result node in specVersion {manifest.SpecVersion}. Bind it into a node that does, or add it to a result's aggregator.");
             }
         }
     }

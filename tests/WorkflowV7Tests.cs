@@ -297,6 +297,93 @@ public class WorkflowV7ValidationTests
             e => e.Contains("Result 'summary' must transitively include at least one forEach source"));
     }
 
+    // #227: these assert the whole string rather than a substring. The change
+    // is a sentence an author reads once and acts on, so the wording is the
+    // behaviour — a Contains check would pass on advice that trailed off.
+
+    [Fact]
+    public void ResultWithoutForEachSource_NamesTheFixAndThePackagesForEachNodes()
+    {
+        // The author's problem here is routing, not authoring: the package
+        // fans in four places and this deliverable reaches none of them. So
+        // the message says which nodes are available to aggregate over.
+        var manifest = V7Fixtures.MultiDeliverable();
+        var nodes = new List<WorkflowNodeSpec>(manifest.Nodes!)
+        {
+            new("assemble-summary", "Assemble summary",
+                Aggregate: new List<string> { "node:extract-patient-concepts" })
+        };
+        manifest.Results!.Add(new WorkflowResultSpec("summary", "node:assemble-summary", "Summary"));
+        manifest = manifest with { Nodes = nodes };
+
+        Assert.Contains(
+            "Result 'summary' must transitively include at least one forEach source: "
+            + "a deliverable with no fan has no consult. "
+            + "Add an aggregator whose sources include a forEach node and bind it into this result "
+            + "(forEach nodes in this package: patient-section-draft, section-instructions, "
+            + "standard-section-draft, summarize-guideline).",
+            V7Fixtures.Validate(manifest).Errors);
+    }
+
+    [Fact]
+    public void ResultWithoutForEachSource_SaysSoWhenThePackageFansNowhere()
+    {
+        // Listing an empty set, or telling this author to aggregate over a
+        // forEach node, would be advice they cannot act on — nothing in the
+        // package fans at all, which is a different problem.
+        var manifest = V7Fixtures.MultiDeliverable();
+        manifest = manifest with
+        {
+            Nodes = manifest.Nodes!.Select(node => node with { ForEach = null }).ToList()
+        };
+
+        Assert.Contains(
+            V7Fixtures.Validate(manifest).Errors,
+            e => e.EndsWith(
+                "a deliverable with no fan has no consult. "
+                + "This package declares no forEach node — add one over a data collection, "
+                + "then aggregate it into this result.",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OrphanNodeError_NamesTheFix()
+    {
+        var manifest = V7Fixtures.MultiDeliverable();
+        var nodes = new List<WorkflowNodeSpec>(manifest.Nodes!)
+        {
+            new("stray", "Stray", Prompt: "contextualize",
+                Bindings: new Dictionary<string, WorkflowBindingValue>(StringComparer.Ordinal)
+                {
+                    ["guideline_summaries"] = new("node:agg-guidelines")
+                })
+        };
+        manifest = manifest with { Nodes = nodes };
+
+        Assert.Contains(
+            "Node 'stray' does not feed any result: every node must transitively reach "
+            + "a result node in specVersion 7. "
+            + "Bind it into a node that does, or add it to a result's aggregator.",
+            V7Fixtures.Validate(manifest).Errors);
+    }
+
+    [Fact]
+    public void SingleRootOrphanNodeError_NamesTheFix()
+    {
+        // The one-result wording, which names the node everything must reach.
+        var manifest = V7Fixtures.MultiDeliverable();
+        manifest.Results!.RemoveAt(1);
+        var nodes = new List<WorkflowNodeSpec>(manifest.Nodes!);
+        nodes.RemoveAll(n => n.Id == "assemble-letter");
+        manifest = manifest with { Nodes = nodes };
+
+        Assert.Contains(
+            "Node 'contextualize' does not feed the result: every node must transitively reach "
+            + "'assemble-note' in specVersion 7. "
+            + "Bind it into a node that does, or add it to the result's aggregator.",
+            V7Fixtures.Validate(manifest).Errors);
+    }
+
     [Fact]
     public void AggregationExplicitError_NamesSpecVersion7()
     {
