@@ -30,6 +30,7 @@ public class FontGlyphCoverageTests
         // If this fails everything else is vacuous: an unknown coverage
         // reports every character as drawable.
         Assert.False(Coverage.IsUnknown);
+        Assert.Equal(FontCoverageStatus.Read, Coverage.Status);
     }
 
     [Fact]
@@ -64,5 +65,56 @@ public class FontGlyphCoverageTests
 
         Assert.True(nonsense.IsUnknown);
         Assert.True(nonsense.Covers(0x2011));
+        Assert.Equal(FontCoverageStatus.ParseFailed, nonsense.Status);
+    }
+
+    // #302: every one of these leaves the fold inert — nothing substituted,
+    // nothing counted — which is indistinguishable from a document that needed
+    // nothing. They are separated so a production warning names a cause an
+    // operator can act on, rather than "coverage is unknown".
+
+    [Fact]
+    public void NoFontBytesAtAll_IsItsOwnStatus()
+    {
+        // The resolver returning nothing is the caller's failure, not a
+        // property of any font. It used to reach the fail-open by handing an
+        // empty array to the parser and relying on it to throw.
+        var missing = FontGlyphCoverage.Missing();
+
+        Assert.True(missing.IsUnknown);
+        Assert.True(missing.Covers(0x2011));
+        Assert.Equal(FontCoverageStatus.FontMissing, missing.Status);
+    }
+
+    [Fact]
+    public void AFontWithNoCmapTable_SaysThatIsWhy()
+    {
+        var coverage = FakeFont.WithoutACmapTable();
+
+        Assert.True(coverage.IsUnknown);
+        Assert.Equal(FontCoverageStatus.NoCmapTable, coverage.Status);
+    }
+
+    [Fact]
+    public void AFontWithNoFormat4Subtable_SaysThatIsWhy()
+    {
+        // A real possibility rather than a contrivance: a font may carry only
+        // a format-12 subtable, which this reader does not handle.
+        var coverage = FakeFont.WithOnlyANonFormat4Subtable();
+
+        Assert.True(coverage.IsUnknown);
+        Assert.Equal(FontCoverageStatus.NoFormat4Subtable, coverage.Status);
+    }
+
+    [Fact]
+    public void ACmapThatMapsNothing_SaysThatIsWhy()
+    {
+        // Parsed successfully and learned nothing. Reported as unknown rather
+        // than as "this font draws nothing", which would fold every character
+        // in the document.
+        var coverage = FakeFont.WithCoverage();
+
+        Assert.True(coverage.IsUnknown);
+        Assert.Equal(FontCoverageStatus.NoCodepointsMapped, coverage.Status);
     }
 }

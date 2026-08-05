@@ -3,10 +3,18 @@ using System.Text;
 namespace Consultologist.Api.Email;
 
 /// <summary>
-/// The result of making text drawable: the text itself, plus the codepoints
-/// that had no glyph and no safe stand-in.
+/// The result of making text drawable: the text itself, the codepoints that
+/// had no glyph and no safe stand-in, and — since #302 — the ones that did.
+///
+/// <paramref name="Folded"/> is the near-miss count. Substitutions used to
+/// happen silently, so a run reporting no <paramref name="Unrenderable"/>
+/// could not say whether the fold had saved it constantly or never been
+/// needed. That difference is exactly what #287's decision turns on.
 /// </summary>
-internal sealed record PreparedText(string Text, IReadOnlyDictionary<int, int> Unrenderable);
+internal sealed record PreparedText(
+    string Text,
+    IReadOnlyDictionary<int, int> Unrenderable,
+    IReadOnlyDictionary<int, int> Folded);
 
 /// <summary>
 /// Folds characters the embedded font cannot draw onto ones it can (#252).
@@ -51,11 +59,12 @@ internal static class RenderableText
     {
         if (coverage.IsUnknown || text.Length == 0)
         {
-            return new PreparedText(text, EmptyCounts);
+            return new PreparedText(text, EmptyCounts, EmptyCounts);
         }
 
         StringBuilder? rewritten = null;
         Dictionary<int, int>? unrenderable = null;
+        Dictionary<int, int>? folded = null;
 
         for (var i = 0; i < text.Length; i++)
         {
@@ -79,6 +88,12 @@ internal static class RenderableText
                     rewritten.Append((char)replacement);
                 }
 
+                // #302: counted for the same reason the residue is. A fold is
+                // the case that went well, and its frequency is the only
+                // evidence for how close the delivered document came to
+                // needing the stand-in that does not exist.
+                folded ??= new Dictionary<int, int>();
+                folded[ch] = folded.GetValueOrDefault(ch) + 1;
                 continue;
             }
 
@@ -93,15 +108,17 @@ internal static class RenderableText
 
         return new PreparedText(
             rewritten?.ToString() ?? text,
-            unrenderable ?? EmptyCounts);
+            unrenderable ?? EmptyCounts,
+            folded ?? EmptyCounts);
     }
 
     private static readonly IReadOnlyDictionary<int, int> EmptyCounts = new Dictionary<int, int>();
 
     /// <summary>
     /// Codepoints only, never the characters in context — a codepoint names
-    /// no patient, a surrounding phrase might.
+    /// no patient, a surrounding phrase might. Used for both counts (#302):
+    /// the rule is the same whichever way the character went.
     /// </summary>
-    internal static string Describe(IReadOnlyDictionary<int, int> unrenderable) =>
-        string.Join(", ", unrenderable.OrderBy(pair => pair.Key).Select(pair => $"U+{pair.Key:X4}x{pair.Value}"));
+    internal static string Describe(IReadOnlyDictionary<int, int> counts) =>
+        string.Join(", ", counts.OrderBy(pair => pair.Key).Select(pair => $"U+{pair.Key:X4}x{pair.Value}"));
 }
