@@ -163,13 +163,24 @@ public static class EmailAttachmentInputs
                 "More attachments were supplied than the workflow has inputs for. Name each file after the input it belongs to.");
         }
 
-        // The unambiguous case only: one file, one place it can go.
+        // One file only. Two or more is where a swap becomes possible and
+        // unconfirmable, so it is refused.
         if (unmatched.Count > 1)
         {
             return Resolution.Rejected(
                 "Several attachments could fill several inputs and the order is not something we can confirm back to you. Name each file after the input it belongs to.");
         }
 
+        // A lone attachment fills the FIRST free slot, which is not the same
+        // as having only one place to go — there may be several free. It is
+        // still the right reading: one document and no name is a referral, and
+        // declaration order puts the required slot first (the fax-bridge shape
+        // pinned by BlankBody_LetsTheAttachmentBecomeTheDraft).
+        //
+        // A package declaring an optional input before the required one would
+        // send it to the optional slot, but that fails loudly rather than
+        // quietly: the required slot stays empty and the job start refuses with
+        // "Required input(s) '…' missing." (#232).
         files[free[0]] = unmatched[0];
         return new Resolution(inputs, files, null, discarded);
     }
