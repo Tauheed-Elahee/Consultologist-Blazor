@@ -71,6 +71,61 @@ public class RenderableTextTests
 
         Assert.Equal("hormone‑blocking", prepared.Text);
         Assert.Empty(prepared.Unrenderable);
+        // #302: and counts nothing either way. Both being empty here is the
+        // ambiguity the issue is about — it reads exactly like a document that
+        // needed nothing, which is why the caller must report the status too.
+        Assert.Empty(prepared.Folded);
+    }
+
+    // #302: the fold is the case that goes well, and used to leave no trace.
+    // Its frequency is the only evidence for how close real prose comes to
+    // needing a stand-in that does not exist, which is what #287 turns on.
+
+    [Fact]
+    public void AFoldedCharacter_IsCounted()
+    {
+        var prepared = RenderableText.Prepare("a‑b‑c", CoveringAsciiAnd(0x2010));
+
+        Assert.Equal("a‐b‐c", prepared.Text);
+        Assert.Equal(2, prepared.Folded[0x2011]);
+        Assert.Empty(prepared.Unrenderable);
+    }
+
+    [Fact]
+    public void ARemovedZeroWidthCharacter_CountsAsAFold()
+    {
+        // Removal is a substitution whose replacement is nothing. It changes
+        // the delivered bytes, so it is counted like any other.
+        var prepared = RenderableText.Prepare("a​b", CoveringAsciiAnd());
+
+        Assert.Equal("ab", prepared.Text);
+        Assert.Equal(1, prepared.Folded[0x200B]);
+    }
+
+    [Fact]
+    public void AFoldAndAnUndrawableCharacter_AreCountedApart()
+    {
+        // The distinction that matters: one was handled, one was not, and a
+        // single combined count would say neither.
+        var prepared = RenderableText.Prepare("a‑b 一", CoveringAsciiAnd(0x2010));
+
+        Assert.Equal(1, prepared.Folded[0x2011]);
+        Assert.Equal(1, prepared.Unrenderable[0x4E00]);
+        Assert.DoesNotContain(0x4E00, prepared.Folded.Keys);
+        Assert.DoesNotContain(0x2011, prepared.Unrenderable.Keys);
+    }
+
+    [Fact]
+    public void ACharacterTheFontHas_IsNeitherFoldedNorCounted()
+    {
+        // The control: the substitution is conditional on the gap, so a font
+        // that has U+2011 must produce an empty fold count rather than a
+        // no-op recorded as work.
+        var prepared = RenderableText.Prepare("a‑b", CoveringAsciiAnd(0x2011, 0x2010));
+
+        Assert.Equal("a‑b", prepared.Text);
+        Assert.Empty(prepared.Folded);
+        Assert.Empty(prepared.Unrenderable);
     }
 
     [Fact]
@@ -100,6 +155,59 @@ public class RenderableTextTests
 /// </summary>
 internal static class FakeFont
 {
+    /// <summary>
+    /// A cmap whose only subtable is one this reader does not handle (#302).
+    /// Distinct from a font with no cmap at all, and the two used to be
+    /// indistinguishable once both had failed.
+    /// </summary>
+    internal static FontGlyphCoverage WithOnlyANonFormat4Subtable()
+    {
+        var sub = new List<byte>();
+        void U16(int v) { sub.Add((byte)(v >> 8)); sub.Add((byte)v); }
+
+        U16(12);                      // format — segmented coverage, not read here
+        U16(0); U16(0); U16(0);       // padding the reader never interprets
+
+        return FontGlyphCoverage.Read(Wrap("cmap"u8.ToArray(), CmapAround(sub.ToArray())));
+    }
+
+    /// <summary>A table directory that names no cmap at all (#302).</summary>
+    internal static FontGlyphCoverage WithoutACmapTable() =>
+        FontGlyphCoverage.Read(Wrap("glyf"u8.ToArray(), [0, 0, 0, 0]));
+
+    /// <summary>Wraps one table in the minimum sfnt a reader needs to find it.</summary>
+    private static byte[] Wrap(byte[] tag, byte[] table)
+    {
+        var font = new List<byte>();
+        void F16(int v) { font.Add((byte)(v >> 8)); font.Add((byte)v); }
+        void F32(long v) { font.Add((byte)(v >> 24)); font.Add((byte)(v >> 16)); font.Add((byte)(v >> 8)); font.Add((byte)v); }
+
+        F32(0x00010000);              // sfnt version
+        F16(1);                       // numTables
+        F16(0); F16(0); F16(0);       // searchRange, entrySelector, rangeShift
+        font.AddRange(tag);
+        F32(0);                       // checksum
+        F32(28);                      // offset — 12 header + 16 record
+        F32(table.Length);
+        font.AddRange(table);
+
+        return font.ToArray();
+    }
+
+    /// <summary>The cmap header and single encoding record around a subtable.</summary>
+    private static byte[] CmapAround(byte[] subtable)
+    {
+        var cmap = new List<byte>();
+        void C16(int v) { cmap.Add((byte)(v >> 8)); cmap.Add((byte)v); }
+        void C32(long v) { cmap.Add((byte)(v >> 24)); cmap.Add((byte)(v >> 16)); cmap.Add((byte)(v >> 8)); cmap.Add((byte)v); }
+
+        C16(0); C16(1);               // version, numTables
+        C16(3); C16(1); C32(12);      // platform 3, encoding 1, offset 12
+        cmap.AddRange(subtable);
+
+        return cmap.ToArray();
+    }
+
     internal static FontGlyphCoverage WithCoverage(params int[] codepoints)
     {
         var codes = codepoints.Where(c => c is > 0 and < 0xFFFF).Distinct().OrderBy(c => c).ToArray();
@@ -137,28 +245,6 @@ internal static class FakeFont
         foreach (var s in segments) U16(s.Start == 0xFFFF ? (0x10000 - 0xFFFF) & 0xFFFF : 1);
         foreach (var _ in segments) U16(0);   // idRangeOffset
 
-        var subtable = sub.ToArray();
-        var cmap = new List<byte>();
-        void C16(int v) { cmap.Add((byte)(v >> 8)); cmap.Add((byte)v); }
-        void C32(long v) { cmap.Add((byte)(v >> 24)); cmap.Add((byte)(v >> 16)); cmap.Add((byte)(v >> 8)); cmap.Add((byte)v); }
-
-        C16(0); C16(1);               // version, numTables
-        C16(3); C16(1); C32(12);      // platform 3, encoding 1, offset 12
-        cmap.AddRange(subtable);
-
-        var font = new List<byte>();
-        void F16(int v) { font.Add((byte)(v >> 8)); font.Add((byte)v); }
-        void F32(long v) { font.Add((byte)(v >> 24)); font.Add((byte)(v >> 16)); font.Add((byte)(v >> 8)); font.Add((byte)v); }
-
-        F32(0x00010000);              // sfnt version
-        F16(1);                       // numTables
-        F16(0); F16(0); F16(0);       // searchRange, entrySelector, rangeShift
-        font.AddRange("cmap"u8.ToArray());
-        F32(0);                       // checksum
-        F32(28);                      // offset — 12 header + 16 record
-        F32(cmap.Count);              // length
-        font.AddRange(cmap);
-
-        return FontGlyphCoverage.Read(font.ToArray());
+        return FontGlyphCoverage.Read(Wrap("cmap"u8.ToArray(), CmapAround(sub.ToArray())));
     }
 }

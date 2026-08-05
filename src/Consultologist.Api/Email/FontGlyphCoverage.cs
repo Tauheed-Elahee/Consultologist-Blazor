@@ -3,6 +3,35 @@ using System.Buffers.Binary;
 namespace Consultologist.Api.Email;
 
 /// <summary>
+/// Whether the embedded font's coverage could be read, and if not, why (#302).
+///
+/// Every value but <see cref="Read"/> means the fold is inert: nothing is
+/// substituted and nothing is counted. That is the correct failure direction —
+/// see <see cref="FontGlyphCoverage"/> — but it is indistinguishable from a
+/// clean run unless the reason is reported, which is what this exists for.
+/// </summary>
+internal enum FontCoverageStatus
+{
+    /// <summary>The cmap parsed and mapped at least one codepoint.</summary>
+    Read,
+
+    /// <summary>The resolver returned no font bytes at all.</summary>
+    FontMissing,
+
+    /// <summary>No <c>cmap</c> table in the font's table directory.</summary>
+    NoCmapTable,
+
+    /// <summary>A <c>cmap</c>, but no format-4 subtable in it.</summary>
+    NoFormat4Subtable,
+
+    /// <summary>Parsed, but the subtable mapped no codepoint to a real glyph.</summary>
+    NoCodepointsMapped,
+
+    /// <summary>Malformed bytes, or a shape this reader does not handle.</summary>
+    ParseFailed
+}
+
+/// <summary>
 /// Which characters the embedded font can actually draw (#252).
 ///
 /// A font with no glyph for a character does not fail — it draws
@@ -21,33 +50,54 @@ namespace Consultologist.Api.Email;
 /// delivered exactly as written. Guessing wrong in the other direction would
 /// silently edit clinical prose, which is far worse than the defect this
 /// exists to fix.
+///
+/// **And says so** (#302). Failing open silently made the fold indetectably
+/// inert: with coverage unknown nothing is folded and nothing is counted, so
+/// production reported zero undrawable characters — the same answer a clean
+/// run gives. <see cref="Status"/> is what separates those two.
 /// </summary>
 internal sealed class FontGlyphCoverage
 {
     private readonly HashSet<int>? _covered;
 
-    private FontGlyphCoverage(HashSet<int>? covered) => _covered = covered;
+    private FontGlyphCoverage(HashSet<int>? covered, FontCoverageStatus status)
+    {
+        _covered = covered;
+        Status = status;
+    }
 
-    /// <summary>True when the parse failed and every character is assumed drawable.</summary>
-    internal bool IsUnknown => _covered == null;
+    /// <summary>Why coverage is or is not known — the diagnostic #302 added.</summary>
+    internal FontCoverageStatus Status { get; }
+
+    /// <summary>True when coverage could not be read and every character is assumed drawable.</summary>
+    internal bool IsUnknown => Status != FontCoverageStatus.Read;
 
     internal bool Covers(int codepoint) => _covered?.Contains(codepoint) ?? true;
+
+    /// <summary>
+    /// No font bytes to read at all. Its own status because the cause is the
+    /// caller's — a resolver that returned nothing — rather than anything
+    /// about a font's contents.
+    /// </summary>
+    internal static FontGlyphCoverage Missing() =>
+        new(null, FontCoverageStatus.FontMissing);
 
     internal static FontGlyphCoverage Read(byte[] font)
     {
         try
         {
-            return new FontGlyphCoverage(ReadFormat4(font));
+            var (covered, status) = ReadFormat4(font);
+            return new FontGlyphCoverage(covered, status);
         }
         catch (Exception)
         {
             // Malformed, unusual, or a format this does not read. Assume full
             // coverage rather than risk substituting text we did not need to.
-            return new FontGlyphCoverage(null);
+            return new FontGlyphCoverage(null, FontCoverageStatus.ParseFailed);
         }
     }
 
-    private static HashSet<int>? ReadFormat4(byte[] font)
+    private static (HashSet<int>? Covered, FontCoverageStatus Status) ReadFormat4(byte[] font)
     {
         var tableCount = U16(font, 4);
         var cmap = -1;
@@ -64,7 +114,7 @@ internal sealed class FontGlyphCoverage
 
         if (cmap < 0)
         {
-            return null;
+            return (null, FontCoverageStatus.NoCmapTable);
         }
 
         var subtable = -1;
@@ -81,7 +131,7 @@ internal sealed class FontGlyphCoverage
 
         if (subtable < 0)
         {
-            return null;
+            return (null, FontCoverageStatus.NoFormat4Subtable);
         }
 
         var segCount = U16(font, subtable + 6) / 2;
@@ -136,7 +186,12 @@ internal sealed class FontGlyphCoverage
             }
         }
 
-        return covered.Count > 0 ? covered : null;
+        // Zero mapped codepoints is a parse that technically succeeded and told
+        // us nothing. Treated as unknown rather than as "this font draws
+        // nothing", which would fold every character in the document.
+        return covered.Count > 0
+            ? (covered, FontCoverageStatus.Read)
+            : (null, FontCoverageStatus.NoCodepointsMapped);
     }
 
     private static ushort U16(byte[] data, int offset) =>

@@ -143,6 +143,75 @@ public class ConsultDocumentPdfTests
         Assert.DoesNotContain(logger.Recorded, m => m.Contains("cannot draw"));
     }
 
+    // #302: a silent fold left production reporting zero undrawable characters
+    // whether the guard was working or entirely inert. These pin what each
+    // render now says about itself.
+
+    [Fact]
+    public void Render_ReportsAFoldSoTheNearMissIsNotSilent()
+    {
+        // U+2011 is genuinely absent from Liberation Sans, so this exercises
+        // the real coverage table rather than a stated one.
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render("Continue hormone‑blocking treatment.", Password, logger);
+
+        Assert.Contains("folded", logger.Everything);
+        Assert.Contains("U+2011", logger.Everything);
+    }
+
+    [Fact]
+    public void Render_NamesTheDeliveryAFoldBelongsTo()
+    {
+        // Frequency alone cannot answer "was anything substituted in *this*
+        // document", which is the question a delivered PDF actually prompts.
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render(
+            "Continue hormone‑blocking treatment.",
+            Password,
+            logger,
+            new PdfRenderContext("job-1234", "consultation-note"));
+
+        Assert.Contains("job-1234", logger.Everything);
+        Assert.Contains("consultation-note", logger.Everything);
+    }
+
+    [Fact]
+    public void Render_TellsTheLoggerNothingOfWhatTheDocumentSaid()
+    {
+        // The § 9 audit rule, over both new lines at once: codepoints and ids
+        // may travel, prose may not. Structured values are captured too,
+        // because a safe-reading template still ships whatever it was handed.
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render(
+            "Continue hormone‑blocking treatment for Mrs Abernathy. Note 一 here.",
+            Password,
+            logger,
+            new PdfRenderContext("job-1234", "consultation-note"));
+
+        Assert.DoesNotContain("Abernathy", logger.Everything);
+        Assert.DoesNotContain("hormone", logger.Everything);
+        Assert.DoesNotContain("treatment", logger.Everything);
+        // And the reports it does make are still there to be undermined.
+        Assert.Contains("U+2011", logger.Everything);
+        Assert.Contains("U+4E00", logger.Everything);
+    }
+
+    [Fact]
+    public void Render_SaysNothingAboutCoverageWhenTheFontParses()
+    {
+        // The control for the unknown-coverage line: it must not fire on the
+        // embedded font, or it would be noise on every delivery.
+        var logger = new CapturingLogger<object>();
+
+        ConsultDocumentPdf.Render(Document, Password, logger);
+
+        Assert.DoesNotContain("without a glyph-coverage check", logger.Everything);
+        Assert.DoesNotContain("could not be read", logger.Everything);
+    }
+
     [Fact]
     public void Render_CarriesAGenericTitleAndTheDocumentLanguage()
     {

@@ -20,6 +20,14 @@ namespace Consultologist.Api.Email;
 /// secrecy from the server, which produced the plaintext
 /// (docs/ASYNC_DELIVERY.md §3).
 /// </summary>
+/// <summary>
+/// Which delivery a render belongs to (#302). Both values are already judged
+/// safe to log on this path — the attachment filename is built from the same
+/// two — so the diagnostics can answer "was anything substituted in *this*
+/// document" rather than only "how often does this happen".
+/// </summary>
+internal sealed record PdfRenderContext(string JobId, string ResultId);
+
 internal static class ConsultDocumentPdf
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
@@ -30,21 +38,56 @@ internal static class ConsultDocumentPdf
     private static readonly object FontResolverLock = new();
     private static FontGlyphCoverage? _coverage;
 
-    internal static byte[] Render(string markdown, string password, ILogger? logger = null)
+    internal static byte[] Render(
+        string markdown,
+        string password,
+        ILogger? logger = null,
+        PdfRenderContext? context = null)
     {
         EnsureFontResolver();
 
         // #252: what the embedded font can actually draw. Characters it
         // cannot are folded onto identical marks it can, and whatever is left
         // is counted so it stops being silent.
-        var coverage = EnsureCoverage();
+        var coverage = EnsureCoverage(logger);
         var prepared = RenderableText.Prepare(markdown, coverage);
+
+        var jobId = context?.JobId;
+        var resultId = context?.ResultId;
+
+        // #302: with coverage unknown the fold is inert — nothing substituted,
+        // nothing counted — and the run looks identical to one with nothing to
+        // report. EnsureCoverage says so once per worker; this says it for the
+        // specific document, which is what an investigation actually holds.
+        // Rare by construction, so it costs nothing when the guard is working.
+        if (coverage.IsUnknown)
+        {
+            logger?.LogWarning(
+                "Consult PDF rendered without a glyph-coverage check; nothing was folded or counted. Status={Status}, JobId={JobId}, ResultId={ResultId}",
+                coverage.Status,
+                jobId,
+                resultId);
+        }
+
+        if (prepared.Folded.Count > 0)
+        {
+            // Information, not Warning: a fold is the mechanism working. It is
+            // recorded because the frequency is the only evidence for how
+            // often a character arrives that the font cannot draw (#287).
+            logger?.LogInformation(
+                "Consult PDF folded characters the embedded font cannot draw onto identical marks it can. Codepoints={Codepoints}, JobId={JobId}, ResultId={ResultId}",
+                RenderableText.Describe(prepared.Folded),
+                jobId,
+                resultId);
+        }
 
         if (prepared.Unrenderable.Count > 0)
         {
             logger?.LogWarning(
-                "Consult PDF contains characters the embedded font cannot draw; they will render as missing glyphs. Codepoints={Codepoints}",
-                RenderableText.Describe(prepared.Unrenderable));
+                "Consult PDF contains characters the embedded font cannot draw; they will render as missing glyphs. Codepoints={Codepoints}, JobId={JobId}, ResultId={ResultId}",
+                RenderableText.Describe(prepared.Unrenderable),
+                jobId,
+                resultId);
         }
 
         markdown = prepared.Text;
@@ -267,8 +310,14 @@ internal static class ConsultDocumentPdf
     /// <summary>
     /// Read once from the same bytes the resolver embeds, so coverage can
     /// never disagree with the font actually in the file.
+    ///
+    /// #302: warns here, where the result is computed, so a failure is stated
+    /// once with its cause rather than once per document. The cache means a
+    /// logger that is absent on the first render loses this line for the
+    /// worker's life — which is why <see cref="Render"/> also reports the
+    /// state per document, and why the two lines are not redundant.
     /// </summary>
-    private static FontGlyphCoverage EnsureCoverage()
+    private static FontGlyphCoverage EnsureCoverage(ILogger? logger)
     {
         lock (FontResolverLock)
         {
@@ -279,8 +328,16 @@ internal static class ConsultDocumentPdf
 
             var bytes = new LiberationSansFontResolver().GetFont("LiberationSans-Regular");
             _coverage = bytes == null
-                ? FontGlyphCoverage.Read([])
+                ? FontGlyphCoverage.Missing()
                 : FontGlyphCoverage.Read(bytes);
+
+            if (_coverage.IsUnknown)
+            {
+                logger?.LogWarning(
+                    "Consult PDF glyph coverage could not be read; every character will be assumed drawable and nothing will be folded or counted. Status={Status}",
+                    _coverage.Status);
+            }
+
             return _coverage;
         }
     }
