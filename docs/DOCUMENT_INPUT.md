@@ -483,9 +483,12 @@ POST /api/ConsultGenerationJobs
 
 ## 6. The email source
 
-- `ReadAttachmentsAsync` hands each non-inline attachment's bytes to the
-  parser and maps the outcome onto `EmailIntakeOutcomes`. Inline parts
-  (signature logos) are skipped before the parser sees them, as today.
+- `GraphMailClient.ListAttachmentsAsync` reads each non-inline attachment's
+  bytes and `EmailIntakeProcessor.FetchAttachmentsAsync` maps the outcome
+  onto `EmailIntakeOutcomes`. Inline parts (signature logos) are skipped
+  before the parser sees them, as today. (The design text below said
+  `ReadAttachmentsAsync`, which never shipped under that name; where the
+  bytes go changed with #237, amended below.)
 - **One bad attachment still fails the whole message.** #210's reasoning
   is unchanged and stronger for documents: the alternative generates a
   consult from a body reading only "please see attached". A PDF that
