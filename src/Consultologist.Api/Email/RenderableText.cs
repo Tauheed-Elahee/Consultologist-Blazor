@@ -35,9 +35,25 @@ internal sealed record PreparedText(
 /// A substitution only applies when the font genuinely lacks the original, so
 /// adopting a wider font silently retires each entry rather than changing
 /// behaviour.
+///
+/// Whatever survives both — no glyph and no same-mark stand-in — becomes
+/// U+25A1 WHITE SQUARE (#287) rather than being kept. Keeping it meant the
+/// font drew <c>.notdef</c> and the copy carried U+0000, which is the defect
+/// #252 existed to end; U+25A1 is what <c>.notdef</c> already looks like here,
+/// so the page is unchanged and only the copy buffer is fixed. That is a
+/// lossy edit and the only one in this class: the codepoint is gone from the
+/// document, which is why it is counted (<see cref="PreparedText.Unrenderable"/>)
+/// and warned about at delivery.
 /// </summary>
 internal static class RenderableText
 {
+    /// <summary>
+    /// What a character with no glyph and no stand-in becomes (#287): WHITE
+    /// SQUARE, chosen because it is what <c>.notdef</c> already renders as, so
+    /// substituting it changes the copy buffer without changing the page.
+    /// </summary>
+    private const char MissingGlyphMark = '□';
+
     /// <summary>
     /// Same mark, different typographic behaviour. Every entry is a pair a
     /// reader would not distinguish in print.
@@ -97,11 +113,33 @@ internal static class RenderableText
                 continue;
             }
 
-            // No glyph and no safe stand-in. Keep the character: a missing-
-            // glyph box is at least visible to whoever reads the page, where
-            // dropping it would be the silent loss this issue is about. The
-            // count is what makes it visible to us.
-            rewritten.Append(ch);
+            // No glyph and no safe stand-in (#287). Keeping the character was
+            // the old answer and it was too generous: the font draws .notdef,
+            // and the PDF's ToUnicode map then faithfully records that the
+            // glyph means nothing — so the copy carries U+0000, and Outlook on
+            // the web drops the character *after* it, turning "here" into
+            // "ere" in a note pasted into a chart.
+            //
+            // U+25A1 was chosen because Liberation Sans's .notdef is already a
+            // hollow rectangle (glyph 0, two contours), so the reader's signal
+            // that something is missing is as strong as before and the page
+            // barely moves — the two outlines differ in proportion and weight,
+            // so "identical" would be too strong. What actually changes is the
+            // copy buffer: a real glyph the font has, rather than a hole.
+            //
+            // The shape does not vary by reader: the font is embedded in the
+            // PDF, so every viewer draws Liberation Sans's glyph rather than a
+            // system fallback. The *copy* behaviour did vary, which is the
+            // defect — PdfPig yields U+0000, Outlook on the web additionally
+            // drops the following character.
+            //
+            // Guarded on coverage, so a font without U+25A1 keeps the original
+            // rather than trading one missing glyph for another.
+            rewritten.Append(coverage.Covers(MissingGlyphMark) ? MissingGlyphMark : ch);
+
+            // The ORIGINAL codepoint is counted, never the mark. The count
+            // exists to say which characters are arriving; recording U+25A1
+            // would answer a question nobody asked.
             unrenderable ??= new Dictionary<int, int>();
             unrenderable[ch] = unrenderable.GetValueOrDefault(ch) + 1;
         }
