@@ -200,13 +200,30 @@ activity, `Account/DeliveryPassword` endpoints):
   `/Type0` `/Identity-H` font carrying one for everything outside
   Windows-1252, and it works — a correction is recorded on the issue.
 
-  **Still open (#287):** a character with no same-mark stand-in is kept —
-  a missing-glyph box is at least visible on the page — and counted, with
-  the codepoints logged (`Codepoints=U+XXXXxN`, never the surrounding
-  prose). Its copy still carries U+0000, and Outlook additionally drops
-  the character *following* a missing glyph. Liberation Sans has no
-  U+FFFD, so the replacement is not an obvious choice and gets its own
-  argument.
+  **A character with no same-mark stand-in becomes U+25A1 WHITE SQUARE
+  (#287, 2026-08-05)**, and is counted under its **original** codepoint —
+  the count says which characters are arriving, and recording the mark
+  would answer nothing. Codepoints only, never the surrounding prose
+  (`Codepoints=U+XXXXxN`).
+
+  Keeping it was the first answer and too generous: the font drew
+  `.notdef`, whose ToUnicode entry correctly says the glyph means nothing,
+  so the copy carried **U+0000** and Outlook on the web additionally
+  dropped the character *following* it — `here` reaching a chart as `ere`.
+
+  U+25A1 rather than U+FFFD because Liberation Sans has no U+FFFD
+  (measured), and rather than `?` because a bare question mark in clinical
+  prose reads as authored uncertainty — "dose ? mg". Liberation Sans's
+  `.notdef` is itself a hollow rectangle (glyph 0, two contours), so the
+  page barely moves while the copy buffer is fixed; the two outlines are
+  not identical in proportion or weight, so this is near-identical rather
+  than unchanged. The shape does not vary by reader — the font is embedded
+  — though the *copy* behaviour did, which was the defect.
+
+  **This is the one lossy edit in the class**: the original codepoint is
+  gone from the delivered document. That is why it is counted and warned
+  about at delivery, where every other entry in the table is a
+  same-mark swap that changes nothing a clinician reads.
 - **The document carries a generic `Consult` title** — it shows in a mail
   client's preview and a reader's title bar, so it can hold nothing about
   the patient — and `/Lang` `en-CA` for screen readers (#252).
