@@ -11,18 +11,7 @@ namespace Consultologist.Api.Tests;
 /// </summary>
 public class FontGlyphCoverageTests
 {
-    private static readonly FontGlyphCoverage Coverage = ReadEmbeddedFont();
-
-    private static FontGlyphCoverage ReadEmbeddedFont()
-    {
-        using var stream = typeof(ConsultDocumentPdf).Assembly
-            .GetManifestResourceStream("Consultologist.Api.Fonts.LiberationSans-Regular.ttf");
-        Assert.NotNull(stream);
-
-        using var memory = new MemoryStream();
-        stream!.CopyTo(memory);
-        return FontGlyphCoverage.Read(memory.ToArray());
-    }
+    private static FontGlyphCoverage Coverage => EmbeddedFont.Coverage;
 
     [Fact]
     public void TheEmbeddedFontParses()

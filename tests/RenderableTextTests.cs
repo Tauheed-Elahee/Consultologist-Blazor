@@ -54,14 +54,41 @@ public class RenderableTextTests
     }
 
     [Fact]
-    public void AnUndrawableCharacterWithNoStandIn_IsKeptAndCounted()
+    public void AnUndrawableCharacterWithNoStandIn_BecomesAWhiteSquareAndIsCounted()
     {
-        // Kept, because a missing-glyph box is visible to whoever reads the
-        // page; counted, because that is what stops it being silent to us.
-        var prepared = RenderableText.Prepare("a 一 b 一", CoveringAsciiAnd());
+        // #287: keeping it meant the font drew .notdef and the copy carried
+        // U+0000. U+25A1 is what .notdef already looks like, so the page is
+        // unchanged and only the copy buffer is fixed.
+        var prepared = RenderableText.Prepare("a 一 b 一", CoveringAsciiAnd(0x25A1));
 
-        Assert.Equal("a 一 b 一", prepared.Text);
+        Assert.Equal("a □ b □", prepared.Text);
+        // The ORIGINAL codepoint, never the mark — the count says which
+        // characters are arriving, and U+25A1 would answer nothing.
         Assert.Equal(2, prepared.Unrenderable[0x4E00]);
+        Assert.DoesNotContain(0x25A1, prepared.Unrenderable.Keys);
+    }
+
+    [Fact]
+    public void AnUndrawableCharacter_IsKeptWhenTheMarkIsAlsoMissing()
+    {
+        // The fail-safe. A font without U+25A1 would otherwise trade one
+        // missing glyph for another, which fixes nothing and loses the
+        // original.
+        var prepared = RenderableText.Prepare("a 一 b", CoveringAsciiAnd());
+
+        Assert.Equal("a 一 b", prepared.Text);
+        Assert.Equal(1, prepared.Unrenderable[0x4E00]);
+    }
+
+    [Fact]
+    public void TheEmbeddedFontHasTheMark()
+    {
+        // Everything above is fixture-stated. If Liberation Sans lacked
+        // U+25A1 the fail-safe would engage in production and #287 would be
+        // unfixed while its tests passed.
+        var prepared = RenderableText.Prepare("一", EmbeddedFont.Coverage);
+
+        Assert.Equal("□", prepared.Text);
     }
 
     [Fact]
@@ -153,6 +180,28 @@ public class RenderableTextTests
 /// A minimal TrueType file carrying only a cmap, so coverage can be stated by
 /// a test without shipping fixture fonts.
 /// </summary>
+/// <summary>
+/// The real Liberation Sans coverage, read from the assembly the way
+/// production reads it. Everything else here states coverage rather than
+/// reading it, which is right for testing the rule and wrong for the one
+/// question only the shipped font can answer.
+/// </summary>
+internal static class EmbeddedFont
+{
+    internal static readonly FontGlyphCoverage Coverage = Read();
+
+    private static FontGlyphCoverage Read()
+    {
+        using var stream = typeof(ConsultDocumentPdf).Assembly
+            .GetManifestResourceStream("Consultologist.Api.Fonts.LiberationSans-Regular.ttf");
+        Assert.NotNull(stream);
+
+        using var memory = new MemoryStream();
+        stream!.CopyTo(memory);
+        return FontGlyphCoverage.Read(memory.ToArray());
+    }
+}
+
 internal static class FakeFont
 {
     /// <summary>

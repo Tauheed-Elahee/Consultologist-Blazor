@@ -90,13 +90,37 @@ public class ConsultDocumentPdfTests
     {
         // The general form of the defect: whatever we cannot draw, a reader
         // must never be handed a control character in a clinical document.
+        //
+        // #287: this stated the principle without exercising it — every
+        // character below was drawable or foldable, so it never reached the
+        // branch that produced U+0000. The 一 does.
         var bytes = ConsultDocumentPdf.Render(
-            "Dose ‑ unchanged. Range ≤ 5 mg. Patient’s — note – here. μg.",
+            "Dose ‑ unchanged. Range ≤ 5 mg. Patient’s — note – here 一. μg.",
             Password);
 
         var text = ExtractText(bytes);
 
         Assert.DoesNotContain(text, c => char.IsControl(c) && c != '\n' && c != '\r');
+    }
+
+    [Fact]
+    public void Render_HandsBackAWhiteSquareRatherThanAHole()
+    {
+        // The reported defect, end to end. U+4E00 has no glyph and no
+        // same-mark stand-in, so it used to reach the reader as .notdef —
+        // glyph 0, whose ToUnicode entry honestly records that it means
+        // nothing, i.e. U+0000 in the copy buffer.
+        var bytes = ConsultDocumentPdf.Render("Note 一 here.", Password);
+
+        var text = ExtractText(bytes);
+
+        Assert.Contains("□", text);
+        Assert.DoesNotContain("一", text);
+        // The word after it survives. Outlook on the web dropped the character
+        // following a missing glyph, turning "here" into "ere" in a note
+        // pasted into a chart; that half is the reader's behaviour and stops
+        // mattering once a real glyph is emitted.
+        Assert.Contains("here", text);
     }
 
     [Fact]
