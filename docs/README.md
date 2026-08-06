@@ -54,7 +54,10 @@ point-in-time investigations and migration plans.
   [package format v6](customizable-workflow/package-format-v6.md),
   [package format v6 design](customizable-workflow/package-format-v6-design.md),
   [package format v7](customizable-workflow/package-format-v7.md),
-  [package format v7 design](customizable-workflow/package-format-v7-design.md)
+  [package format v7 design](customizable-workflow/package-format-v7-design.md),
+  [package format v8 design](customizable-workflow/package-format-v8-design.md)
+  (sketch — **no v8 is cut**: the candidate list, the trigger that would
+  justify one, and what a version bump costs)
 
 ## Research
 
