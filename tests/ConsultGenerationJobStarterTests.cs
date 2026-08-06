@@ -583,6 +583,80 @@ public class ConsultGenerationJobStarterTests
         return new StartCapture(outcome, initialize, orchestrationInput);
     }
 
+    [Fact]
+    public async Task ScalarDataEntry_ReachesTheOrchestrationInput()
+    {
+        // The one hop in the scalar chain nothing covered. The validator
+        // accepts a `data:<id>` scalar binding and ConsultNodeVariableResolver
+        // binds it into a prompt — both tested — but between them the starter
+        // has to lift package.Data.Scalars onto the orchestration input, and
+        // that line had no test. A package-authored value that never left the
+        // package would fail at render, in production, with the binding
+        // reading "carries no data scalars".
+        var manifest = V7Fixtures.Minimal();
+        manifest.Data!["specialty"] = "data/specialty.txt";
+
+        var files = V6Fixtures.Files(manifest);
+        files["data/specialty.txt"] = "Oncology";
+
+        var errors = new List<string>();
+        var data = WorkflowDataResolver.Resolve(manifest, files, errors);
+        Assert.Empty(errors);
+
+        _pinResolver.ResolvePinAsync("user-1", Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackageRef("general", "latest"));
+        _packageStore.ResolveAsync(Arg.Any<WorkflowPackageRef>(), Arg.Any<CancellationToken>())
+            .Returns(new WorkflowPackage(
+                manifest,
+                Nodes: manifest.Nodes,
+                SchemaContracts: TestOutputContracts.CatalogSchemas,
+                Data: data,
+                ResultNodeId: "assemble-note",
+                Results: new List<WorkflowResolvedResult> { new("consult", "assemble-note", "Assemble note") }));
+
+        ConsultGenerationOrchestrationInput? orchestrationInput = null;
+        _client.ScheduleNewOrchestrationInstanceAsync(
+                Arg.Any<TaskName>(),
+                Arg.Do<object?>(payload => orchestrationInput = payload as ConsultGenerationOrchestrationInput),
+                Arg.Any<StartOrchestrationOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo => Task.FromResult(((StartOrchestrationOptions?)callInfo[2])!.InstanceId!));
+
+        var outcome = await CreateStarter().StartAsync(
+            _client,
+            new ConsultGenerationRequest(Referral),
+            "user-1",
+            new ConsultGenerationJobOrigin(ConsultGenerationJobSources.App),
+            CancellationToken.None);
+
+        Assert.Null(outcome.Error);
+        Assert.NotNull(orchestrationInput);
+        var specialty = Assert.Contains("specialty", orchestrationInput.DataScalars);
+        Assert.Equal("Oncology", specialty);
+    }
+
+    [Fact]
+    public async Task ScalarDataEntry_IsDistinguishedByTheTrailingSlashAlone()
+    {
+        // One character decides it: WorkflowDataResolver reads a path ending
+        // in '/' as a collection and anything else as a scalar. The editor
+        // writes this path, so a stray slash either way silently reclassifies
+        // the entry — a collection is not bindable and a scalar is not
+        // iterable, and both fail late.
+        var manifest = V7Fixtures.Minimal();
+        manifest.Data!["specialty"] = "data/specialty/";
+
+        var files = V6Fixtures.Files(manifest);
+        files["data/specialty.txt"] = "Oncology";
+
+        var errors = new List<string>();
+        var data = WorkflowDataResolver.Resolve(manifest, files, errors);
+
+        // Read as a collection, so it is not a scalar and its index is missing.
+        Assert.DoesNotContain("specialty", data.Scalars);
+        Assert.Contains(errors, e => e.Contains("specialty") && e.Contains("index.json"));
+    }
+
     // #266 — the rate limit is checked here because this door serves both the
     // app and the email poller. Two enforcement points cover all three ways in.
 

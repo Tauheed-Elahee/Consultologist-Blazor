@@ -126,10 +126,26 @@ public static class WorkflowManifestReader
         return schemas.EnumerateObject().Select(entry => entry.Name).ToList();
     }
 
-    /// <summary>Scalar data entries: values of the data map that are not directories.</summary>
-    public static IReadOnlyList<string> ReadScalars(JsonElement manifest)
+    /// <summary>
+    /// Scalar data entries: values of the data map that are not directories.
+    /// Ids only — what the binding dropdown needs.
+    /// </summary>
+    public static IReadOnlyList<string> ReadScalars(JsonElement manifest) =>
+        ReadScalarEntries(manifest).Select(entry => entry.Id).ToList();
+
+    /// <summary>
+    /// The same entries with their file paths, which editing needs: a scalar's
+    /// value *is* the file at that path, so the path is how the editor loads
+    /// and writes it.
+    ///
+    /// The trailing slash is the whole discriminator — `WorkflowDataResolver`
+    /// reads a path ending in '/' as a collection and anything else as a
+    /// value. Anything writing these paths has to get that one character
+    /// right, in both directions.
+    /// </summary>
+    public static IReadOnlyList<ScalarView> ReadScalarEntries(JsonElement manifest)
     {
-        var scalars = new List<string>();
+        var scalars = new List<ScalarView>();
 
         if (!TryGetProperty(manifest, "data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
@@ -140,12 +156,15 @@ public static class WorkflowManifestReader
         {
             if (entry.Value.ValueKind == JsonValueKind.String && entry.Value.GetString() is { } value && !value.EndsWith('/'))
             {
-                scalars.Add(entry.Name);
+                scalars.Add(new ScalarView(entry.Name, value));
             }
         }
 
         return scalars;
     }
+
+    /// <summary>One single-value data entry: the bindable id and the file holding its text.</summary>
+    public sealed record ScalarView(string Id, string Path);
 
     /// <summary>
     /// The manifest's collections joined with each directory's index.json (from

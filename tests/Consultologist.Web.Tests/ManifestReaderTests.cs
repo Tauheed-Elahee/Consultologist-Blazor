@@ -69,4 +69,57 @@ public class ManifestReaderTests
         Assert.Empty(WorkflowManifestReader.ReadResults(manifest));
         Assert.Equal("node:assemble-note", WorkflowManifestReader.ReadResultRef(manifest));
     }
+
+    // The trailing slash is the whole discriminator: WorkflowDataResolver reads
+    // a path ending in '/' as a collection and anything else as a single value.
+    // The editor writes these paths, so the reader has to split them the same
+    // way the engine does or the two disagree about what a package contains.
+
+    [Fact]
+    public void ReadScalarEntries_TakesOnlyTheNonDirectoryPaths()
+    {
+        var entries = WorkflowManifestReader.ReadScalarEntries(Parse("""
+            { "data": {
+                "standards": "data/standards/",
+                "specialty": "data/specialty.txt"
+            } }
+            """));
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("specialty", entry.Id);
+        // The path, not just the id — a value is the file it points at, so
+        // this is what lets the editor load and write it.
+        Assert.Equal("data/specialty.txt", entry.Path);
+    }
+
+    [Fact]
+    public void ReadScalars_StillReturnsIdsForTheBindingPicker()
+    {
+        // BindingSourceEditor offers "data:{id}" and needs nothing else, so
+        // the id list survives the richer read rather than every caller
+        // learning about paths.
+        var manifest = Parse("""
+            { "data": { "standards": "data/standards/", "specialty": "data/specialty.txt" } }
+            """);
+
+        Assert.Equal(new[] { "specialty" }, WorkflowManifestReader.ReadScalars(manifest).ToArray());
+    }
+
+    [Fact]
+    public void ReadScalarEntries_ToleratesPascalCase()
+    {
+        var entry = Assert.Single(WorkflowManifestReader.ReadScalarEntries(
+            Parse("""{ "Data": { "specialty": "data/specialty.txt" } }""")));
+
+        Assert.Equal("specialty", entry.Id);
+    }
+
+    [Fact]
+    public void ReadScalarEntries_IsEmptyWhenEveryEntryIsACollection()
+    {
+        // The shape every shipped package has today, which is why nothing has
+        // exercised the value path in production.
+        Assert.Empty(WorkflowManifestReader.ReadScalarEntries(
+            Parse("""{ "data": { "standards": "data/standards/" } }""")));
+    }
 }
