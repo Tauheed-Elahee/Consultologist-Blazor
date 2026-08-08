@@ -329,6 +329,34 @@ public class WorkflowPackagePublisherTests
     }
 
     [Fact]
+    public async Task Publish_AcceptsASingleValueDataEntry()
+    {
+        // #318: a data path with no directory segment is a value —
+        // WorkflowDataResolver reads it as a scalar and nodes bind it as
+        // data:<id>. This door refused it, so a fork could never publish one
+        // while repo packages could, because the content repo's publish script
+        // has no path allowlist. Underscore included on purpose: note_type is
+        // published and running.
+        var (publisher, writer, _) = CreatePublisher();
+        var manifest = V5Fixtures.Manifest();
+        manifest = manifest with
+        {
+            Data = new Dictionary<string, string>(manifest.Data!) { ["note_type"] = "data/note_type.txt" }
+        };
+        var files = V5Fixtures.Files(manifest);
+        files["data/note_type.txt"] = "consult note";
+
+        var result = await publisher.PublishAsync(OwnerId, Request(manifest: manifest, files: files), CancellationToken.None);
+
+        Assert.True(result.Succeeded, string.Join(" | ", result.Errors));
+
+        // No trailing slash survives the round trip — that one character is
+        // the whole discriminator between a value and a collection.
+        Assert.Equal("data/note_type.txt", writer.ReadManifest(AccountName, "v2026.07.1").Data!["note_type"]);
+        Assert.Equal("consult note", writer.Blobs[$"{AccountName}/v2026.07.1/data/note_type.txt"]);
+    }
+
+    [Fact]
     public async Task Publish_SecondVersion_IncrementsFromLatest()
     {
         var (publisher, writer, _) = CreatePublisher();
@@ -400,6 +428,17 @@ public class WorkflowPackagePublisherTests
     [InlineData("prompts/..")]
     [InlineData("data/standards/nested/deeper.md")]
     [InlineData("prompts/sub/dir.md")]
+    // #318: the value pattern matches "data/.." and "data/." by shape, so the
+    // traversal guard is the only thing rejecting them. It became load-bearing
+    // the moment one-segment data paths were allowed.
+    [InlineData("data/..")]
+    [InlineData("data/.")]
+    [InlineData("data/../escape.txt")]
+    [InlineData("data/./x.txt")]
+    // "data/" is the one string the value pattern's + and * forms disagree on,
+    // and the traversal guard rejects it under either. Pinned here so the
+    // behaviour is covered no matter which check happens to catch it.
+    [InlineData("data/")]
     public async Task Publish_RejectsIllegalPaths(string path)
     {
         var (publisher, _, _) = CreatePublisher();

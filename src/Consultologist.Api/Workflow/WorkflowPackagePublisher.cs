@@ -38,6 +38,22 @@ public sealed class WorkflowPackagePublisher
     private static readonly Regex RootFilePattern = new("^(prompts|schemas)/[A-Za-z0-9._-]+$", RegexOptions.Compiled);
     private static readonly Regex DataFilePattern = new("^data/[a-z0-9-]+/[A-Za-z0-9._-]+$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// A data path with no directory segment is a **single-value** entry —
+    /// <c>data/specialty.txt</c> — which <c>WorkflowDataResolver</c> reads as a
+    /// scalar and nodes bind as <c>data:&lt;id&gt;</c>. One segment, so it matches
+    /// neither pattern above and this door refused it (#318) while the content
+    /// repo's publish script, which has no allowlist, let repo packages through.
+    ///
+    /// Underscores are allowed deliberately: <c>note_type</c> is published and
+    /// running. The no-underscore rule belongs to the *directory* segment above,
+    /// and a value is a file.
+    ///
+    /// This pattern matches <c>data/..</c> — the traversal guard below is what
+    /// rejects that, and it has to keep doing so.
+    /// </summary>
+    private static readonly Regex DataValuePattern = new("^data/[A-Za-z0-9._-]+$", RegexOptions.Compiled);
+
     private static readonly JsonSerializerOptions IndexJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -240,10 +256,10 @@ public sealed class WorkflowPackagePublisher
             // Blob names are a flat namespace, so dot segments carry no traversal
             // semantics there — this is defense in depth for any future
             // filesystem-backed consumer of registry paths.
-            if ((!RootFilePattern.IsMatch(path) && !DataFilePattern.IsMatch(path))
+            if ((!RootFilePattern.IsMatch(path) && !DataFilePattern.IsMatch(path) && !DataValuePattern.IsMatch(path))
                 || path.Split('/').Any(segment => segment.Trim('.').Length == 0))
             {
-                errors.Add($"File path '{path}' is not allowed: expected prompts/<file>, schemas/<file>, or data/<collection>/<file>.");
+                errors.Add($"File path '{path}' is not allowed: expected prompts/<file>, schemas/<file>, data/<collection>/<file>, or data/<file>.");
                 continue;
             }
 
