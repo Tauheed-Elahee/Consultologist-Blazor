@@ -96,4 +96,102 @@ public class TemplatesEditorTests : ClientRenderTestContext
 
         Assert.Contains("Assembling note", page.Markup);
     }
+
+    // #309: single-value data entries. A value is one file with no items, so
+    // it sits flat in the Data group rather than as an empty folder.
+
+    private IRenderedComponent<Templates> RenderWithValue()
+    {
+        WorkflowService.GetCurrentPackageContentAsync().Returns(EditorFixtures.V6WithValue());
+        return Render<Templates>();
+    }
+
+    private static void Navigate(IRenderedComponent<Templates> page, string label) =>
+        page.FindAll("button.editor-nav__item")
+            .First(button => button.TextContent.Replace("●", string.Empty).Trim() == label)
+            .Click();
+
+    [Fact]
+    public void PublishedValue_AppearsInTheNavAndOpensItsText()
+    {
+        var page = RenderWithValue();
+
+        Navigate(page, "specialty");
+
+        Assert.Contains("data/specialty.txt", page.Markup);
+        Assert.Equal("oncology", page.Find("fluent-text-area").GetAttribute("current-value"));
+        // The hazard is named rather than guarded — the value goes into
+        // prompts exactly as typed.
+        Assert.Contains("exactly as", page.Markup);
+    }
+
+    [Fact]
+    public void AValueBoundByANode_IsNotFlaggedUnused()
+    {
+        // The fixture's fan node binds data:specialty, and the collection
+        // beside it is forEached — different edge kinds, same question.
+        var page = RenderWithValue();
+
+        Assert.DoesNotContain("not bound by any workflow node yet", page.Markup);
+    }
+
+    [Fact]
+    public void AddedValue_AppearsPendingAndUnbound()
+    {
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("note_type");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+
+        Assert.Contains("note_type", page.Markup);
+        Assert.Contains("not bound by any workflow node yet", page.Markup);
+        Assert.Contains("+1 value", page.Markup);
+    }
+
+    [Fact]
+    public void AddedValue_CanBeRemovedWhilePending()
+    {
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("note_type");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+        page.FindAll("fluent-button").First(b => b.TextContent.Trim() == "Remove").Click();
+
+        Assert.DoesNotContain("+1 value", page.Markup);
+        // The published one is untouched: removal is pending-only, which is
+        // the same deal collections get.
+        Assert.Contains("specialty", page.Markup);
+    }
+
+    [Fact]
+    public void AValueCannotTakeTheNameOfAnExistingDataEntry()
+    {
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("standards");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+
+        // "standards" is a collection in this fixture; one data map cannot
+        // hold both shapes under one key.
+        Assert.Contains("already exists", page.Markup);
+    }
+
+    [Fact]
+    public void AValueIdMayContainAnUnderscore()
+    {
+        // note_type is published and running. CollectionIdPattern forbids '_'
+        // because a directory segment does; a value is a file, so refusing it
+        // here would reject an id that already exists in production.
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("note_type");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+
+        Assert.DoesNotContain("must be lowercase letters", page.Markup);
+        Assert.Contains("+1 value", page.Markup);
+    }
 }

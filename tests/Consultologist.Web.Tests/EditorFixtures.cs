@@ -50,6 +50,43 @@ public static class EditorFixtures
         }
         """, 6);
 
+    /// <summary>
+    /// v6 plus a published single-value data entry (#309): a data path with no
+    /// trailing slash, bound by the fan node as data:specialty. The value file
+    /// carries no trailing newline, because the value is inserted mid-sentence.
+    /// </summary>
+    public static WorkflowPackageContentResponse V6WithValue()
+    {
+        var package = Package("""
+            {
+              "name": "acct-1234567890ab",
+              "version": "v2026.07.1",
+              "specVersion": 6,
+              "templating": { "engine": "scriban", "engineVersion": "7.2.5" },
+              "data": { "standards": "data/standards/", "specialty": "data/specialty.txt" },
+              "prompts": [
+                { "id": "draft-section", "file": "prompts/draft-section.md",
+                  "variables": ["section_name", "consult_draft", "specialty"] }
+              ],
+              "result": "node:assemble-note",
+              "nodes": [
+                { "id": "draft-section", "forEach": "data:standards", "label": "Drafting section",
+                  "prompt": "draft-section",
+                  "bindings": { "section_name": "item:name", "consult_draft": "input:consult_draft",
+                                "specialty": "data:specialty" } },
+                { "id": "assemble-note", "label": "Assembling note", "aggregate": ["node:draft-section"] }
+              ]
+            }
+            """, 6);
+
+        var files = new Dictionary<string, string>(package.Files, StringComparer.Ordinal)
+        {
+            ["data/specialty.txt"] = "oncology"
+        };
+
+        return package with { Files = files };
+    }
+
     /// <summary>The v7 shape: declared inputs and a results list.</summary>
     public static WorkflowPackageContentResponse V7() => Package("""
         {

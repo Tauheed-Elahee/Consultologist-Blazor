@@ -24,7 +24,20 @@ public class EditorPublishRoundTripTests : ClientRenderTestContext
         Func<IRenderedComponent<Templates>, Task> edit,
         bool v7 = true)
     {
-        var package = v7 ? EditorFixtures.V7() : EditorFixtures.V6();
+        var (result, _) = await PublishAndCaptureAsync(edit, v7 ? EditorFixtures.V7() : EditorFixtures.V6());
+        return result;
+    }
+
+    /// <summary>
+    /// The same round trip, also handing back what was sent — for assertions
+    /// the validator cannot make, like whether a data path kept its trailing
+    /// slash.
+    /// </summary>
+    private async Task<(ServerWorkflow.WorkflowPackageValidator.ValidationResult Result,
+                        ClientWorkflow.WorkflowPackagePublishRequest Sent)> PublishAndCaptureAsync(
+        Func<IRenderedComponent<Templates>, Task> edit,
+        ClientWorkflow.WorkflowPackageContentResponse package)
+    {
         WorkflowService.GetCurrentPackageContentAsync().Returns(package);
 
         ClientWorkflow.WorkflowPackagePublishRequest? sent = null;
@@ -44,7 +57,9 @@ public class EditorPublishRoundTripTests : ClientRenderTestContext
         var manifest = JsonSerializer.Deserialize<ServerWorkflow.WorkflowPackageManifest>(sent!.Manifest.GetRawText(), JsonOptions)!;
         var files = sent.Files.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
-        return ServerWorkflow.WorkflowPackageValidator.Validate(manifest, files, new Dictionary<string, string>(StringComparer.Ordinal));
+        return (
+            ServerWorkflow.WorkflowPackageValidator.Validate(manifest, files, new Dictionary<string, string>(StringComparer.Ordinal)),
+            sent);
     }
 
     private static void Navigate(IRenderedComponent<Templates> page, string label) =>
@@ -109,6 +124,68 @@ public class EditorPublishRoundTripTests : ClientRenderTestContext
             return Task.CompletedTask;
         }, v7: false);
 
+        Assert.True(result.IsValid, string.Join(" | ", result.Errors));
+    }
+
+    // #309: a value is a data path with NO trailing slash. That one character
+    // decides whether the resolver reads a scalar or hunts for an index.json,
+    // and the composition path is shared with collections.
+
+    [Fact]
+    public async Task AddedValue_ComposesADataPathWithoutATrailingSlash()
+    {
+        var (result, sent) = await PublishAndCaptureAsync(async page =>
+        {
+            Navigate(page, "+ Data value");
+            page.Find(".new-item-fields fluent-text-field").Change("note_type");
+            page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+            page.Find("fluent-text-area").Change("consult note");
+            await Task.CompletedTask;
+        }, EditorFixtures.V6());
+
+        var data = JsonDocument.Parse(sent.Manifest.GetRawText()).RootElement.GetProperty("data");
+        Assert.Equal("data/note_type.txt", data.GetProperty("note_type").GetString());
+        Assert.Equal("consult note", sent.Files["data/note_type.txt"]);
+
+        // The collection beside it keeps its slash — the two shapes coexist.
+        Assert.Equal("data/standards/", data.GetProperty("standards").GetString());
+        Assert.True(result.IsValid, string.Join(" | ", result.Errors));
+    }
+
+    [Fact]
+    public async Task CollectionsOnlyPackage_RoundTripsItsDataMapUnchanged()
+    {
+        // The regression guard: the composition path is shared, so a stray
+        // slash either way would silently reclassify an entry in a package
+        // that never asked for values at all. Publish is gated on pending
+        // edits, so this makes one that has nothing to do with the data map.
+        var (result, sent) = await PublishAndCaptureAsync(page =>
+        {
+            page.Find("fluent-text-area").Change("Document the presenting illness, chronologically.");
+            return Task.CompletedTask;
+        }, EditorFixtures.V6());
+
+        var data = JsonDocument.Parse(sent.Manifest.GetRawText()).RootElement.GetProperty("data");
+        Assert.Equal(new[] { "standards" }, data.EnumerateObject().Select(p => p.Name).ToArray());
+        Assert.Equal("data/standards/", data.GetProperty("standards").GetString());
+        Assert.True(result.IsValid, string.Join(" | ", result.Errors));
+    }
+
+    [Fact]
+    public async Task EditedPublishedValue_SendsTheNewTextAtItsDeclaredPath()
+    {
+        var (result, sent) = await PublishAndCaptureAsync(page =>
+        {
+            Navigate(page, "specialty");
+            page.Find("fluent-text-area").Change("cardiology");
+            return Task.CompletedTask;
+        }, EditorFixtures.V6WithValue());
+
+        Assert.Equal("cardiology", sent.Files["data/specialty.txt"]);
+
+        // Editing a value must not disturb the entry that points at it.
+        var data = JsonDocument.Parse(sent.Manifest.GetRawText()).RootElement.GetProperty("data");
+        Assert.Equal("data/specialty.txt", data.GetProperty("specialty").GetString());
         Assert.True(result.IsValid, string.Join(" | ", result.Errors));
     }
 }
