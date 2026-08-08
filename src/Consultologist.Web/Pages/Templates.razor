@@ -3137,6 +3137,31 @@
                 }
             }
 
+            // An empty value is different from an empty folder, and worse
+            // (#323). The validator rejects a folder with no index; a scalar
+            // may be any string, "" included, so nothing downstream objects —
+            // this is the only check standing between an author and a value
+            // that renders as nothing mid-sentence.
+            //
+            // Blocked rather than defaulted: a plausible guess is exactly what
+            // must not be substituted for a choice the author has not made.
+            // Whitespace counts as empty for the same reason it counts in the
+            // rendered prompt.
+            // Scoped to what this author did: a value they added, or one they
+            // edited to empty. A pre-existing empty value they never touched
+            // does not block unrelated work — being unable to publish a prompt
+            // fix because a package you forked carries a bad value would be a
+            // worse trap than the one this closes.
+            foreach (var scalar in EffectiveScalars)
+            {
+                var authored = addedScalars.ContainsKey(scalar.Id) || edits.ContainsKey(scalar.Path);
+
+                if (authored && string.IsNullOrWhiteSpace(GetText(scalar.Path)))
+                {
+                    unbound.Add($"Data value '{scalar.Id}' has no text yet — enter a value before publishing.");
+                }
+            }
+
             foreach (var addedNode in addedNodes)
             {
                 if (addedNode.Aggregate != null)
