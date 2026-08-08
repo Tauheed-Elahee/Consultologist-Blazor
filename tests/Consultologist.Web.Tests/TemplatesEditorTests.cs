@@ -180,6 +180,49 @@ public class TemplatesEditorTests : ClientRenderTestContext
     }
 
     [Fact]
+    public void APendingValue_CanBeBoundBeforeItIsPublished()
+    {
+        // Found in real use: authoring a value took TWO publishes, because the
+        // binding dropdown offered published values only. A pending folder can
+        // be forEached the moment it exists (CollectionIds is the effective
+        // list), and a pending value has to be pickable the same way.
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("urgency");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+
+        Navigate(page, "Graph");
+
+        var options = page.FindAll("select.binding-row__select option")
+            .Select(option => option.GetAttribute("value"))
+            .ToList();
+
+        Assert.Contains("data:urgency", options);
+        // The published one is still there — this widens the list, not swaps it.
+        Assert.Contains("data:specialty", options);
+    }
+
+    [Fact]
+    public void AFolderCannotTakeAPendingValuesName()
+    {
+        // The mirror of the check the value form already makes. Both sides
+        // have to see pending state, or the collision only shows up at
+        // publish as two data entries fighting over one key.
+        var page = RenderWithValue();
+
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change("urgency");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+
+        Navigate(page, "+ Data folder");
+        page.Find(".new-item-fields fluent-text-field").Change("urgency");
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create folder")).Click();
+
+        Assert.Contains("already exists", page.Markup);
+    }
+
+    [Fact]
     public void AValueIdMayContainAnUnderscore()
     {
         // note_type is published and running. CollectionIdPattern forbids '_'

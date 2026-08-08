@@ -577,7 +577,7 @@
                         <WorkflowNodeSummary Inputs="@DeclaredInputIds"
                                              Nodes="@EffectiveNodes"
                                              Editable="true"
-                                             Scalars="@scalars"
+                                             Scalars="@ScalarIds"
                                              Collections="@CollectionIds"
                                              ContractOptions="@ContractOptions"
                                              PromptOptions="@EffectivePrompts.Select(p => p.Id).ToList()"
@@ -711,7 +711,7 @@
                                              Nodes="@EffectiveNodes"
                                              Only="@selectedNode.Id"
                                              Editable="true"
-                                             Scalars="@scalars"
+                                             Scalars="@ScalarIds"
                                              Collections="@CollectionIds"
                                              ContractOptions="@ContractOptions"
                                              PromptOptions="@EffectivePrompts.Select(p => p.Id).ToList()"
@@ -784,7 +784,7 @@
                                                             <BindingSourceEditor Node="@usingNode"
                                                                                  Row="@row"
                                                                                  Nodes="@nodes"
-                                                                                 Scalars="@scalars"
+                                                                                 Scalars="@ScalarIds"
                                                                                  Inputs="@DeclaredInputIds"
                                                                                  OnChanged="OnBindingChangedAsync" />
                                                             @if (RowModified(row))
@@ -1025,7 +1025,11 @@
             return;
         }
 
-        if (collections.Any(c => c.Id == id) || addedCollections.Contains(id) || scalars.Contains(id, StringComparer.Ordinal))
+        // Pending values count too: one data map cannot hold a folder and a
+        // value under the same key, and both sides of that check have to look
+        // at pending state or the collision only surfaces at publish.
+        if (collections.Any(c => c.Id == id) || addedCollections.Contains(id)
+            || publishedScalarIds.Contains(id, StringComparer.Ordinal) || addedScalars.ContainsKey(id))
         {
             newCollectionError = $"A data entry named '{id}' already exists.";
             return;
@@ -1147,7 +1151,10 @@
     // Pending rebinds (#138), keyed nodeId + '\n' + variable. An edit equal to
     // the loaded manifest's value removes itself.
     private readonly Dictionary<string, (string From, string? As)> bindingEdits = new(StringComparer.Ordinal);
-    private IReadOnlyList<string> scalars = Array.Empty<string>();
+    // Published only. Named for it because the difference matters: the draft
+    // restore asks "is this id in the loaded package?" and must not see
+    // pending ones, while everything an author picks from must (#309).
+    private IReadOnlyList<string> publishedScalarIds = Array.Empty<string>();
 
     // The same entries with their paths (#308). The id list above is what the
     // binding picker needs; editing a value needs the file it points at.
@@ -1773,6 +1780,12 @@
 
     private IReadOnlyList<string> CollectionIds => EffectiveCollections.Select(c => c.Id).ToList();
 
+    // Loaded plus pending, the same deal CollectionIds gets. A pending folder
+    // can be forEached the moment it exists; a pending value has to be
+    // bindable the same way, or authoring one takes two publishes — which is
+    // exactly what it took before this.
+    private IReadOnlyList<string> ScalarIds => EffectiveScalars.Select(s => s.Id).ToList();
+
     // Output-contract choices are the package's own schema ids — their files
     // are present and already validated as canonical catalog matches.
     private IReadOnlyList<string> ContractOptions => schemaIds;
@@ -2112,7 +2125,7 @@
 
         return node == null
             ? Enumerable.Empty<string>()
-            : BindingSourceEditor.SourceOptions(nodes, scalars, node, string.Empty, DeclaredInputIds);
+            : BindingSourceEditor.SourceOptions(nodes, ScalarIds, node, string.Empty, DeclaredInputIds);
     }
 
     private async Task RemoveVariableAsync(WorkflowManifestReader.PromptView prompt, string variable)
@@ -2628,7 +2641,7 @@
             nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
             collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
             scalarEntries = WorkflowManifestReader.ReadScalarEntries(content.Manifest);
-            scalars = scalarEntries.Select(entry => entry.Id).ToList();
+            publishedScalarIds = scalarEntries.Select(entry => entry.Id).ToList();
             schemaIds = WorkflowManifestReader.ReadSchemaIds(content.Manifest);
             await RestoreDraftAsync();
 
@@ -2780,7 +2793,7 @@
         {
             if (CollectionIdPattern.IsMatch(folderId)
                 && collections.All(c => c.Id != folderId)
-                && !scalars.Contains(folderId, StringComparer.Ordinal)
+                && !publishedScalarIds.Contains(folderId, StringComparer.Ordinal)
                 && !addedCollections.Contains(folderId))
             {
                 addedCollections.Add(folderId);
@@ -2793,7 +2806,7 @@
         foreach (var (scalarId, text) in draftAddedScalars ?? new Dictionary<string, string>())
         {
             if (ItemIdPattern.IsMatch(scalarId)
-                && !scalars.Contains(scalarId, StringComparer.Ordinal)
+                && !publishedScalarIds.Contains(scalarId, StringComparer.Ordinal)
                 && collections.All(c => c.Id != scalarId)
                 && !addedCollections.Contains(scalarId)
                 && !addedScalars.ContainsKey(scalarId))
