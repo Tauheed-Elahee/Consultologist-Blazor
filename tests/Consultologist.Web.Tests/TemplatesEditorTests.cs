@@ -222,6 +222,89 @@ public class TemplatesEditorTests : ClientRenderTestContext
         Assert.Contains("already exists", page.Markup);
     }
 
+    // #323: an empty value published to a real fork, and nothing objected —
+    // the validator accepts any string for a scalar, "" included, so this
+    // client check is the only one there is.
+
+    private static void Publish(IRenderedComponent<Templates> page) =>
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Publish")).Click();
+
+    private static void CreateValue(IRenderedComponent<Templates> page, string id)
+    {
+        Navigate(page, "+ Data value");
+        page.Find(".new-item-fields fluent-text-field").Change(id);
+        page.FindAll("fluent-button").First(b => b.TextContent.Contains("Create value")).Click();
+    }
+
+    [Fact]
+    public void AnEmptyAddedValue_BlocksPublishAndNamesItself()
+    {
+        var page = RenderWithValue();
+
+        CreateValue(page, "urgency");
+        Publish(page);
+
+        Assert.Contains("Publish rejected", page.Markup);
+        Assert.Contains("Data value 'urgency' has no text yet", page.Markup);
+    }
+
+    [Fact]
+    public void AValueWithText_DoesNotBlockPublish()
+    {
+        var page = RenderWithValue();
+
+        CreateValue(page, "urgency");
+        page.Find("fluent-text-area").Change("routine");
+        Publish(page);
+
+        Assert.DoesNotContain("has no text yet", page.Markup);
+    }
+
+    [Fact]
+    public void WhitespaceCountsAsEmpty()
+    {
+        // It counts in the rendered prompt, so it counts here.
+        var page = RenderWithValue();
+
+        CreateValue(page, "urgency");
+        page.Find("fluent-text-area").Change("   ");
+        Publish(page);
+
+        Assert.Contains("Data value 'urgency' has no text yet", page.Markup);
+    }
+
+    [Fact]
+    public void APublishedValueEmptiedByTheAuthor_BlocksPublish()
+    {
+        var page = RenderWithValue();
+
+        Navigate(page, "specialty");
+        page.Find("fluent-text-area").Change(string.Empty);
+        Publish(page);
+
+        Assert.Contains("Data value 'specialty' has no text yet", page.Markup);
+    }
+
+    [Fact]
+    public void AnInheritedEmptyValue_DoesNotBlockUnrelatedWork()
+    {
+        // The scoping decision: being unable to publish a prompt fix because
+        // the package you forked carries a bad value would be a worse trap
+        // than the one this closes. Only what this author did is checked.
+        var package = EditorFixtures.V6WithValue();
+        var files = new Dictionary<string, string>(package.Files, StringComparer.Ordinal)
+        {
+            ["data/specialty.txt"] = string.Empty
+        };
+        WorkflowService.GetCurrentPackageContentAsync().Returns(package with { Files = files });
+
+        var page = Render<Templates>();
+        page.Find("fluent-text-area").Change("Document the presenting illness, chronologically.");
+        Publish(page);
+
+        Assert.DoesNotContain("has no text yet", page.Markup);
+    }
+
     [Fact]
     public void AValueIdMayContainAnUnderscore()
     {
