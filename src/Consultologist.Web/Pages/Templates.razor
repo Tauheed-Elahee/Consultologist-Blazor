@@ -194,6 +194,30 @@
                         <span class="editor-nav__dot"></span>
                         <span>+ Data folder</span>
                     </button>
+                    @* A value has no items, so it sits flat in the same Data
+                       group rather than as a folder with nothing inside. *@
+                    @foreach (var scalar in EffectiveScalars)
+                    {
+                        <button type="button"
+                                class="editor-nav__item editor-nav__value @(selectedKey == scalar.Path ? "editor-nav__item--selected" : "")"
+                                @onclick="() => Select(scalar.Path)">
+                            <span class="editor-nav__dot">@(ScalarHasPending(scalar) ? "●" : "")</span>
+                            <span>@scalar.Id</span>
+                        </button>
+                        @if (ScalarIsUnused(scalar.Id))
+                        {
+                            <div class="editor-nav__item editor-nav__item--nested">
+                                <span class="editor-nav__dot"></span>
+                                <span class="muted-text">not bound by any workflow node yet</span>
+                            </div>
+                        }
+                    }
+                    <button type="button"
+                            class="editor-nav__item editor-nav__add @(selectedKey == AddScalarKey ? "editor-nav__item--selected" : "")"
+                            @onclick="() => Select(AddScalarKey)">
+                        <span class="editor-nav__dot"></span>
+                        <span>+ Data value</span>
+                    </button>
                     <span class="editor-nav__group">Workflow</span>
                     @if (IsV7)
                     {
@@ -312,6 +336,58 @@
                                 Create folder
                             </FluentButton>
                         </div>
+                    }
+                    else if (selectedKey == AddScalarKey)
+                    {
+                        <div class="pane-header">
+                            <div>
+                                <h3 class="panel-title">New data value</h3>
+                                <p class="muted-text">
+                                    A single piece of text the package owns — a specialty, a note type — that
+                                    prompts read as <code>data:&lt;id&gt;</code>. Unlike a folder it has no items;
+                                    it is one value, the same for every consult this package runs.
+                                </p>
+                            </div>
+                        </div>
+                        @if (newScalarError != null)
+                        {
+                            <FluentMessageBar Intent="MessageIntent.Error" AllowDismiss="false">@newScalarError</FluentMessageBar>
+                        }
+                        <div class="new-item-fields">
+                            <label class="input-field">
+                                <span>value id (lowercase, digits, underscores, hyphens)</span>
+                                <FluentTextField @bind-Value="newScalarId" Placeholder="specialty" />
+                            </label>
+                        </div>
+                        <div class="action-row">
+                            <FluentButton Appearance="Appearance.Accent" @onclick="AddScalarAsync">
+                                Create value
+                            </FluentButton>
+                        </div>
+                    }
+                    else if (SelectedScalar() is { } scalar)
+                    {
+                        <WorkflowEditorPane Title="@scalar.Id"
+                                            Subtitle="@(addedScalars.ContainsKey(scalar.Id) ? $"{scalar.Path} — new, unpublished" : scalar.Path)"
+                                            EditLabel="Value"
+                                            Text="@GetText(scalar.Path)"
+                                            Modified="@ScalarHasPending(scalar)"
+                                            TextChanged="@(value => OnTextChangedAsync(scalar.Path, value))">
+                            <HeaderActions>
+                                @if (addedScalars.ContainsKey(scalar.Id))
+                                {
+                                    <FluentButton Appearance="Appearance.Outline" @onclick="() => RemoveScalarAsync(scalar.Id)">
+                                        Remove
+                                    </FluentButton>
+                                }
+                            </HeaderActions>
+                            <ChildContent>
+                                <p class="muted-text">
+                                    Bound as <code>data:@scalar.Id</code>. Inserted into prompts exactly as
+                                    typed — a trailing newline becomes a line break mid-sentence.
+                                </p>
+                            </ChildContent>
+                        </WorkflowEditorPane>
                     }
                     else if (SelectedAdded() is { } addedItem)
                     {
@@ -770,6 +846,7 @@
     private const string ResultsKey = "results";
     private const string NewKeyPrefix = "new:";
     private const string AddCollectionKey = "add-collection";
+    private const string AddScalarKey = "add-scalar";
     private const string NodeKeyPrefix = "node:";
     private const string AddNodeKey = "add-node";
     private const string AddPromptKey = "add-prompt";
@@ -791,6 +868,14 @@
     // same added-items flow, keyed by the folder id.
     private readonly List<string> addedCollections = new();
 
+    // New single-value data entries (#309): id → pending text. A value is one
+    // file, so unlike a collection it needs nowhere for items to arrive — the
+    // text lives here until publish, the way a pending prompt's does.
+    private readonly Dictionary<string, string> addedScalars = new(StringComparer.Ordinal);
+
+    private string? newScalarId;
+    private string? newScalarError;
+
     private string? newItemId;
     private string? newItemName;
     private string? newItemContent;
@@ -806,7 +891,7 @@
     private static readonly System.Text.RegularExpressions.Regex CollectionIdPattern =
         new("^[a-z0-9][a-z0-9-]*$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + removedFiles.Count
+    private int PendingCount => edits.Count + addedItems.Count + addedCollections.Count + addedScalars.Count + removedFiles.Count
         + bindingEdits.Count + nodeEdits.Count + addedNodes.Count + removedNodeIds.Count
         + aggregateEdits.Count + (resultEdit != null ? 1 : 0) + addedPrompts.Count
         + VariableAddCount + VariableRemovalCount
@@ -822,6 +907,7 @@
         var parts = new List<string>();
         if (edits.Count > 0) parts.Add($"{edits.Count} edited");
         if (addedCollections.Count > 0) parts.Add($"+{addedCollections.Count} folder{(addedCollections.Count == 1 ? "" : "s")}");
+        if (addedScalars.Count > 0) parts.Add($"+{addedScalars.Count} value{(addedScalars.Count == 1 ? "" : "s")}");
         if (addedItems.Count > 0) parts.Add($"+{addedItems.Count}");
         if (removedFiles.Count > 0) parts.Add($"−{removedFiles.Count}");
         if (bindingEdits.Count > 0) parts.Add($"{bindingEdits.Count} rebound");
@@ -844,6 +930,10 @@
 
     private AddedItem? SelectedAdded() => addedItems.FirstOrDefault(a => a.Key == selectedKey);
 
+    // One lookup for both, because a value's key is its path either way.
+    private WorkflowManifestReader.ScalarView? SelectedScalar() =>
+        EffectiveScalars.FirstOrDefault(scalar => scalar.Path == selectedKey);
+
     private bool CollectionHasPending(WorkflowManifestReader.CollectionView collection) =>
         collection.Items.Any(item => edits.ContainsKey(item.File) || removedFiles.Contains(item.File))
         || addedItems.Any(a => a.Collection == collection.Id)
@@ -857,6 +947,73 @@
 
     private bool CollectionIsUnused(string collectionId) =>
         !nodes.Any(n => n.ForEach == $"data:{collectionId}");
+
+    // Single-value data entries (#309). A value's key IS its path, derived the
+    // same way whether pending or published, so selection needs no second
+    // scheme — the standards pane already selects by file.
+    private static string ScalarPath(string id) => $"data/{id}.txt";
+
+    // The loaded values plus one synthetic view per pending value, so the
+    // sidebar and the composition treat both alike.
+    private IEnumerable<WorkflowManifestReader.ScalarView> EffectiveScalars =>
+        scalarEntries.Concat(addedScalars.Keys.Select(id =>
+            new WorkflowManifestReader.ScalarView(id, ScalarPath(id))));
+
+    private bool ScalarHasPending(WorkflowManifestReader.ScalarView scalar) =>
+        edits.ContainsKey(scalar.Path) || addedScalars.ContainsKey(scalar.Id);
+
+    // A collection is unused when nothing forEaches it; a value when nothing
+    // binds it. Different edge kinds, same question.
+    private bool ScalarIsUnused(string scalarId) =>
+        !nodes.Any(n => n.Bindings.Any(binding => binding.From == $"data:{scalarId}"));
+
+    private async Task AddScalarAsync()
+    {
+        var id = newScalarId?.Trim() ?? string.Empty;
+
+        // ItemIdPattern, not CollectionIdPattern: the no-underscore rule
+        // belongs to the directory segment, and a value is a file. note_type
+        // is published and running, so forbidding '_' here would refuse an id
+        // that already exists.
+        if (!ItemIdPattern.IsMatch(id))
+        {
+            newScalarError = "The value id must be lowercase letters, digits, '_' or '-', starting with a letter or digit.";
+            return;
+        }
+
+        if (collections.Any(c => c.Id == id) || addedCollections.Contains(id)
+            || scalarEntries.Any(s => s.Id == id) || addedScalars.ContainsKey(id))
+        {
+            newScalarError = $"A data entry named '{id}' already exists.";
+            return;
+        }
+
+        addedScalars[id] = string.Empty;
+        newScalarId = null;
+        newScalarError = null;
+        publishSuccess = null;
+        selectedKey = ScalarPath(id);
+        await PersistDraftAsync();
+    }
+
+    // Pending only, which is true parity: RemoveCollectionAsync un-adds a
+    // pending folder and a published collection cannot be removed at all.
+    // Deleting a published value needs its data-map entry removed too, and a
+    // guard against removing one a node still binds — its own issue.
+    private async Task RemoveScalarAsync(string scalarId)
+    {
+        var path = ScalarPath(scalarId);
+        addedScalars.Remove(scalarId);
+        edits.Remove(path);
+        publishSuccess = null;
+
+        if (selectedKey == path)
+        {
+            selectedKey = collections.SelectMany(c => c.Items).FirstOrDefault(i => !removedFiles.Contains(i.File))?.File ?? GraphKey;
+        }
+
+        await PersistDraftAsync();
+    }
 
     private async Task AddCollectionAsync()
     {
@@ -991,6 +1148,11 @@
     // the loaded manifest's value removes itself.
     private readonly Dictionary<string, (string From, string? As)> bindingEdits = new(StringComparer.Ordinal);
     private IReadOnlyList<string> scalars = Array.Empty<string>();
+
+    // The same entries with their paths (#308). The id list above is what the
+    // binding picker needs; editing a value needs the file it points at.
+    private IReadOnlyList<WorkflowManifestReader.ScalarView> scalarEntries =
+        Array.Empty<WorkflowManifestReader.ScalarView>();
 
     // Pending node-field edits (#117), keyed by node id. Each entry is the
     // node's complete effective tuple; one equal to the manifest removes
@@ -2412,7 +2574,12 @@
     private string GetText(string path) =>
         AddedNodeForPromptFile(path) is { } addedNode ? addedNode.PromptText
         : AddedPromptForFile(path) is { } addedPrompt ? addedPrompt.Text
+        : AddedScalarIdForPath(path) is { } pendingScalar ? addedScalars[pendingScalar]
         : edits.TryGetValue(path, out var edited) ? edited : content!.Files.GetValueOrDefault(path, string.Empty);
+
+    /// <summary>The pending value at this path, or null — a published one has a real file.</summary>
+    private string? AddedScalarIdForPath(string path) =>
+        addedScalars.Keys.FirstOrDefault(id => ScalarPath(id) == path);
 
     private async Task LoadAsync()
     {
@@ -2421,6 +2588,7 @@
         edits.Clear();
         addedItems.Clear();
         addedCollections.Clear();
+        addedScalars.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
         nodeEdits.Clear();
@@ -2459,7 +2627,8 @@
             prompts = WorkflowManifestReader.ReadPrompts(content.Manifest);
             nodes = WorkflowManifestReader.ReadNodes(content.Manifest);
             collections = WorkflowManifestReader.ReadCollections(content.Manifest, content.Files);
-            scalars = WorkflowManifestReader.ReadScalars(content.Manifest);
+            scalarEntries = WorkflowManifestReader.ReadScalarEntries(content.Manifest);
+            scalars = scalarEntries.Select(entry => entry.Id).ToList();
             schemaIds = WorkflowManifestReader.ReadSchemaIds(content.Manifest);
             await RestoreDraftAsync();
 
@@ -2526,7 +2695,10 @@
         // v7 declarations (#218). Trailing optionals, so a draft written
         // before them still restores — nothing gates on Version.
         List<DraftInput>? Inputs = null,
-        List<DraftResult>? Results = null);
+        List<DraftResult>? Results = null,
+        // Pending single-value data entries (#309), same trailing-optional
+        // discipline: a draft written before this restores with it null.
+        Dictionary<string, string>? AddedScalars = null);
 
     private sealed record DraftInput(string Id, string Label, bool Required);
 
@@ -2556,6 +2728,7 @@
         List<DraftAddedPrompt>? draftAddedPrompts = null;
         List<DraftInput>? draftInputs = null;
         List<DraftResult>? draftResults = null;
+        Dictionary<string, string>? draftAddedScalars = null;
 
         try
         {
@@ -2578,6 +2751,7 @@
                 draftAddedPrompts = payload?.AddedPrompts;
                 draftInputs = payload?.Inputs;
                 draftResults = payload?.Results;
+                draftAddedScalars = payload?.AddedScalars;
             }
             else
             {
@@ -2610,6 +2784,21 @@
                 && !addedCollections.Contains(folderId))
             {
                 addedCollections.Add(folderId);
+            }
+        }
+
+        // Values get the same treatment as folders: a pending one whose id now
+        // exists in the loaded package — published elsewhere, or colliding
+        // with a collection — is dropped rather than restored into a conflict.
+        foreach (var (scalarId, text) in draftAddedScalars ?? new Dictionary<string, string>())
+        {
+            if (ItemIdPattern.IsMatch(scalarId)
+                && !scalars.Contains(scalarId, StringComparer.Ordinal)
+                && collections.All(c => c.Id != scalarId)
+                && !addedCollections.Contains(scalarId)
+                && !addedScalars.ContainsKey(scalarId))
+            {
+                addedScalars[scalarId] = text;
             }
         }
 
@@ -2808,7 +2997,7 @@
         }
 
         var payload = new DraftPayload(
-            10,
+            11,
             edits,
             addedItems.Select(a => new DraftAdded(a.Collection, a.Id, a.Name, a.Content)).ToList(),
             removedFiles.ToList(),
@@ -2827,7 +3016,8 @@
             resultEdit,
             addedPrompts.Select(p => new DraftAddedPrompt(p.Id, p.Text)).ToList(),
             inputsEdit?.Select(i => new DraftInput(i.Id, i.Label, i.Required)).ToList(),
-            resultsEdit?.Select(r => new DraftResult(r.Id, r.Node, r.Label)).ToList());
+            resultsEdit?.Select(r => new DraftResult(r.Id, r.Node, r.Label)).ToList(),
+            new Dictionary<string, string>(addedScalars, StringComparer.Ordinal));
         await JS.InvokeVoidAsync("localStorage.setItem", DraftKey, JsonSerializer.Serialize(payload));
     }
 
@@ -2847,6 +3037,15 @@
         if (AddedPromptForFile(path) is { } addedPrompt)
         {
             addedPrompt.Text = value;
+            await PersistDraftAsync();
+            return;
+        }
+
+        // A pending value's text lives on its draft entry for the same reason:
+        // there is no published file for it to differ from yet.
+        if (AddedScalarIdForPath(path) is { } pendingScalar)
+        {
+            addedScalars[pendingScalar] = value;
             await PersistDraftAsync();
             return;
         }
@@ -3007,6 +3206,13 @@
                 files[AddedPath(added)] = added.Content;
             }
 
+            // A pending value is one file at its derived path. Edits to a
+            // published one already arrived through `edits` above.
+            foreach (var (scalarId, text) in addedScalars)
+            {
+                files[ScalarPath(scalarId)] = text;
+            }
+
             // Pending fresh prompts and standalone pending prompts bring their
             // files; a removed node takes its prompt's file away only when no
             // other effective node still uses the prompt.
@@ -3080,6 +3286,7 @@
         edits.Clear();
         addedItems.Clear();
         addedCollections.Clear();
+        addedScalars.Clear();
         removedFiles.Clear();
         bindingEdits.Clear();
         nodeEdits.Clear();
@@ -3119,8 +3326,12 @@
     // (variable names) are never re-cased by the serializer.
     private JsonElement ComposeManifest()
     {
+        // Nothing structural pending: send the manifest through untouched.
+        // Every kind of pending change that writes into the manifest has to
+        // appear here, or it is composed into `files` and then silently
+        // dropped from the document that describes them (#309).
         if (bindingEdits.Count == 0 && VariableAddCount == 0 && VariableRemovalCount == 0
-            && addedCollections.Count == 0 && nodeEdits.Count == 0
+            && addedCollections.Count == 0 && addedScalars.Count == 0 && nodeEdits.Count == 0
             && addedNodes.Count == 0 && removedNodeIds.Count == 0 && addedPrompts.Count == 0
             && aggregateEdits.Count == 0 && resultEdit == null
             && inputsEdit == null && resultsEdit == null)
@@ -3132,7 +3343,7 @@
 
         // New folders (#154): one data-map entry per pending collection; the
         // directory value's trailing slash is what marks it as a collection.
-        if (addedCollections.Count > 0)
+        if (addedCollections.Count > 0 || addedScalars.Count > 0)
         {
             var dataKey = root["Data"] is not null ? "Data" : "data";
             if (root[dataKey] is not System.Text.Json.Nodes.JsonObject dataObject)
@@ -3144,6 +3355,14 @@
             foreach (var folderId in addedCollections)
             {
                 dataObject[folderId] = $"data/{folderId}/";
+            }
+
+            // No trailing slash — that one character is the whole difference,
+            // and getting it wrong here silently turns a value into a
+            // collection the resolver then cannot find an index.json for.
+            foreach (var scalarId in addedScalars.Keys)
+            {
+                dataObject[scalarId] = ScalarPath(scalarId);
             }
         }
 
